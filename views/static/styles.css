@@ -1,0 +1,226 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #f3f3f3;
+    color: #333;
+}
+
+header {
+  background-color: #1a1a1a;
+  padding: 0px 5px;
+  border-bottom: 2px solid #3fff33;
+  width: 99%;
+  display: flex;
+  justify-content: space-evenly;
+  align-items: baseline;
+  margin-top: 2px;
+}
+
+h1 {
+    color: #4285f4;
+    margin: 2px 0 2; /* Reduzieren Sie den oberen Abstand nach Bedarf */
+}
+
+.container {
+    display: flex;
+    justify-content: space-between;
+    width: 99%;
+    /* max-width: 1270px; */
+    margin-top: 20px;
+}
+
+.left,
+.right {
+    flex: 1;
+    margin-right: 10px;
+}
+
+/*
+form {
+    max-width: 600px;
+    margin: 0 auto;
+    display: grid;
+    gap: 10px;
+}
+*/
+form {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  gap: 10px;
+  width: 57%;
+  align-items: center;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    color: #555;
+}
+
+select,
+input[type="text"],
+input[type="password"] {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+
+fieldset {
+    margin-bottom: 20px;
+    border: 1px solid #ccc;
+    padding: 10px;
+    background-color: #fff;
+}
+
+legend {
+    font-weight: bold;
+    color: #333;
+}
+
+input[type="submit"] {
+    background-color: #3fff33;
+    color: black;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-bottom: 20px;
+    width: 100%;
+}
+
+input[type="submit"]:hover {
+    background-color: #45a049;
+}
+
+button {
+    border: 1px solid #3fff33;
+    background-color: #3fff33;
+    border-radius: 5px;
+    color: black;
+    height: 37px;
+    white-space: nowrap;
+}
+
+body.dark-mode {
+    background-color: #2a2a2a;
+    color: #fff;
+    fill: #fff;
+}
+
+body.dark-mode label,
+body.dark-mode fieldset,
+body.dark-mode legend {
+    color: #bbb;
+}
+
+body.dark-mode .container {
+    background-color: black;
+    border: 1px solid #3fff33;
+}
+
+body.dark-mode .left,
+body.dark-mode .right {
+    margin-right: 10px;
+    margin-left: 10px;
+}
+
+body.dark-mode fieldset {
+    background-color: #444;
+    border-color: #666;
+}
+
+body.dark-mode legend {
+    color: #ccc;
+}
+
+nav ul {
+    list-style: none;
+    display: flex;
+    margin: 0;
+    padding: 0;
+}
+
+nav li {
+    margin-right: 15px;
+}
+
+nav a {
+    color: #fff;
+    text-decoration: none;
+}
+
+#log-container p {
+    background: black;
+}
+
+#log-container{
+    overflow-y: auto;
+    max-height: 500px;
+    border: 1px solid #4dbd59;
+    padding: 10px;
+    margin-top: 30px;
+    font-family: monospace;
+    white-space: normal;
+    font-size: 16px;#
+    line-height: 1;
+    background: black;
+}
+
+#output {
+  padding: 1rem 0;
+}
+
+.tooltip {
+  position: relative;
+  display: inline-block;
+  border-bottom: 1px dotted black;
+}
+
+.tooltip .tooltiptext {
+  visibility: hidden;
+  width: 120px;
+  background-color: black;
+  color: #fff;
+  text-align: center;
+  border-radius: 6px;
+  padding: 5px 0;
+
+  /* Position the tooltip */
+  position: absolute;
+  z-index: 1;
+}
+
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+}
+ .tooltip.icon {
+    cursor: pointer;
+ }
+
+#logo {
+  width: 150px;
+  height: auto;
+  margin-right: 0px;
+  margin-top: 10px;
+}
+
+.notification {
+  z-index: 1;
+  position: fixed;
+  top: 10px; /* Abstand vom oberen Rand */
+  right: 10px; /* Abstand vom rechten Rand */
+  padding: 4px 12px;
+  border: 1px solid #ccc;
+}
+
+.notification.green {
+    background-color: green;
+}
+.notification.red {
+    background-color: red;
+}

@@ -1,0 +1,21 @@
+# Ignoriere alle Dateien im Verzeichnis "venv" (virtuelle Umgebung)
+venv/
+
+# Ignoriere alle Dateien mit der Endung ".pyc" (kompilierte Python-Dateien)
+*.pyc
+
+# Ignoriere das Verzeichnis "__pycache__" (Python-Zwischenspeicher)
+__pycache__/
+
+# Ignoriere eine bestimmte Datei namens "config.ini"
+config.toml
+
+# Ignoriere alle Dateien im Wurzelverzeichnis, die "temp" im Namen haben
+/temp*
+
+# Ignoriere alle Log-Dateien im gesamten Repository
+*.log
+*.log.*
+.idea/
+test/
+/status.json
