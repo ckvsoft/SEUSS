@@ -1,0 +1,12 @@
+[Unit]
+Description=Smart ESS Unit Spotmarket Switcher Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/seuss/seuss.py
+WorkingDirectory=/opt/seuss
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
