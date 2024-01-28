@@ -1,0 +1,54 @@
+name: Increase Version on Main Branch
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  increase_version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Determine version increment
+        id: determine_increment
+        run: echo "::set-output name=increment::$(if [ "${{ github.event_name }}" == 'push' ]; then echo 'patch'; else echo 'minor'; fi)"
+
+      - name: Debug github.event_name
+        run: echo "github.event_name is ${{ github.event_name }}"
+
+      - name: Increase version
+        run: |
+          # Erhalte die aktuelle Version aus der core/version.py-Datei
+          CURRENT_VERSION=$(sed -n "s/__version__ = \"\([^']\+\)\"/\1/p" core/version.py)
+          
+          # Bestimme den Inkrementtyp basierend auf dem Ereignis
+          INCREMENT_TYPE=$(echo ${{ steps.determine_increment.outputs.increment }})
+          
+          # Inkrementiere die Version
+          if [ "$INCREMENT_TYPE" == 'patch' ]; then
+            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+            NEW_VERSION="$major.$minor.$((patch + 1))"
+          elif [ "$INCREMENT_TYPE" == 'minor' ]; then
+            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+             NEW_VERSION="$major.$((minor + 1)).0"
+          else
+            echo "Fehler: Ungültiger Inkrementtyp."
+            exit 1
+          fi
+          
+          # Aktualisiere die core/version.py-Datei
+          if [ -n "$CURRENT_VERSION" ] && [ -n "$NEW_VERSION" ]; then
+            sed -i "s/$CURRENT_VERSION/$NEW_VERSION/" core/version.py
+            git diff --exit-code || {
+              git config --local user.email "action@github.com"
+              git config --local user.name "GitHub Action"
+              git commit -am "Update version to ${NEW_VERSION}"
+              git push origin ${{ github.head_ref }}
+            }
+          else
+            echo "Fehler: CURRENT_VERSION oder NEW_VERSION ist leer."
+          fi
