@@ -1,7 +1,7 @@
 name: Increase Version on Main Branch
 
 on:
-  pull_request:
+  push:
     branches:
       - main
 
