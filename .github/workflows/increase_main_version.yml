@@ -15,12 +15,7 @@ jobs:
 
       - name: Determine version increment
         id: determine_increment
-        run: |
-          if [ "${{ github.event_name }}" == 'push' ]; then
-            echo "increment=patch" >> $GITHUB_ENV
-          else
-            echo "increment=minor" >> $GITHUB_ENV
-          fi
+        run: echo "::set-output name=increment::$(if [ "${{ github.event_name }}" == 'push' ]; then echo 'patch'; else echo 'minor'; fi)"
 
       - name: Debug github.event_name
         run: echo "github.event_name is ${{ github.event_name }}"
@@ -42,25 +37,39 @@ jobs:
           # Bestimme den Inkrementtyp basierend auf dem Ereignis
           INCREMENT_TYPE=$(echo ${{ steps.determine_increment.outputs.increment }})
           
+          # Bestimme den aktuellen Branch
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          
           # Inkrementiere die Version
           if [ "$INCREMENT_TYPE" == 'patch' ]; then
             IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
             NEW_VERSION="$major.$minor.$((patch + 1))"
           elif [ "$INCREMENT_TYPE" == 'minor' ]; then
             IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
-             NEW_VERSION="$major.$((minor + 1)).0"
+            NEW_VERSION="$major.$((minor + 1)).0"
           else
             echo "Fehler: Ungültiger Inkrementtyp."
             exit 1
           fi
           
+          # Aktualisiere die core/version.py-Datei
           if [ -n "$CURRENT_VERSION" ] && [ -n "$NEW_VERSION" ]; then
             sed -i "s/$CURRENT_VERSION/$NEW_VERSION/" core/version.py
             git diff --exit-code || {
               git config --local user.email "action@github.com"
               git config --local user.name "GitHub Action"
-              git commit -am "Update version to ${NEW_VERSION}"
-              git push origin main  # Ändere hier auf 'main'
+              
+              # Überprüfe, ob der aktuelle Branch 'main' ist
+              if [ "$CURRENT_BRANCH" == 'main' ]; then
+                git commit -am "Update version to ${NEW_VERSION}"
+                git push origin main
+              else
+                # Falls der aktuelle Branch nicht 'main' ist, versuche auf 'main' zu mergen
+                git fetch origin main
+                git merge origin/main
+                git commit -am "Merge main into $CURRENT_BRANCH"
+                git push origin "$CURRENT_BRANCH"
+              fi
             }
           else
             echo "Fehler: CURRENT_VERSION oder NEW_VERSION ist leer."
