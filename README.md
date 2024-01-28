@@ -5,8 +5,6 @@
 #### Please report the bugs and suggest improvements. Thank you to everyone who has already taken part.
 ###### If you would like to contribute extensions to this, please submit the pull request in the dev branch. For bug fixes, the pull request can also be made on the main branch
 
-
-
 ### What does this software do?  
 This is a Python 3 Application that turns on your ESS unit (controller) at the right time when your hourly dynamic energy prices are low. Or used for discharging when prices are extremely high.
 
