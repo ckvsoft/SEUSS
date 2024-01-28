@@ -15,10 +15,24 @@ jobs:
 
       - name: Determine version increment
         id: determine_increment
-        run: echo "::set-output name=increment::$(if [ "${{ github.event_name }}" == 'push' ]; then echo 'patch'; else echo 'minor'; fi)"
+        run: |
+          if [ "${{ github.event_name }}" == 'push' ]; then
+            echo "increment=patch" >> $GITHUB_ENV
+          else
+            echo "increment=minor" >> $GITHUB_ENV
+          fi
 
       - name: Debug github.event_name
         run: echo "github.event_name is ${{ github.event_name }}"
+
+      - name: Show repository status
+        run: git status
+
+      - name: Debug workflow
+        run: |
+          echo "CURRENT_VERSION is $CURRENT_VERSION"
+          echo "INCREMENT_TYPE is $INCREMENT_TYPE"
+          echo "NEW_VERSION is $NEW_VERSION"
 
       - name: Increase version
         run: |
@@ -40,14 +54,13 @@ jobs:
             exit 1
           fi
           
-          # Aktualisiere die core/version.py-Datei
           if [ -n "$CURRENT_VERSION" ] && [ -n "$NEW_VERSION" ]; then
             sed -i "s/$CURRENT_VERSION/$NEW_VERSION/" core/version.py
             git diff --exit-code || {
               git config --local user.email "action@github.com"
               git config --local user.name "GitHub Action"
               git commit -am "Update version to ${NEW_VERSION}"
-              git push origin ${{ github.head_ref }}
+              git push origin main  # Ändere hier auf 'main'
             }
           else
             echo "Fehler: CURRENT_VERSION oder NEW_VERSION ist leer."
