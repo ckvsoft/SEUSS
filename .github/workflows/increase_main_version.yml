@@ -68,7 +68,8 @@ jobs:
                 git fetch origin main
                 git merge origin/main
                 git commit -am "Merge main into $CURRENT_BRANCH"
-                git push origin "$CURRENT_BRANCH"
+                # git push origin "$CURRENT_BRANCH"
+                git merge --allow-unrelated-histories "$CURRENT_BRANCH"
               fi
             }
           else
