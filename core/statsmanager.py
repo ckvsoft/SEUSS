@@ -106,9 +106,13 @@ class StatsManager(Singleton):
             cls.insert_new_status_data(group, key, new_value)
 
         cls.data[group][date_key] = today
-        value = cls.data[group][key]
-        value = (value + new_value) / 2
-        cls.data[group][key] = value
+        if key in cls.data[group]:
+            value = cls.data[group][key]
+            value = (value + new_value) / 2
+            cls.data[group][key] = value
+        else:
+            value = new_value
+            cls.data[group][key] = value
         cls.save_data()
         return value
 
