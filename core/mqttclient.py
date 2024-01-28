@@ -345,6 +345,7 @@ class MqttClient:
                     raise TimeoutError
                 time.sleep(1)
 
+            time.sleep(1)
             payload = self.response_payload
             mqtt_result.result = payload
             self.logger.log_debug(f"result {payload}")
