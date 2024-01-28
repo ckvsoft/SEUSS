@@ -19,7 +19,7 @@ jobs:
           CURRENT_VERSION=$(sed -n "s/__version__ = \"\([^']\+\)\"/\1/p" core/version.py)
           
           # Erhöhe die Version
-          NEW_VERSION=$(python -c "major, minor, patch = map(int, '$CURRENT_VERSION'.split('.')); minor += 1; patch = 0; print(f'{major}.{minor}.{patch}')")
+          NEW_VERSION=$(python -c "major, minor, patch = map(int, '$CURRENT_VERSION'.split('.')); patch += 1; print(f'{major}.{minor}.{patch}')")
           
           # Aktualisiere die core/version.py-Datei
           if [ -n "$CURRENT_VERSION" ] && [ -n "$NEW_VERSION" ]; then
