@@ -102,20 +102,32 @@ class StatsManager(Singleton):
         date_key = f"date_{key}"
         today = datetime.now().strftime('%Y-%m-%d')
 
-        if group not in StatsManager.data:
+        if group not in cls.data:
             cls.insert_new_status_data(group, key, new_value)
 
         cls.data[group][date_key] = today
+        value = new_value
+
         if key in cls.data[group]:
-            value = cls.data[group][key]
-            value = (value + new_value) / 2
-            cls.data[group][key] = value
+            if isinstance(cls.data[group][key], list):
+                value, count = cls.data[group][key]
+                if count == 1000:
+                    e_value =value * count
+                    e_value = (e_value - value)
+                    count -= 1
+                    value = e_value / count
+            else:
+                count = 1
+
+            value = (count * value + new_value) / (count + 1)
+            count += 1
+            cls.data[group][key] = (value, count)
         else:
-            value = new_value
-            cls.data[group][key] = value
+            cls.data[group][key] = (new_value, 1)
+
         cls.save_data()
 
-        return value
+        return round(value, 2)
 
     @classmethod
     def cleanup_old_entries(cls):

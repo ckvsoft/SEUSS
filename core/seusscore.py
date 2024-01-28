@@ -134,6 +134,7 @@ class SEUSS:
         return total_solar
 
     def process_solar_forecast(self, total_solar):
+        test = StatsManager.update_percent_status_data('solar', 'efficiency', 22.4)
         forecast = Forecastsolar()
         total_forecast = forecast.forecast()
 
