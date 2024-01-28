@@ -1,0 +1,35 @@
+name: Increase Version on Dev Branch
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  increase_version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Increase version
+        run: |
+          # Erhalte die aktuelle Version aus der core/version.py-Datei
+          CURRENT_VERSION=$(sed -n "s/__version__ = \"\([^']\+\)\"/\1/p" core/version.py)
+          
+          # Erhöhe die Version
+          NEW_VERSION=$(python -c "major, minor, patch = map(int, '$CURRENT_VERSION'.split('.')); patch += 1; print(f'{major}.{minor}.{patch}')")
+          
+          # Aktualisiere die core/version.py-Datei
+          if [ -n "$CURRENT_VERSION" ] && [ -n "$NEW_VERSION" ]; then
+            sed -i "s/$CURRENT_VERSION/$NEW_VERSION/" core/version.py
+            git diff --exit-code || {
+              git config --local user.email "action@github.com"
+              git config --local user.name "GitHub Action"
+              git commit -am "Update version to ${NEW_VERSION}"
+              git push origin dev
+            }
+          else
+            echo "Fehler: CURRENT_VERSION oder NEW_VERSION ist leer."
+          fi
