@@ -62,7 +62,9 @@ jobs:
               # Überprüfe, ob der aktuelle Branch 'main' ist
               if [ "$CURRENT_BRANCH" == 'main' ]; then
                 git commit -am "Update version to ${NEW_VERSION}"
-                git push origin main
+                # git push origin main
+                git merge --allow-unrelated-histories main
+          
               else
                 # Falls der aktuelle Branch nicht 'main' ist, versuche auf 'main' zu mergen
                 git fetch origin main
