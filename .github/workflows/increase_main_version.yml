@@ -15,7 +15,7 @@ jobs:
 
       - name: Determine version increment
         id: determine_increment
-        run: echo "::set-output name=increment::$(if [ "${{ github.event_name }}" == 'push' ]; then echo 'patch'; else echo 'minor'; fi)"
+        run: echo "increment=$(if [ "${{ github.event_name }}" == 'push' ]; then echo 'patch'; else echo 'minor'; fi)" >> $GITHUB_ENV
 
       - name: Increase version
         run: |
