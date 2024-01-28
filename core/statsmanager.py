@@ -114,6 +114,7 @@ class StatsManager(Singleton):
             value = new_value
             cls.data[group][key] = value
         cls.save_data()
+
         return value
 
     @classmethod
