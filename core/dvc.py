@@ -30,7 +30,7 @@ class DynamicValueCalculator:
     def __init__(self):
         pass
 
-    def adjust_value(self, current_value, min_value, max_value, influence_value):
+    def adjust_value_increase(self, current_value, min_value, max_value, influence_value, increase=True):
         """
         Adjusts the current value based on the influence value.
 
@@ -39,6 +39,7 @@ class DynamicValueCalculator:
         - min_value (float): The minimum limit of the current value.
         - max_value (float): The maximum limit of the current value.
         - influence_value (float): The influencing value ranging from 10% to 90%.
+        - increase True,  decrease False
 
         Returns:
         - float: The adjusted value.
@@ -51,7 +52,10 @@ class DynamicValueCalculator:
         adjustment_range = max_value - min_value
 
         # Calculate the adjustment amount based on the influence value
-        adjustment_amount = (influence_value - 50) / 50 * adjustment_range
+        if increase:
+            adjustment_amount = (influence_value - 50) / 50 * adjustment_range
+        else:
+            adjustment_amount = (50 - influence_value) / 50 * adjustment_range
 
         # Adjust the current value
         adjusted_value = current_value + adjustment_amount
@@ -85,4 +89,3 @@ class DynamicValueCalculator:
                 min_y = mid_y
 
         return max_y
-

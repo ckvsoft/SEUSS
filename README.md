@@ -36,16 +36,22 @@ tested
 # Install
 Download the install script from the GitHub repository execute the following command in your terminal:
 
-`wget -O seuss_install.sh https://raw.githubusercontent.com/ckvsoft/SEUSS/dev/scripts/seuss_install.sh`
-
+```
+wget -O seuss_install.sh https://raw.githubusercontent.com/ckvsoft/SEUSS/dev/scripts/seuss_install.sh`
+```
 Run the installer script with additional options to prepare everything in a subdirectory for your inspection. For example:
-
-`bash seuss_install.sh`
-
+```
+bash seuss_install.sh`
+```
 The default directory is /data/seuss (Venus OS) But you can optionally specify a different directory by using the environment variable TARGET_DIRECTORY e.g.
-
-`TARGET_DIRECTORY=/opt/seuss bash seuss_install.sh`
-
+```
+TARGET_DIRECTORY=/opt/seuss bash seuss_install.sh`
+```
+On a Cerbo GX the filesystem is mounted read only. See [https://www.victronenergy.com/live/ccgx:root_access](https://www.victronenergy.com/live/ccgx:root_access).
+In order to make the filesystem writeable you need to execute the following command before running the install script:
+```
+/opt/victronenergy/swupdate-scripts/resize2fs.sh
+```
 # Configuration
 After `SEUSS` has been successfully installed, a website is available at the IP address and port 5000 of the `Computer/VenusOS` on which `SEUSS` was installed.
 - You can view or download the log file.
