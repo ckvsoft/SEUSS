@@ -63,7 +63,7 @@ class StatsManager(Singleton):
 
     @classmethod
     def insert_new_daily_status_data(cls, group, key, value):
-        cls.cleanup_old_entries()  # Clean up old entries before inserting new data
+        cls.cleanup_old_entries(group)  # Clean up old entries before inserting new data
 
         date_key = f"date_{key}"
         today = datetime.now().strftime('%Y-%m-%d')
@@ -130,18 +130,23 @@ class StatsManager(Singleton):
         return round(value, 2)
 
     @classmethod
-    def cleanup_old_entries(cls):
+    def cleanup_old_entries(cls, group_to_cleanup):
         today = datetime.now().strftime('%Y-%m-%d')
 
-        for group, entries in list(cls.data.items()):
-            for key, entry in list(entries.items()):
+        if group_to_cleanup in cls.data:
+            entries_to_delete = []
+
+            for key, entry in cls.data[group_to_cleanup].items():
                 if key.startswith('date_'):
                     entry_date = entry
                     if entry_date != today:
-                        del cls.data[group][key.replace('date_', '')]
-                        del cls.data[group][key]
+                        entries_to_delete.append(key.replace('date_', ''))
+                        entries_to_delete.append(key)
 
-        cls.save_data()
+            for entry_key in entries_to_delete:
+                del cls.data[group_to_cleanup][entry_key]
+
+            cls.save_data()
 
     @classmethod
     def remove_data(cls, group, key):
