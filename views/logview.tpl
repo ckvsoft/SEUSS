@@ -29,16 +29,14 @@
     </div>
 
     <script>
-
         const scroller = document.querySelector("#log-container");
         const output = document.querySelector("#output");
-        var currentScrollTop = 0
+        var currentScrollTop = 0;
 
         scroller.addEventListener("scroll", (event) => {
             output.textContent = `scrollTop: ${scroller.scrollTop}`;
             currentScrollTop = scroller.scrollTop;
         });
-
 
         function manualRefresh() {
             updateLogContent();
@@ -55,18 +53,24 @@
             var xhr = new XMLHttpRequest();
             xhr.onreadystatechange = function () {
                 if (xhr.readyState === 4 && xhr.status === 200) {
+                    // Speichern des aktuellen Scrollwerts
+                    const previousScrollTop = scroller.scrollTop;
+
+                    // Aktualisieren des Inhalts
                     logContainer.innerHTML = "<p>" + xhr.responseText + "</p>";
+
+                    // Wiederherstellen des vorherigen Scrollwerts
+                    scroller.scrollTop = previousScrollTop;
                 }
             };
             xhr.open('GET', '/update_log', true);
             xhr.send();
         }
 
-    setInterval(updateLogContent, 2000);
+        setInterval(updateLogContent, 2000);
     </script>
 
     % include('footer')
-
 
 </body>
 </html>
