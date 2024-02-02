@@ -37,13 +37,15 @@ class LogReader:
     def get_last_lines(self):
         return self.lines
 
-    def get_log_data_for_frontend(self):
+    def get_log_data_for_frontend(self, show_debug = True):
         # Hole die letzten Zeilen aus der Liste
         last_lines = self.get_last_lines()
 
         # Wandele die Zeilen in HTML-Format um
         html_formatted_lines = []
         for line in last_lines:
+            if not show_debug and line.startswith("[D"):
+                continue
             colored_line = self.colorize_log_level(line)
             if len(colored_line) == 0:
                 continue

@@ -21,6 +21,11 @@
 
     <div id="output">scrollTop: 0</div>
     <div>
+        % if show_debug:
+        <input type="checkbox" id="checkbox" checked>
+        <label for="checkbox" style="display: inline-block;">show Debug</label>
+        % end
+
         <button onclick="manualRefresh()">Manuelles Refresh</button>
         <button onclick="downloadLog()">Download Log</button>
 
@@ -39,7 +44,8 @@
         });
 
         function manualRefresh() {
-            updateLogContent();
+            const checkboxValue = document.getElementById('checkbox').checked;
+            updateLogContent(checkboxValue);
         }
 
         function downloadLog() {
@@ -47,27 +53,42 @@
             document.forms["download-form"].submit();
         }
 
-        function updateLogContent() {
+        function updateLogContent(param) {
             var logContainer = document.getElementById('log-container');
 
-            var xhr = new XMLHttpRequest();
-            xhr.onreadystatechange = function () {
-                if (xhr.readyState === 4 && xhr.status === 200) {
+            // Konvertiere den Checkbox-Status in einen String
+            const paramString = param ? 'true' : 'false';
+
+            // Füge den Parameter zur URL hinzu
+            const url = `/update_log?show_debug=${paramString}`;
+
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.text();
+                })
+                .then(data => {
                     // Speichern des aktuellen Scrollwerts
                     const previousScrollTop = scroller.scrollTop;
 
                     // Aktualisieren des Inhalts
-                    logContainer.innerHTML = "<p>" + xhr.responseText + "</p>";
+                    logContainer.innerHTML = "<p>" + data + "</p>";
 
                     // Wiederherstellen des vorherigen Scrollwerts
                     scroller.scrollTop = previousScrollTop;
-                }
-            };
-            xhr.open('GET', '/update_log', true);
-            xhr.send();
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                });
         }
 
-        setInterval(updateLogContent, 2000);
+        setInterval(() => {
+            const checkboxValue = document.getElementById('checkbox').checked;
+            manualRefresh(checkboxValue);
+        }, 2000);
+
     </script>
 
     % include('footer')
