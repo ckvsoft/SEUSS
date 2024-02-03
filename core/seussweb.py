@@ -146,12 +146,24 @@ class SEUSSWeb:
 
     def logview(self):
         reader = LogReader()
-        log_content = reader.get_log_data_for_frontend()
-        return template('logview', log_content=log_content)
+        show_debug = False
+        if self.config.log_level == "DEBUG":
+            show_debug = True
+
+        log_content = reader.get_log_data_for_frontend(show_debug)
+
+
+        return template('logview', log_content=log_content, show_debug=show_debug)
 
     def update_log(self):
         reader = LogReader()
-        log_content = reader.get_log_data_for_frontend()
+
+        # Hier kannst du den show_debug-Wert direkt aus der Anfrageparameter verwenden, falls erforderlich
+        show_debug = True if request.query.get("show_debug") == 'true' else False
+        log_content = reader.get_log_data_for_frontend(show_debug)
+
+        # Füge show_debug zum Rückgabewert hinzu, falls erforderlich
+        # return {'log_content': log_content, 'show_debug': show_debug}
         return log_content
 
     def download_log(self):
