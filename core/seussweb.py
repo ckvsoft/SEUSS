@@ -146,14 +146,14 @@ class SEUSSWeb:
 
     def logview(self):
         reader = LogReader()
-        show_debug = False
+        hide_debug = False
         if self.config.log_level == "DEBUG":
-            show_debug = True
+            hide_debug = True
 
-        log_content = reader.get_log_data_for_frontend(show_debug)
+        log_content = reader.get_log_data_for_frontend(hide_debug)
 
 
-        return template('logview', log_content=log_content, show_debug=show_debug)
+        return template('logview', log_content=log_content, hide_debug=hide_debug)
 
     def update_log(self):
         reader = LogReader()
@@ -161,8 +161,6 @@ class SEUSSWeb:
         hide_debug = False if request.query.get("hide_debug") == 'true' else True # her we need the reverse
         log_content = reader.get_log_data_for_frontend(hide_debug)
 
-        # Füge show_debug zum Rückgabewert hinzu, falls erforderlich
-        # return {'log_content': log_content, 'show_debug': show_debug}
         return log_content
 
     def download_log(self):
