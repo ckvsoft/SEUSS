@@ -158,9 +158,8 @@ class SEUSSWeb:
     def update_log(self):
         reader = LogReader()
 
-        # Hier kannst du den show_debug-Wert direkt aus der Anfrageparameter verwenden, falls erforderlich
-        show_debug = True if request.query.get("show_debug") == 'true' else False
-        log_content = reader.get_log_data_for_frontend(show_debug)
+        hide_debug = False if request.query.get("hide_debug") == 'true' else True # her we need the reverse
+        log_content = reader.get_log_data_for_frontend(hide_debug)
 
         # Füge show_debug zum Rückgabewert hinzu, falls erforderlich
         # return {'log_content': log_content, 'show_debug': show_debug}
