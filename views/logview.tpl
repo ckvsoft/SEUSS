@@ -21,9 +21,9 @@
 
     <div id="output">scrollTop: 0</div>
     <div>
-        % if show_debug:
+        % if hide_debug:
         <input type="checkbox" id="checkbox" checked>
-        <label for="checkbox" style="display: inline-block;">show Debug</label>
+        <label for="checkbox" style="display: inline-block;">hide debug</label>
         % end
 
         <button onclick="manualRefresh()">Manuelles Refresh</button>
@@ -60,7 +60,7 @@
             const paramString = param ? 'true' : 'false';
 
             // Füge den Parameter zur URL hinzu
-            const url = `/update_log?show_debug=${paramString}`;
+            const url = `/update_log?hide_debug=${paramString}`;
 
             fetch(url)
                 .then(response => {
