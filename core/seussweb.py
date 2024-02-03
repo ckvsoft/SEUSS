@@ -150,7 +150,7 @@ class SEUSSWeb:
         if self.config.log_level == "DEBUG":
             hide_debug = True
 
-        log_content = reader.get_log_data_for_frontend(hide_debug)
+        log_content = reader.get_log_data_for_frontend(not hide_debug)
 
 
         return template('logview', log_content=log_content, hide_debug=hide_debug)
