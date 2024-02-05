@@ -321,7 +321,7 @@ class SEUSSWeb:
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
 
-            if price < self.config.number_of_lowest_prices_for_charging:
+            if price < self.config.charging_price_limit:
                 color = "yellow" if current_hour > hour else " #FFC300 "
             elif hour in green_hours:
                 color = "green" if current_hour > hour else "#32CD32"
