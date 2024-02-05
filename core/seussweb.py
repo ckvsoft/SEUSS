@@ -359,7 +359,7 @@ class SEUSSWeb:
     def generate_legend_svg(self):
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="150" height="135" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="155" height="135" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
