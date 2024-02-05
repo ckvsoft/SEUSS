@@ -93,6 +93,6 @@ class Forecastsolar:
                 self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
 
             if watt_hours_tomorow_day is not None:
-                self.logger.log_info(f"Solar Watt Hours for the tomorow day ({tomorrow_date}): {watt_hours_tomorow_day}")
+                self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorow_day}")
 
         return total_forcast
