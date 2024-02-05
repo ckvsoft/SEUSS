@@ -393,7 +393,7 @@ class SEUSSWeb:
         <rect x="10" y="105" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
         """
         legend_svg += """
-        <text x="40" y="115" font-size="12">Charge Limit</text>
+        <text x="40" y="115" font-size="12">Charging Price Limit</text>
         """
 
         # Schließe die SVG-Code
