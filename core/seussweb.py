@@ -312,6 +312,10 @@ class SEUSSWeb:
         svg += f"""
         <line x1="0" y1="{250 - avg_height}" x2="{width * 24}" y2="{250 - avg_height}" stroke="magenta" stroke-width="2"/>
         """
+        charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
+        svg += f"""
+        <line x1="0" y1="{250 - charge_limit_height}" x2="{width * 24}" y2="{250 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
+        """
 
         # Erzeuge SVG für jeden Balken und Beschriftung basierend auf den Daten
         for hour, price in data.items():
@@ -320,7 +324,8 @@ class SEUSSWeb:
             pattern = ""  # Initialisiere pattern
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
-            if hour in green_hours:
+
+            if price < self.config.charging_price_limit or hour in green_hours:
                 color = "green" if current_hour > hour else "#32CD32"
             elif hour in red_hours and hour not in green_hours:
                 color = "darkred" if current_hour > hour else "red"
@@ -354,7 +359,7 @@ class SEUSSWeb:
     def generate_legend_svg(self):
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="150" height="100" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="155" height="135" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
@@ -380,9 +385,15 @@ class SEUSSWeb:
         legend_svg += """
         <rect x="10" y="75" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
         """
-
         legend_svg += """
         <text x="40" y="85" font-size="12">Average</text>
+        """
+
+        legend_svg += """
+        <rect x="10" y="105" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
+        """
+        legend_svg += """
+        <text x="40" y="115" font-size="12">Charging Price Limit</text>
         """
 
         # Schließe die SVG-Code

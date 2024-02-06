@@ -26,7 +26,7 @@
 #
 
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import pytz
 from requests.exceptions import RequestException
@@ -71,23 +71,28 @@ class Forecastsolar:
             current_datetime = datetime.now(timezone)
             current_date = current_datetime.strftime('%Y-%m-%d')
             current_hour = current_datetime.strftime('%H')
+            tomorrow_datetime = current_datetime + timedelta(days=1)
+            tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
             watts_current_hour = data['result']['watts'].get(f"{current_date} {current_hour}:00:00", None)
             watt_hours_current_hour = data['result']['watt_hours'].get(f"{current_date} {current_hour}:00:00", None)
             watt_hours_current_day = data['result']['watt_hours_day'].get(current_date, None)
+            watt_hours_tomorow_day = data['result']['watt_hours_day'].get(tomorrow_date, None)
 
             # self.logger.log_debug(f"forecast.solar data: {data}")
             self.logger.log_info(f"Place: {data['message']['info']['place']}")
             # timezone = data['message']['info']['timezone']
             if watts_current_hour is not None:
-                self.logger.log_info(f"Watts for the current hour: {watts_current_hour}")
+                self.logger.log_info(f"Solar Watts for the current hour: {watts_current_hour}")
 
             if watt_hours_current_hour is not None:
-                self.logger.log_info(f"Watt Hours for the current hour: {watt_hours_current_hour}")
+                self.logger.log_info(f"Solar Watt Hours for the current hour: {watt_hours_current_hour}")
                 total_forcast += float(watt_hours_current_hour)
 
             if watt_hours_current_day is not None:
-                self.logger.log_info(f"Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
+                self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
 
+            if watt_hours_tomorow_day is not None:
+                self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorow_day}")
 
         return total_forcast
