@@ -212,8 +212,8 @@ class Config(Singleton):
         # Überprüfen und Hinzufügen von fehlenden Schlüsseln und Abschnitten
         for key, value in self.DEFAULT_CONFIG_TEMPLATE.items():
             if key not in self.config_data:
-                config_data[key] = value
-            elif isinstance(value, list) and isinstance(config_data[key], list):
+                self.config_data[key] = value
+            elif isinstance(value, list) and isinstance(self.config_data[key], list):
                 for item_template in value:
                     if "name" in item_template:
                         template_name = item_template["name"]
