@@ -38,11 +38,15 @@ class Itemlist:
         self.logger = CustomLogger()
 
         self.primary_market_name = next(
-            (market.name for market in self.config.markets if market.primary and market.enabled),
-            "DefaultMarket")
+            (market['name'] for market in self.config.markets if
+             market.get('primary', False) and market.get('enabled', False)),
+            "DefaultMarket"
+        )
         self.failback_market_name = next(
-            (market.name for market in self.config.markets if not market.primary and market.enabled),
-            "DefaultFailbackMarket")
+            (market['name'] for market in self.config.markets if
+             not market.get('primary', False) and market.get('enabled', False)),
+            "DefaultFailbackMarket"
+        )
         self.current_market_name = self.primary_market_name
 
     def add_item(self, item):

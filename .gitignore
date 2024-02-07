@@ -9,6 +9,7 @@ __pycache__/
 
 # Ignoriere eine bestimmte Datei namens "config.ini"
 config.toml
+config.json
 
 # Ignoriere alle Dateien im Wurzelverzeichnis, die "temp" im Namen haben
 /temp*
