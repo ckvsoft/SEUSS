@@ -173,7 +173,7 @@ class Config(Singleton):
 
         if not os.path.exists(self.log_file_path):
             # touch
-            with open(self.log_file_path, 'w') as file:
+            with open(self.log_file_path, 'w'):
                 pass
 
         for item in config_data.get("prices", []):
