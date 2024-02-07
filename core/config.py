@@ -143,6 +143,7 @@ class Config(Singleton):
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
             self.load_config()
+            self.update_config_with_template()
 
             self._initialized = True
 
@@ -162,7 +163,6 @@ class Config(Singleton):
         if os.path.exists(self.config_file):
             with open(self.config_file, 'r') as file:
                 config_data = json.load(file)
-            self.update_config_with_template(config_data)
         else:
             config_data = self.DEFAULT_CONFIG_TEMPLATE
             self.save_config(config_data)
@@ -176,8 +176,9 @@ class Config(Singleton):
             with open(self.log_file_path, 'w') as file:
                 pass
 
-        for key in ["number_of_lowest_prices_for_charging", "number_of_highest_prices_for_discharging", "charging_price_limit"]:
-            setattr(self, key, config_data["prices"][0][key])
+        for item in config_data.get("prices", []):
+            for key, value in item.items():
+                setattr(self, key, value)
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")
@@ -207,13 +208,29 @@ class Config(Singleton):
     def get_pv_panels(self):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
-    def update_config_with_template(self, config_data):
-        # Überprüfen und hinzufügen von fehlenden Schlüsseln und Abschnitten
+    def update_config_with_template(self):
+        # Überprüfen und Hinzufügen von fehlenden Schlüsseln und Abschnitten
         for key, value in self.DEFAULT_CONFIG_TEMPLATE.items():
-            if key not in config_data:
+            if key not in self.config_data:
                 config_data[key] = value
+            elif isinstance(value, list) and isinstance(config_data[key], list):
+                for item_template in value:
+                    if "name" in item_template:
+                        template_name = item_template["name"]
+                        for sub_item in self.config_data[key]:
+                            if "name" in sub_item and sub_item["name"] == template_name:
+                                for item_key, item_value in item_template.items():
+                                    if item_key != "name" and item_key not in sub_item:
+                                        sub_item[item_key] = item_value
+                        if not any(sub_item.get("name") == template_name for sub_item in self.config_data[key]):
+                            self.config_data[key].append(item_template)
+                    else:
+                        for sub_item in self.config_data[key]:
+                            for item_key, item_value in item_template.items():
+                                if item_key not in sub_item:
+                                    sub_item[item_key] = item_value
 
-        self.save_config(config_data)
+        self.save_config(self.config_data)
 
     def save_config(self, config_data):
         self.observer.notify_observers(config_data=config_data)
