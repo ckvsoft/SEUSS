@@ -27,18 +27,25 @@
 
 class Observer:
     def __init__(self):
-        self._observers = []
+        self._observers = {}
 
-    def add_observer(self, observer):
-        if observer not in self._observers:
-            self._observers.append(observer)
+    def add_observer(self, name, observer, allow_multiple=False):
+        if not allow_multiple:
+            # Wenn nur eine Instanz desselben Namens erlaubt ist,
+            # überprüfen, ob bereits eine vorhanden ist und sie ersetzen
+            self._observers[name] = observer
         else:
-            index = self._observers.index(observer)
-            self._observers[index] = observer
+            # Wenn mehrere Instanzen desselben Namens erlaubt sind,
+            # speichern Sie sie in einer Liste
+            if name not in self._observers:
+                self._observers[name] = [observer]
+            else:
+                self._observers[name].append(observer)
 
-    def remove_observer(self, observer):
-        if observer in self._observers:
-            self._observers.remove(observer)
+    def remove_observer(self, name):
+        if name in self._observers:
+            del self._observers[name]
+
 
     def notify_observers(self, config_data):
         pass
