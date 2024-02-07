@@ -67,7 +67,7 @@ After `SEUSS` has been successfully installed, a website is available at the IP 
 
 
 These can also be found in the Settings description.
-For those who prefer to work in a config file, there is config.toml
+For those who prefer to work in a config file, there is config.json
 
 # Settings
 ## General
