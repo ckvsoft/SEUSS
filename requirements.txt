@@ -1,6 +1,5 @@
 requests
 logzero
-toml
 pytz
 paho-mqtt
 bottle

@@ -40,7 +40,7 @@ class ESSUnit:
     def __init__(self, **kwargs) -> None:
         self._name = kwargs.get("name", "")
         self.config = Config()
-        self.config.observer.add_observer(self)
+        self.config.observer.add_observer("essunit", self)
 
     def handle_config_update(self, config_data):
         pass

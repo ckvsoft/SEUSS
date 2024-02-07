@@ -49,7 +49,7 @@ class CustomLogger(Singleton):
         if not hasattr(self, 'initialized'):
 
             self.config = Config()
-            self.config.observer.add_observer(self)
+            self.config.observer.add_observer("CustomLogger", self)
             self.log_level = self.config.log_level
 
             self.handle_config_update(self.config.config_data)

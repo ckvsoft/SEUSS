@@ -45,7 +45,7 @@ class Forecastsolar:
         max_retries = 3  # Adjust the number of retries as needed
 
         for panel in self.panels:
-            url = f"https://api.forecast.solar/estimate/{panel.locLat}/{panel.locLong}/{panel.angle}/{panel.direction}/{panel.totPower}?no_sun=1"
+            url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}?no_sun=1"
 
             for retry in range(max_retries):
                 try:

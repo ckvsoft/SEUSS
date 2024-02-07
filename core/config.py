@@ -27,86 +27,12 @@
 
 import os
 import sys
-import toml
+import json
 
 from design_patterns.singleton import Singleton
 from design_patterns.observer.config_observer import ConfigObserver
 
-DEFAULT_CONFIG_TEMPLATE = f"""
-time_zone = "Europe/Vienna"
-log_file_path = "/tmp/seuss.log"
-log_level = "INFO"
-# failback_market = ""
-
-[[prices]]
-use_second_day = false
-number_of_lowest_prices_for_charging = 0
-number_of_highest_prices_for_discharging = 0
-charging_price_limit = -999
-
-[[pv_panels]]
-name = "Panels 1"
-locLat = "-78.26509" # Latitude
-locLong = "158.32421"  # Longitude
-angle = 0          # Angle of your panels 0 (horizontal) … 90 (vertical)
-direction = -90     # Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)
-totPower = 1.6      # installed modules power in kilo watt
-enabled = false
-
-[[pv_panels]]
-name = "Panels 2"
-locLat = "-78.26509" # Latitude
-locLong = "158.32421"  # Longitude
-angle = 0          # Angle of your panels 0 (horizontal) … 90 (vertical)
-direction = 0       # Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)
-totPower = 1.6      # installed modules power in kilo watt
-enabled = false
-
-[[pv_panels]]
-name = "Panels 3"
-locLat = "-78.26509" # Latitude
-locLong = "158.32421"  # Longitude
-angle = 0          # Angle of your panels 0 (horizontal) … 90 (vertical)
-direction = 90      # Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)
-totPower = 1.6      # installed modules power in kilo watt
-enabled = false
-
-[[ess_unit]]
-name = "Victron"
-use_vrm = false
-unit_id = ""
-ip_address = "venus.local"
-user = ""
-password = ""
-max_discharge_power = "-1"
-enabled = false
-
-[[markets]]  # Kommentar für markets
-name = "Awattar"
-country = "AT"
-primary = true
-enabled = true
-
-[[markets]]
-name = "Entsoe"
-api_token = "enter_your_entsoe_apikey_here"
-in_domain = "10YAT-APG------L"  # Default is AT
-out_domain = "10YAT-APG------L" # Default is AT
-primary = false
-enabled = false
-
-[[markets]]
-name = "Tibber"
-api_token = "enter_your_tibber_apikey_here"
-price_unit = "energy"
-primary = false
-enabled = false
-
-"""
-
-
 class Info:
-
     def __init__(self, required_fields, **kwargs):
         if not required_fields.issubset(kwargs):
             raise ValueError(f"Missing required fields. Required: {required_fields}")
@@ -117,16 +43,90 @@ class Info:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-
 class Config(Singleton):
-    DEFAULT_CONFIG_TEMPLATE = toml.loads(DEFAULT_CONFIG_TEMPLATE)
-    EXPECTED_KEYS = set(DEFAULT_CONFIG_TEMPLATE.keys())
+    DEFAULT_CONFIG_TEMPLATE = {
+        "time_zone": "Europe/Vienna",
+        "log_file_path": "/tmp/seuss.log",
+        "log_level": "INFO",
+        "prices": [
+            {
+                "use_second_day": False,
+                "number_of_lowest_prices_for_charging": 0,
+                "number_of_highest_prices_for_discharging": 0,
+                "charging_price_limit": -999
+            }
+        ],
+        "pv_panels": [
+            {
+                "name": "Panels 1",
+                "locLat": "-78.26509",
+                "locLong": "158.32421",
+                "angle": 0,
+                "direction": -90,
+                "totPower": 1.6,
+                "enabled": False
+            },
+            {
+                "name": "Panels 2",
+                "locLat": "-78.26509",
+                "locLong": "158.32421",
+                "angle": 0,
+                "direction": 0,
+                "totPower": 1.6,
+                "enabled": False
+            },
+            {
+                "name": "Panels 3",
+                "locLat": "-78.26509",
+                "locLong": "158.32421",
+                "angle": 0,
+                "direction": 90,
+                "totPower": 1.6,
+                "enabled": False
+            }
+        ],
+        "ess_unit": [
+            {
+                "name": "Victron",
+                "use_vrm": False,
+                "unit_id": "",
+                "ip_address": "venus.local",
+                "user": "",
+                "password": "",
+                "max_discharge_power": -1,
+                "enabled": False
+            }
+        ],
+        "markets": [
+            {
+                "name": "Awattar",
+                "country": "AT",
+                "primary": True,
+                "enabled": True
+            },
+            {
+                "name": "Entsoe",
+                "api_token": "enter_your_entsoe_apikey_here",
+                "in_domain": "10YAT-APG------L",
+                "out_domain": "10YAT-APG------L",
+                "primary": False,
+                "enabled": False
+            },
+            {
+                "name": "Tibber",
+                "api_token": "enter_your_tibber_apikey_here",
+                "price_unit": "energy",
+                "primary": False,
+                "enabled": False
+            }
+        ]
+    }
 
     def _init(self):
         if not self._initialized:
             main_script_path = os.path.abspath(sys.argv[0])
             main_script_directory = os.path.dirname(main_script_path)
-            self.config_file = os.path.join(main_script_directory, 'config.toml')
+            self.config_file = os.path.join(main_script_directory, 'config.json')
             self.observer = ConfigObserver()
 
             self.log_file_path = ""
@@ -148,21 +148,20 @@ class Config(Singleton):
 
     def find_failback_market(self):
         for market in self.markets:
-            if not market.primary and market.enabled:
+            if not market["primary"] and market["enabled"]:
                 return market
         return None
 
     def find_ess_unit(self):
         for ess_unit in self.ess_units:
-            if ess_unit.enabled:
-                return ess_unit.__dict__
+            if ess_unit["enabled"]:
+                return ess_unit
         return None
 
     def load_config(self):
         if os.path.exists(self.config_file):
             with open(self.config_file, 'r') as file:
-                config_data = toml.load(file)
-
+                config_data = json.load(file)
             self.update_config_with_template(config_data)
         else:
             config_data = self.DEFAULT_CONFIG_TEMPLATE
@@ -177,62 +176,49 @@ class Config(Singleton):
             with open(self.log_file_path, 'w') as file:
                 pass
 
-        prices_dict = config_data.get("prices", [{}])[0]
-        for key, value in prices_dict.items():
-            setattr(self, key, value)
+        for key in ["number_of_lowest_prices_for_charging", "number_of_highest_prices_for_discharging", "charging_price_limit"]:
+            setattr(self, key, config_data["prices"][0][key])
 
-        required_market_fields = {"name", "primary", "enabled"}
-        self.markets = [Info(required_market_fields, **market) for market in config_data.get("markets", [])]
+        self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")
 
-        required_essunit_fields = {"name", "enabled"}
-        self.ess_units = [Info(required_essunit_fields, **essunit) for essunit in config_data.get("ess_unit", [])]
-
-        required_pvpanels_fields = {"name", "enabled"}
-        self.pv_panels = [Info(required_pvpanels_fields, **pvpanel) for pvpanel in config_data.get("pv_panels", [])]
+        self.ess_units = config_data.get("ess_unit", [])
+        self.pv_panels = config_data.get("pv_panels", [])
 
         self.essunit = self.find_ess_unit()
 
-        if len(self.failback_market) == 0:
+        if not self.failback_market:
             self.failback_market = self.find_failback_market()
 
         self._set_os_timezone()
 
     def get_market_info(self, market_name):
         for market in self.markets:
-            if market.name == market_name:
-                return market.__dict__
+            if market["name"] == market_name:
+                return market
         return {}
 
     def get_essunit_info(self, unit_name):
         for essunit in self.ess_units:
-            if essunit.name == unit_name:
-                return essunit.__dict__
+            if essunit["name"] == unit_name:
+                return essunit
         return {}
 
     def get_pv_panels(self):
-        return [panel for panel in self.pv_panels if panel.enabled]
+        return [panel for panel in self.pv_panels if panel["enabled"]]
 
     def update_config_with_template(self, config_data):
-        missing_keys = [key for key in self.EXPECTED_KEYS if key not in config_data]
+        # Überprüfen und hinzufügen von fehlenden Schlüsseln und Abschnitten
+        for key, value in self.DEFAULT_CONFIG_TEMPLATE.items():
+            if key not in config_data:
+                config_data[key] = value
 
-        if missing_keys:
-            for key in missing_keys:
-                config_data[key] = self.DEFAULT_CONFIG_TEMPLATE[key]
-
-            self.save_config(config_data)
+        self.save_config(config_data)
 
     def save_config(self, config_data):
         self.observer.notify_observers(config_data=config_data)
         with open(self.config_file, 'w') as file:
-            # Kommentare aus der ursprünglichen Vorlage extrahieren
-            comments = toml.dumps(self.DEFAULT_CONFIG_TEMPLATE).splitlines()
-            for line in comments:
-                if line.strip().startswith("#"):
-                    file.write(line + "\n")
-
-            # Aktuelle Konfiguration speichern
-            toml.dump(config_data, file)
+            json.dump(config_data, file, indent=4)
 
     def _set_os_timezone(self):
         uid = os.getuid()
