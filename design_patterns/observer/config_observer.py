@@ -34,6 +34,9 @@ class ConfigObserver(Observer):
         super().__init__()
 
     def notify_observers(self, config_data):
-        # config_data = kwargs.get('config_data', {})
-        for observer in self._observers:
-            observer.handle_config_update(config_data)
+        for name, observers in self._observers.items():
+            if isinstance(observers, list):
+                for observer in observers:
+                    observer.handle_config_update(config_data)
+            else:
+                observers.handle_config_update(config_data)
