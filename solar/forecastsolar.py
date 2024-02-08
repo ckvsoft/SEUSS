@@ -45,7 +45,9 @@ class Forecastsolar:
         max_retries = 3  # Adjust the number of retries as needed
 
         for panel in self.panels:
-            url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}"
+            damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel['damping_morning'] <= 1 else 0
+            damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel['damping_evening'] <= 1 else 0
+            url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}?damping={damping_morning},{damping_evening}"
 
             for retry in range(max_retries):
                 try:
