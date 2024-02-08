@@ -128,7 +128,7 @@ For those who prefer to work in a config file, there is config.json
 | Setting           | Meaning                                                                                    |
 |:------------------|:-------------------------------------------------------------------------------------------|
 | `locLat`          | Latitude                                                                                   |
-| `locLon`          | Longitude                                                                                  |
+| `locLong`         | Longitude                                                                                  |
 | `angle`           | Angle of your panels 0 (horizontal) … 90 (vertical)                                        |
 | `direction`       | Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)    |
 | `totPower`        | installed modules power in kilo watt                                                       |
