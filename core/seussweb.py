@@ -29,7 +29,6 @@ from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
 import bottle
 
-import toml
 import json
 import os, sys, glob
 import zipfile
