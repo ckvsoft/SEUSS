@@ -287,7 +287,7 @@ class SEUSSWeb:
                 else:
                     self.logger.log_debug(f"Invalid key format - {key}")
 
-        toml_string = toml.dumps(new_config)
+        # toml_string = toml.dumps(new_config)
         self.logger.log_debug(new_config)
 
         delay_seconds = 1
