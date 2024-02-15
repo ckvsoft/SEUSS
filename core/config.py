@@ -64,6 +64,7 @@ class Config(Singleton):
                 "angle": 0,
                 "direction": -90,
                 "totPower": 1.6,
+                "total_area": 0,
                 "damping_morning": 0,
                 "damping_evening": 0,
                 "enabled": False
@@ -75,6 +76,7 @@ class Config(Singleton):
                 "angle": 0,
                 "direction": 0,
                 "totPower": 1.6,
+                "total_area": 0,
                 "damping_morning": 0,
                 "damping_evening": 0,
                 "enabled": False
@@ -86,6 +88,7 @@ class Config(Singleton):
                 "angle": 0,
                 "direction": 90,
                 "totPower": 1.6,
+                "total_area": 0,
                 "damping_morning": 0,
                 "damping_evening": 0,
                 "enabled": False
