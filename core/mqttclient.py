@@ -287,6 +287,7 @@ class MqttClient:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
                 self.logger.log_debug(f"subscribe: {actual_topic}")
                 self.client.subscribe(f"{actual_topic}")
+                self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             start_time = time.time()
 
@@ -336,6 +337,7 @@ class MqttClient:
 
             self.logger.log_debug(f"subscribe: {query_topic}")
             self.client.subscribe(f"{query_topic}")
+            self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             # Warten auf den Payload
             start_time = time.time()
