@@ -190,7 +190,7 @@ class Subscribers(MqttResult):
 class MqttClient:
     def __init__(self, mqtt_config):
         self.logger = CustomLogger()
-        self.client = mqtt.Client()
+        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.on_publish = self.on_publish
@@ -318,7 +318,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
@@ -365,7 +365,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
