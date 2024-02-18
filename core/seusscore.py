@@ -38,6 +38,8 @@ from datetime import datetime, timedelta
 import core.version as version
 from core.statsmanager import StatsManager
 from solar.forecastsolar import Forecastsolar
+from solar.solardata import Solardata
+from solar.solarbatterycalculator import SolarBatteryCalculator
 from core.conditions import Conditions, ConditionResult
 from core.config import Config
 from core.log import CustomLogger
@@ -135,7 +137,10 @@ class SEUSS:
 
     def process_solar_forecast(self, total_solar):
         forecast = Forecastsolar()
-        total_forecast = forecast.forecast()
+        solardata = Solardata()
+        total_forecast = forecast.forecast(solardata)
+        calculator = SolarBatteryCalculator(solardata)
+        self.logger.log_info(f"Needed Charging SOC: {calculator.calculate_battery_percentage()}%.")
 
         if total_forecast is not None and total_forecast > 0.0:
             percentage = (total_solar / total_forecast) * 100

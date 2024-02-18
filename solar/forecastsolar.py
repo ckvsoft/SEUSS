@@ -39,7 +39,7 @@ class Forecastsolar:
         self.logger = CustomLogger()
         self.panels = self.config.get_pv_panels()
 
-    def forecast(self):
+    def forecast(self, solardata):
         pv_info = {}
         total_forcast = 0.0
         max_retries = 3  # Adjust the number of retries as needed
@@ -48,6 +48,8 @@ class Forecastsolar:
             damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel['damping_morning'] <= 1 else 0
             damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel['damping_evening'] <= 1 else 0
             url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}?damping={damping_morning},{damping_evening}"
+
+            solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
 
             for retry in range(max_retries):
                 try:
@@ -80,21 +82,6 @@ class Forecastsolar:
             watt_hours_current_day = data['result']['watt_hours_day'].get(current_date, None)
             watt_hours_tomorrow_day = data['result']['watt_hours_day'].get(tomorrow_date, None)
 
-            self.logger.log_info(f"Place: {data['message']['info']['place']}")
-
-            if watts_current_hour is not None:
-                self.logger.log_info(f"Solar Watts for the current hour: {watts_current_hour}")
-
-            if watt_hours_current_hour is not None:
-                self.logger.log_info(f"Solar Watt Hours for the current hour: {watt_hours_current_hour}")
-                total_forcast += float(watt_hours_current_hour)
-
-            if watt_hours_current_day is not None:
-                self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
-
-            if watt_hours_tomorrow_day is not None:
-                self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
-
             # Fetching sunrise, sunset, and sun time for today
             watt_hours = data['result']['watt_hours']
 
@@ -121,6 +108,30 @@ class Forecastsolar:
             sunrise_tomorrow_datetime = datetime.strptime(sunrise_tomorrow, "%Y-%m-%d %H:%M:%S")
             sunset_tomorrow_datetime = datetime.strptime(sunset_tomorrow, "%Y-%m-%d %H:%M:%S")
             sun_time_tomorrow_minutes = int((sunset_tomorrow_datetime - sunrise_tomorrow_datetime).total_seconds() / 60)
+
+            # Update Solardata values
+            solardata.update_sunrise(sunrise_today)
+            solardata.update_sunset(sunset_today)
+            solardata.update_sun_time_today(sun_time_today_minutes)
+            solardata.update_sun_time_tomorrow(sun_time_tomorrow_minutes)
+            solardata.update_total_current_hour(watts_current_hour)
+            solardata.update_total_current_day(watt_hours_current_day)
+            solardata.update_total_tomorrow_day(watt_hours_tomorrow_day)
+
+            self.logger.log_info(f"Place: {data['message']['info']['place']}")
+
+            if watts_current_hour is not None:
+                self.logger.log_info(f"Solar Watts for the current hour: {watts_current_hour}")
+
+            if watt_hours_current_hour is not None:
+                self.logger.log_info(f"Solar Watt Hours for the current hour: {watt_hours_current_hour}")
+                total_forcast += float(watt_hours_current_hour)
+
+            if watt_hours_current_day is not None:
+                self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
+
+            if watt_hours_tomorrow_day is not None:
+                self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
 
             # Log the results
             self.logger.log_info(f"Sunrise today: {sunrise_today}")
