@@ -214,6 +214,13 @@ class Config(Singleton):
                 return essunit
         return {}
 
+    @staticmethod
+    def get_unit_id(config):
+        for unit in config['ess_unit']:
+            if unit.get('enabled', False) and 'unit_id' in unit:
+                return unit['unit_id']
+        return 0
+
     def get_pv_panels(self):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
@@ -239,10 +246,25 @@ class Config(Singleton):
                                 if item_key not in sub_item:
                                     sub_item[item_key] = item_value
 
+
+        self.move_key_to_end(self.config_data['markets'], 'primary')
+
+        self.move_key_to_end(self.config_data['pv_panels'], 'enabled')
+        self.move_key_to_end(self.config_data['ess_unit'], 'enabled')
+        self.move_key_to_end(self.config_data['markets'], 'enabled')
+
         self.save_config(self.config_data)
+
+    def move_key_to_end(self, data, key):
+        if isinstance(data, list):
+            for item in data:
+                if key in item:
+                    value = item.pop(key)
+                    item[key] = value
 
     def save_config(self, config_data):
         self.observer.notify_observers(config_data=config_data)
+
         with open(self.config_file, 'w') as file:
             json.dump(config_data, file, indent=4)
 

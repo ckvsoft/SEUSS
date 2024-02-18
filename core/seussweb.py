@@ -217,7 +217,7 @@ class SEUSSWeb:
 
         config = self.config.config_data
 
-        unit_id = config['ess_unit'][0]['unit_id']
+        unit_id = Config.get_unit_id(config)
         if not self._is_hex(unit_id):
             config['ess_unit'][0]['unit_id'] = Config.find_venus_unique_id()
         config = Utils.decode_passwords_from_base64(config)
