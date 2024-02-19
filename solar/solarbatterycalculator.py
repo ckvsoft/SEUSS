@@ -47,10 +47,15 @@ from core.statsmanager import StatsManager
 
 class SolarBatteryCalculator:
     def __init__(self, solardata):
-        self.average_consumption = max(round(StatsManager.get_data('gridmeters', 'forward_start'), 2), 1.0)  # Durchschnittlicher Stromverbrauch pro Zeitperiode (z.B. pro Tag)
         self.solar_production = solardata.total_current_day
         self.solar_peak_power = solardata.power_peak
         self.daylight_hours = solardata.sun_time_today_minutes / 60
+
+        average_consumption = StatsManager.get_data('gridmeters', 'forward_start')
+        if average_consumption is not None:
+            self.efficiency = round(average_consumption, 2)
+        else:
+            self.efficiency = 0.0
 
         efficiency_data = StatsManager.get_data('solar', 'efficiency')
         if efficiency_data is not None:
