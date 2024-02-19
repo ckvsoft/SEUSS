@@ -50,36 +50,38 @@ class SolarBatteryCalculator:
         self.solar_production = solardata.total_current_day
         self.solar_peak_power = solardata.power_peak
         self.daylight_hours = solardata.sun_time_today_minutes / 60
+        self.average_consumption = 0.0
+        self.efficiency = 0.0
 
         average_consumption = StatsManager.get_data('gridmeters', 'forward_start')
         if average_consumption is not None:
-            self.efficiency = round(average_consumption, 2)
-        else:
-            self.efficiency = 0.0
+            self.average_consumption = round(average_consumption, 2)
 
         efficiency_data = StatsManager.get_data('solar', 'efficiency')
         if efficiency_data is not None:
             self.efficiency = round(efficiency_data[0], 2)
-        else:
-            self.efficiency = 0
 
     def calculate_battery_percentage(self):
-        max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
+        try:
+            max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
 
-        # Tatsächliche Solarproduktion während der Sonnenstunden berechnen
-        actual_solar_during_daylight = min(max_solar_per_hour * self.daylight_hours, self.solar_production)
+            # Tatsächliche Solarproduktion während der Sonnenstunden berechnen
+            actual_solar_during_daylight = min(max_solar_per_hour * self.daylight_hours, self.solar_production)
 
-        # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
-        if actual_solar_during_daylight >= self.average_consumption:
-            return 0  # Der Akku muss während der Sonnenstunden nicht geladen werden
+            # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
+            if actual_solar_during_daylight >= self.average_consumption:
+                return 0  # Der Akku muss während der Sonnenstunden nicht geladen werden
 
-        # Berechnen, wie viel Strom aus Akkus benötigt wird, um den Rest des Verbrauchs zu decken
-        battery_power_needed = self.average_consumption - actual_solar_during_daylight
+            # Berechnen, wie viel Strom aus Akkus benötigt wird, um den Rest des Verbrauchs zu decken
+            battery_power_needed = self.average_consumption - actual_solar_during_daylight
 
-        # Berechnen des Prozentsatzes aus Akkus
-        battery_percentage = (battery_power_needed / self.average_consumption) * 100
+            # Berechnen des Prozentsatzes aus Akkus
+            battery_percentage = (battery_power_needed / self.average_consumption) * 100
 
-        # Sicherstellen, dass der Prozentsatz zwischen 0 und 100 liegt
-        battery_percentage = max(min(battery_percentage, 100), 0)
+            # Sicherstellen, dass der Prozentsatz zwischen 0 und 100 liegt
+            battery_percentage = max(min(battery_percentage, 100), 0)
 
-        return battery_percentage
+            return battery_percentage
+
+        except TypeError:
+            return 0
