@@ -97,6 +97,54 @@ class PvInverterResults(MqttResult):
         else:
             return None
 
+class GridMetersResults(MqttResult):
+    def __init__(self):
+        super().__init__()
+        self.results = {}
+        self.gridmeters = {}
+        # self.status = StatsManager()
+
+    def add_value(self, topic, value):
+        self.results[topic] = value
+        self.add_gridmeters(topic, value)
+
+    def add_gridmeters(self, topic, value):
+        pattern = r'N/[^/]+/grid/(\d+)/([^/]+)'
+
+        # Verwenden Sie re.match, um den regulären Ausdruck auf die Zeichenkette anzuwenden
+        match = re.match(pattern, topic)
+
+        if match:
+            id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            keyword = match.group(2)
+
+            if id not in self.gridmeters:
+                self.gridmeters[id] = {}
+
+            index = topic.find(keyword)
+
+            if index != -1:
+                result = topic[index:]
+                self.gridmeters[id][result] = value
+
+    def get_forward_kwh(self, id):
+        pi = 1
+        forward = self.get_value(id, 'Ac/Energy/Forward')
+        if forward is None:
+            return 0.0
+
+        stats_manager_instance = StatsManager()
+        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+        forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
+        forward = forward - forward_start
+        return float(forward * pi)
+
+    def get_value(self,device_id, key):
+        if device_id in self.gridmeters and key in self.gridmeters[device_id]:
+            value_str = self.gridmeters[device_id][key]
+            return json.loads(value_str)['value']
+        else:
+            return None
 
 class Subscribers(MqttResult):
     def __init__(self):

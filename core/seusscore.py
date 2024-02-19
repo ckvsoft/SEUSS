@@ -118,8 +118,20 @@ class SEUSS:
 
     def get_total_solar_yield(self, essunit):
         essunit.get_soc()
+        gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
+
+        for key_outer, value_outer in gridmeters.gridmeters.items():
+            customname = gridmeters.get_value(key_outer, 'CustomName')
+            productname = gridmeters.get_value(key_outer, 'ProductName')
+            forward = gridmeters.get_forward_kwh(key_outer)
+            total_solar += float(forward)
+            self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
+            self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh.")
+
+            for key_inner, value_inner in value_outer.items():
+                self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')
@@ -223,7 +235,11 @@ class SEUSS:
 
         sys.exit(0)
 
+    def excepthook_handler(self, exc_type, exc_value, exc_traceback):
+        self.logger.log_error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
+
     def start(self):
+        sys.excepthook = self.excepthook_handler
         bottle_thread = threading.Thread(target=self.seuss_web.run)
         bottle_thread.daemon = True
         bottle_thread.start()

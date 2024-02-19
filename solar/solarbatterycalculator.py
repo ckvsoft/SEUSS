@@ -43,16 +43,20 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-from solar.solardata import Solardata
 from core.statsmanager import StatsManager
 
 class SolarBatteryCalculator:
     def __init__(self, solardata):
-        self.average_consumption = 22.0  # Durchschnittlicher Stromverbrauch pro Zeitperiode (z.B. pro Tag)
+        self.average_consumption = max(round(StatsManager.get_data('gridmeters', 'forward_start'), 2), 1.0)  # Durchschnittlicher Stromverbrauch pro Zeitperiode (z.B. pro Tag)
         self.solar_production = solardata.total_current_day
         self.solar_peak_power = solardata.power_peak
         self.daylight_hours = solardata.sun_time_today_minutes / 60
-        self.efficiency = round(StatsManager.get_data('solar', 'efficiency')[0], 2)
+
+        efficiency_data = StatsManager.get_data('solar', 'efficiency')
+        if efficiency_data is not None:
+            self.efficiency = round(efficiency_data[0], 2)
+        else:
+            self.efficiency = 0
 
     def calculate_battery_percentage(self):
         max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100

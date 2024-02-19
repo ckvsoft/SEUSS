@@ -31,7 +31,7 @@ import socket
 import sys
 
 from core.log import CustomLogger
-from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults
+from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus, EssUnitNameResolutionError#
 from core.config import Config
 
@@ -146,6 +146,18 @@ class Victron(ESSUnit):
 
         except (TypeError, ValueError) as e:
             self.logger.log_error(f"Error: {e}")
+
+    def get_grid_meters(self):
+        meters = self._gridmeters(f'N/{self.unit_id}/grid')
+        return meters
+
+    def _gridmeters(self, base_topic):
+        discovery_topic = f"{base_topic}/#"
+        with MqttClient(self.mqtt_config) as mqtt:
+            gridmeters = GridMetersResults()
+            mqtt.subscribe(gridmeters, discovery_topic)
+
+            return gridmeters
 
     def get_solar_energy(self):
         inverters = self._inverters(f'N/{self.unit_id}/pvinverter')
