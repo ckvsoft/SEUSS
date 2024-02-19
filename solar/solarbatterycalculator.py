@@ -49,7 +49,7 @@ class SolarBatteryCalculator:
     def __init__(self, solardata):
         self.solar_production = solardata.total_current_day
         self.solar_peak_power = solardata.power_peak
-        self.daylight_hours = solardata.sun_time_today_minutes / 60
+        self.daylight_hours = solardata.sun_time_today_minutes
         self.average_consumption = 0.0
         self.efficiency = 0.0
 
@@ -66,7 +66,7 @@ class SolarBatteryCalculator:
             max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
 
             # Tatsächliche Solarproduktion während der Sonnenstunden berechnen
-            actual_solar_during_daylight = min(max_solar_per_hour * self.daylight_hours, self.solar_production)
+            actual_solar_during_daylight = min(max_solar_per_hour * self.daylight_hours / 60, self.solar_production)
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= self.average_consumption:
