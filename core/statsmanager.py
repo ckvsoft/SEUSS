@@ -63,7 +63,7 @@ class StatsManager(Singleton):
 
     @classmethod
     def insert_new_daily_status_data(cls, group, key, value):
-        cls.cleanup_old_entries(group)  # Clean up old entries before inserting new data
+        # cls.cleanup_old_entries(group)  # Clean up old entries before inserting new data
 
         date_key = f"date_{key}"
         today = datetime.now().strftime('%Y-%m-%d')
@@ -73,6 +73,12 @@ class StatsManager(Singleton):
 
         if date_key not in cls.data[group] or cls.data[group][date_key] != today:
             # If the date key doesn't exist or is not today, update the entry
+            current_value = cls.data[group].get(key)
+            if current_value is not None:
+                if value > current_value:
+                    current_value = value - current_value
+                    cls.update_percent_status_data(group, 'average', current_value, 30)
+
             cls.data[group][date_key] = today
             cls.data[group][key] = value
             cls.save_data()
@@ -95,7 +101,7 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value):
+    def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -111,7 +117,7 @@ class StatsManager(Singleton):
         if key in cls.data[group]:
             if isinstance(cls.data[group][key], list):
                 value, count = cls.data[group][key]
-                if count == 1000:
+                if count >= max_count:
                     e_value =value * count
                     e_value = (e_value - value)
                     count -= 1
