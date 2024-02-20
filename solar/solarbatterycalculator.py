@@ -81,7 +81,7 @@ class SolarBatteryCalculator:
             # Sicherstellen, dass der Prozentsatz zwischen 0 und 100 liegt
             battery_percentage = max(min(battery_percentage, 100), 0)
 
-            return battery_percentage
+            return round(battery_percentage, 2)
 
         except TypeError:
             return 0
