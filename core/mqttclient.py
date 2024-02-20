@@ -323,7 +323,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():

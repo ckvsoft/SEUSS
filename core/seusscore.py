@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 
 import core.version as version
 from core.statsmanager import StatsManager
-from solar.forecastsolar import Forecastsolar
+from solar.openmeteo import OpenMeteo
 from solar.solardata import Solardata
 from solar.solarbatterycalculator import SolarBatteryCalculator
 from core.conditions import Conditions, ConditionResult
@@ -148,7 +148,7 @@ class SEUSS:
         return total_solar
 
     def process_solar_forecast(self, total_solar):
-        forecast = Forecastsolar()
+        forecast = OpenMeteo() # Forecastsolar()
         solardata = Solardata()
         total_forecast = forecast.forecast(solardata)
         calculator = SolarBatteryCalculator(solardata)
