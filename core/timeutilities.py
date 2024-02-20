@@ -67,3 +67,7 @@ class TimeUtilities:
         else:
             print(f"Ungültiger Datentyp: {type(utc_time)}")
             return None
+
+    @staticmethod
+    def get_now():
+        return datetime.now(TimeUtilities.TZ)

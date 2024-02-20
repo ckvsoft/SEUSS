@@ -29,8 +29,10 @@ import time
 import re
 import json
 import paho.mqtt.client as mqtt
+from datetime import datetime
 from core.log import CustomLogger
 from core.utils import Utils
+from core.timeutilities import TimeUtilities
 
 class MqttResult:
     def __init__(self):
@@ -60,11 +62,11 @@ class PvInverterResults(MqttResult):
         match = re.match(pattern, topic)
 
         if match:
-            id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            device_id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
             keyword = match.group(2)
 
-            if id not in self.inverters:
-                self.inverters[id] = {}
+            if device_id not in self.inverters:
+                self.inverters[device_id] = {}
 
             index = topic.find(keyword)
 
@@ -72,15 +74,15 @@ class PvInverterResults(MqttResult):
                 result = topic[index:]
                 if result == 'ProductName':
                     if result.lower() == "opentpu" or result.lower == "ahoi":
-                        self.inverters[id]['PI'] = '{"value": 1000}'
+                        self.inverters[device_id]['PI'] = '{"value": 1000}'
                     else:
-                        self.inverters[id]['PI'] = '{"value": 1000}'
+                        self.inverters[device_id]['PI'] = '{"value": 1000}'
 
-                self.inverters[id][result] = value
+                self.inverters[device_id][result] = value
 
-    def get_forward_kwh(self, id):
-        pi = self.get_value(id, 'PI')
-        forward = self.get_value(id, 'Ac/Energy/Forward')
+    def get_forward_kwh(self, device_id):
+        pi = self.get_value(device_id, 'PI')
+        forward = self.get_value(device_id, 'Ac/Energy/Forward')
         if forward is None:
             return 0.0
 
@@ -127,9 +129,9 @@ class GridMetersResults(MqttResult):
                 result = topic[index:]
                 self.gridmeters[id][result] = value
 
-    def get_forward_kwh(self, id):
-        pi = 1
-        forward = self.get_value(id, 'Ac/Energy/Forward')
+    def get_forward_kwh(self, device_id):
+        pi = 1000
+        forward = self.get_value(device_id, 'Ac/Energy/Forward')
         if forward is None:
             return 0.0
 
@@ -138,6 +140,17 @@ class GridMetersResults(MqttResult):
         forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
         forward = forward - forward_start
         return float(forward * pi)
+
+    def get_hourly_kwh(self, device_id):
+        forward = self.get_forward_kwh(device_id)
+        now = TimeUtilities.get_now()
+
+        midnight = datetime(now.year, now.month, now.day).astimezone(TimeUtilities.TZ)
+        time_since_midnight = now - midnight
+
+        # Umwandlung der vergangenen Zeit in Stunden
+        hours_since_midnight = time_since_midnight.total_seconds() / 3600
+        return forward / hours_since_midnight
 
     def get_value(self,device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:
