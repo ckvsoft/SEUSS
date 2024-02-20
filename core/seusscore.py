@@ -128,7 +128,7 @@ class SEUSS:
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
             self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
-            self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh, hour: {round(forward_hourly, 2)} Wh")
+            self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
