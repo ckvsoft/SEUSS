@@ -48,6 +48,7 @@ class Config(Singleton):
         "time_zone": "Europe/Vienna",
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
+        "use_solar_forecast_to_abort": False,
         "prices": [
             {
                 "use_second_day": False,

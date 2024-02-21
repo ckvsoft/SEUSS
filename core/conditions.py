@@ -148,13 +148,13 @@ class Conditions:
     def add_abort_conditions(self):
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
-            "soc greater_than needed_soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.solardata.abort_solar else False,
+            "soc greater_than needed_soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
         }
 
         discharging_abort_conditions = {}
         if self.solardata.soc is not None and self.solardata.need_soc is not None:
-            discharging_abort_conditions["outside sun hours and soc greater_than needed_soc"] = lambda: self.solardata.outside_sun_hours() if self.solardata.abort_solar else False
+            discharging_abort_conditions["outside sun hours and soc greater_than needed_soc"] = lambda: self.solardata.outside_sun_hours() if self.config.config_data.get('use_solar_forecast_to_abort') else False
 
         # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
         self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)

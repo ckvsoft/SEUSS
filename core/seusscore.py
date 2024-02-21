@@ -56,36 +56,64 @@ class SEUSS:
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
+        self.items = self.initialize_items()
+        self.current_time = datetime.now()
+
+    #    def run_scheduler(self):
+#        # Führen Sie den Scheduler aus
+#        while not self.svs_thread_stop_flag.is_set():
+#            schedule.run_pending()
+#            time.sleep(1)
+
+    def handle_config_update(self, config_data):
+        self.run_markets()
+        self.run_essunit()
+
+    def run_markets(self):
+        self.items = self.update_items()
+        self.seuss_web.set_item_list(self.items)
+
+    def run_essunit(self):
+        essunit = self.initialize_essunit()
+        total_solar = self.process_solar_data(essunit)
+
+        self.process_solar_forecast(total_solar)
+
+        if self.items.get_item_count() > 0:
+            self.evaluate_conditions_and_control_charging_discharging(essunit)
+        else:
+            self.handle_no_data(essunit)
+
+        next_minute = (self.current_time.minute // 15 + 1) * 15
+        next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
+        next_run_time = next_hour.replace(minute=next_minute % 60)
+        self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
 
     def run_svs(self):
         self.load_configuration()
         self.initialize_logging()
-
-        items = self.initialize_items()
-        no_data = self.no_data
+        self.config.observer.add_observer("seuss", self)
+        starting = True
 
         try:
             while True:
-                current_time = datetime.now()
+                self.current_time = datetime.now()
 
-                items = self.update_items(items)
-                self.seuss_web.set_item_list(items)
+                if self.current_time.minute == 0 and self.current_time.second == 5 or self.items.get_item_count() == 0:
+                    self.run_markets()
+                    if self.items:
+                        next_hour = self.current_time.replace(second=0, microsecond=0) + timedelta(hours=1)
+                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
-                essunit = self.initialize_essunit()
-                total_solar = self.process_solar_data(essunit)
-
-                self.process_solar_forecast(total_solar)
-
-                if items.get_item_count() > 0:
-                    self.evaluate_conditions_and_control_charging_discharging(essunit, items, no_data)
-                else:
-                    self.handle_no_data(essunit, no_data)
+                if self.current_time.minute % 15 == 0 and self.current_time.second == 0 or starting:
+                    self.run_essunit()
+                    starting = False
 
                 self.perform_test_run()
-
-                self.handle_no_data_sleep(no_data)
-
-                no_data, time_to_next_hour = self.handle_time_to_next_hour(current_time, items, no_data)
+                self.handle_no_data_sleep()
+                # self.handle_time_to_next_hour(current_time)
+                time.sleep(1)
 
         except KeyboardInterrupt:
             self.graceful_exit(signal.SIGINT, None)
@@ -100,8 +128,8 @@ class SEUSS:
     def initialize_items(self):
         return Itemlist.create_item_list([])
 
-    def update_items(self, items):
-        return items.perform_update(items)
+    def update_items(self):
+        return self.items.perform_update(self.items)
 
     def initialize_essunit(self):
         if self.config.essunit is None:
@@ -166,10 +194,10 @@ class SEUSS:
         else:
             self.logger.log_info("Solar forecast is zero or not available.")
 
-    def evaluate_conditions_and_control_charging_discharging(self, essunit, items, no_data):
+    def evaluate_conditions_and_control_charging_discharging(self, essunit):
         condition_charging_result = ConditionResult()
         condition_discharging_result = ConditionResult()
-        conditions_instance = Conditions(items, self.solardata)
+        conditions_instance = Conditions(self.items, self.solardata)
         conditions_instance.info()
         conditions_instance.evaluate_conditions(condition_charging_result, "charging")
         conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
@@ -177,8 +205,8 @@ class SEUSS:
         self.control_charging(essunit, condition_charging_result)
         self.control_discharging(essunit, condition_discharging_result)
 
-        items.log_items()
-        no_data[0] = 0
+        self.items.log_items()
+        self.no_data[0] = 0
 
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:
@@ -197,9 +225,9 @@ class SEUSS:
             self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
 
-    def handle_no_data(self, essunit, no_data):
+    def handle_no_data(self, essunit):
         self.logger.log_warning("No data available")
-        no_data[0] += 1
+        self.no_data[0] += 1
         if essunit is not None:
             self.logger.log_info("There are currently no prices, so the charging mode is turned off.")
             essunit.set_discharge("off")
@@ -211,23 +239,21 @@ class SEUSS:
         if test_run is not None:
             self.graceful_exit(signal.SIGINT, None)
 
-    def handle_no_data_sleep(self, no_data):
-        if 0 < no_data[0] < 4:
+    def handle_no_data_sleep(self):
+        if 0 < self.no_data[0] < 4:
             sleeptime = random.randint(10, 60)
-            self.logger.log_info(f"There is no data available, attempt number {no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
+            self.logger.log_info(f"There is no data available, attempt number {self.no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
             time.sleep(sleeptime)
         else:
-            no_data[0] = 0  # Aktualisiere die verpackte Variable
+            self.no_data[0] = 0  # Aktualisiere die verpackte Variable
 
-    def handle_time_to_next_hour(self, current_time, items, no_data):
+    def handle_time_to_next_hour(self, current_time):
         next_hour = (current_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
         time_to_next_hour = int((next_hour - current_time).total_seconds())
         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
-        if items:
-            self.logger.log_info(f"Current Spotmarket: {items.current_market_name}, failback: {items.failback_market_name}")
+        if self.items:
+            self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
         time.sleep(max(0, time_to_next_hour + 2))
-
-        return no_data, time_to_next_hour
 
     def graceful_exit(self, signum, frame):
         print("\r   ") # clear ^C
@@ -249,6 +275,13 @@ class SEUSS:
         self.svs_thread = threading.Thread(target=self.run_svs)
         self.svs_thread.daemon = True
         self.svs_thread.start()
+
+#        schedule.every().hour.at(":05").do(self.run_markets)  # Jede volle Stunde + 5 Sekunden
+#        schedule.every(15).minutes.do(self.run_essunit)  # Alle 15 Minuten
+
+#        scheduler_thread = threading.Thread(target=self.run_scheduler)
+#        scheduler_thread.daemon = True
+#        scheduler_thread.start()
 
         signal.signal(signal.SIGINT, self.graceful_exit)
 
