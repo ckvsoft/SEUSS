@@ -217,6 +217,9 @@ class SEUSS:
         if condition_charging_result.execute and essunit is not None:
             self.logger.log_info(f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
+        elif condition_charging_result.condition and essunit is not None:
+            self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
+            essunit.set_charge("off")
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
@@ -226,6 +229,8 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_discharging_result.condition} result: {condition_discharging_result.execute}, discharging is turned on.")
             essunit.set_discharge("on")
+        elif condition_discharging_result.condition and essunit is not None:
+            self.logger.log_info(f"{condition_discharging_result.condition}, discharging is turned off.")
         elif essunit is not None:
             self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
