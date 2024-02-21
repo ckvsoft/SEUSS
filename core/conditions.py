@@ -154,7 +154,7 @@ class Conditions:
 
         discharging_abort_conditions = {}
         if self.solardata.soc is not None and self.solardata.need_soc is not None:
-            discharging_abort_conditions["outside sun hours and soc greater_than needed_soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc > self.solardata.need_soc  if self.config.config_data.get('use_solar_forecast_to_abort') else False
+            discharging_abort_conditions["outside sun hours and soc lower_than needed_soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False
 
         # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
         self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)
@@ -196,11 +196,7 @@ class Conditions:
                     f"Error while evaluating abort condition: {e}")
 
             if result:
-                # Nur beim Laden den execute-Wert umkehren
                 self.logger.log_info(f"Evaluating abort condition: {condition_key} - Result: {result}")
-                if operation_mode == "charging":
-                    condition_result.execute = not result
-                else:
-                    condition_result.execute = result
+                condition_result.execute = not result
                 condition_result.condition = condition_key
                 break
