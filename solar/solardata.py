@@ -35,7 +35,6 @@ class Solardata:
         self.total_current_day = None
         self.total_tomorrow_day = None
         self.power_peak = 0.0
-        self.total = 0.0
 
     def update_sunrise(self, sunrise):
         self.sunrise = sunrise
@@ -60,5 +59,3 @@ class Solardata:
 
     def update_power_peak(self, peak):
         self.power_peak = peak
-    def update_total(self, total):
-        self.total = total

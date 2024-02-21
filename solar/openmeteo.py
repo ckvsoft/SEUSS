@@ -66,6 +66,10 @@ class OpenMeteo:
         total_watt_hours_current_day = 0
         total_watt_hours_tomorrow_day = 0
         total_area = 0.0
+        sunrise = None
+        sunset = None
+        sunshine_duration_current_day = None
+        sunshine_duration_tomorrow_day = None
 
         timezone = pytz.timezone(self.config.time_zone)
         current_datetime = datetime.now(timezone)
@@ -113,6 +117,12 @@ class OpenMeteo:
             shortwave_radiation_today = data['daily']['shortwave_radiation_sum'][index_today]
             shortwave_radiation_tomorrow = data['daily']['shortwave_radiation_sum'][index_tomorrow]
 
+            sunset = data['daily']['sunset'][index_today]
+            sunrise = data['daily']['sunrise'][index_today]
+
+            sunshine_duration_current_day = data['daily']['sunshine_duration'][index_today]
+            sunshine_duration_tomorrow_day = data['daily']['sunshine_duration'][index_tomorrow]
+
             total_watt_hours_current_day += (shortwave_radiation_today / 3.6) * 1000
             total_watt_hours_tomorrow_day += (shortwave_radiation_tomorrow / 3.6) * 1000
 
@@ -125,6 +135,10 @@ class OpenMeteo:
         solardata.update_total_current_hour(total_watts_current_hour)
         solardata.update_total_current_day(round((total_watt_hours_current_day * total_area) * 0.25, 4))
         solardata.update_total_tomorrow_day(round((total_watt_hours_tomorrow_day * total_area) * 0.25, 4))
+        solardata.update_sunset(sunset)
+        solardata.update_sunrise(sunrise)
+        solardata.update_sun_time_today(sunshine_duration_current_day / 60)
+        solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 
         # Log der Gesamtwerte
         self.logger.log_info(f"Total Solar Watts for the current hour: {total_watts_current_hour}")
