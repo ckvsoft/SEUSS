@@ -25,22 +25,58 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
+from datetime import datetime, time
+
 class Solardata:
     def __init__(self):
-        self.sunrise = None
-        self.sunset = None
+        self.sunrise_current_day = None
+        self.sunset_current_day = None
+        self.sunrise_tomorrow_day = None
+        self.sunset_tomorrow_day = None
         self.sun_time_today_minutes = None
         self.sun_time_tomorrow_minutes = None
         self.total_current_hour = None
         self.total_current_day = None
         self.total_tomorrow_day = None
         self.power_peak = 0.0
+        self.need_soc = 0
+        self.soc = 0
+        self.abort_solar = True
 
-    def update_sunrise(self, sunrise):
-        self.sunrise = sunrise
+    def outside_sun_hours(self):
+        current_datetime = datetime.now()
+        current_time = current_datetime.time()
 
-    def update_sunset(self, sunset):
-        self.sunset = sunset
+        # Konvertieren Sie die Zeitzeichenfolge in ein datetime-Objekt
+        sunrise_datetime = datetime.strptime(self.sunrise_current_day, "%Y-%m-%dT%H:%M")
+        sunset_datetime = datetime.strptime(self.sunset_tomorrow_day, "%Y-%m-%dT%H:%M")
+
+        # Extrahieren Sie die Zeit aus den datetime-Objekten
+        sunrise_time = sunrise_datetime.time()
+        sunset_time = sunset_datetime.time()
+
+        # Wenn Sonnenuntergang nach Sonnenaufgang liegt, sind wir außerhalb der Sonnenstunden,
+        # wenn die aktuelle Zeit vor Sonnenaufgang oder nach Sonnenuntergang liegt.
+        # Andernfalls sind wir innerhalb der Sonnenstunden.
+        if sunrise_time < sunset_time:
+            return current_time < sunrise_time or current_time > sunset_time
+        else:
+            # Wenn Sonnenuntergang vor Sonnenaufgang liegt, sind wir innerhalb der Sonnenstunden,
+            # wenn die aktuelle Zeit nicht zwischen Sonnenuntergang und Sonnenaufgang liegt.
+            # Andernfalls sind wir außerhalb der Sonnenstunden.
+            return not (sunrise_time < current_time < sunset_time)
+
+    def update_sunrise_current_day(self, sunrise):
+        self.sunrise_current_day = sunrise
+
+    def update_sunset_current_day(self, sunset):
+        self.sunset_current_day = sunset
+
+    def update_sunrise_tomorrow_day(self, sunrise):
+        self.sunrise_tomorrow_day = sunrise
+
+    def update_sunset_tomorrow_day(self, sunset):
+        self.sunset_tomorrow_day = sunset
 
     def update_sun_time_today(self, sun_time_today_minutes):
         self.sun_time_today_minutes = sun_time_today_minutes
@@ -59,3 +95,12 @@ class Solardata:
 
     def update_power_peak(self, peak):
         self.power_peak = peak
+
+    def update_need_soc(self, percentage):
+        self.need_soc = round(percentage / 5) * 5
+
+    def update_soc(self, percentage):
+        self.soc = percentage
+
+    def update_abort_solar(self, abort):
+        self.abort_solar = abort

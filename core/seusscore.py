@@ -55,6 +55,7 @@ class SEUSS:
         self.seuss_web = SEUSSWeb()
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
+        self.solardata = Solardata()
 
     def run_svs(self):
         self.load_configuration()
@@ -117,7 +118,7 @@ class SEUSS:
         return total_solar
 
     def get_total_solar_yield(self, essunit):
-        essunit.get_soc()
+        self.solardata.update_soc(essunit.get_soc())
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
@@ -149,10 +150,11 @@ class SEUSS:
 
     def process_solar_forecast(self, total_solar):
         forecast = OpenMeteo() # Forecastsolar()
-        solardata = Solardata()
-        total_forecast = forecast.forecast(solardata)
-        calculator = SolarBatteryCalculator(solardata)
-        self.logger.log_info(f"Needed Charging SOC: {calculator.calculate_battery_percentage()}%.")
+        # self.solardata = Solardata()
+        total_forecast = forecast.forecast(self.solardata)
+        calculator = SolarBatteryCalculator(self.solardata)
+        self.solardata.update_need_soc(calculator.calculate_battery_percentage())
+        self.logger.log_info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
 
         if total_forecast is not None and total_forecast > 0.0:
             percentage = (total_solar / total_forecast) * 100
@@ -167,7 +169,7 @@ class SEUSS:
     def evaluate_conditions_and_control_charging_discharging(self, essunit, items, no_data):
         condition_charging_result = ConditionResult()
         condition_discharging_result = ConditionResult()
-        conditions_instance = Conditions(items)
+        conditions_instance = Conditions(items, self.solardata)
         conditions_instance.info()
         conditions_instance.evaluate_conditions(condition_charging_result, "charging")
         conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")

@@ -82,13 +82,13 @@ class Forecastsolar:
             watt_hours_current_day = data['result']['watt_hours_day'].get(current_date, None)
             watt_hours_tomorrow_day = data['result']['watt_hours_day'].get(tomorrow_date, None)
 
-            # Fetching sunrise, sunset, and sun time for today
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for today
             watt_hours = data['result']['watt_hours']
 
-            # Fetching sunrise, sunset, and sun time for today
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for today
             watt_hours_today = {key: value for key, value in watt_hours.items() if key.startswith(current_date)}
 
-            # Sunrise and sunset for today
+            # Sunrise and sunset_current_day for today
             sunrise_today = min(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
             sunset_today = max(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
 
@@ -97,10 +97,10 @@ class Forecastsolar:
             sunset_today_datetime = datetime.strptime(sunset_today, "%Y-%m-%d %H:%M:%S")
             sun_time_today_minutes = int((sunset_today_datetime - sunrise_today_datetime).total_seconds() / 60)
 
-            # Fetching sunrise, sunset, and sun time for tomorrow
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for tomorrow
             watt_hours_tomorrow = {key: value for key, value in watt_hours.items() if key.startswith(tomorrow_date)}
 
-            # Sunrise and sunset for tomorrow
+            # Sunrise and sunset_current_day for tomorrow
             sunrise_tomorrow = min(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
             sunset_tomorrow = max(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
 

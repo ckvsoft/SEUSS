@@ -66,8 +66,10 @@ class OpenMeteo:
         total_watt_hours_current_day = 0
         total_watt_hours_tomorrow_day = 0
         total_area = 0.0
-        sunrise = None
-        sunset = None
+        sunrise_current_day = None
+        sunset_current_day = None
+        sunrise_tomorrow_day = None
+        sunset_tomorrow_day = None
         sunshine_duration_current_day = None
         sunshine_duration_tomorrow_day = None
 
@@ -107,21 +109,23 @@ class OpenMeteo:
                 self.logger.log_error(f"Can't retrieve PV info. Error: {e}")
                 return None
 
-
             hourly_data = data.get('hourly', {})
             index = current_datetime.hour
 
-            index_today = data['daily']['time'].index(current_date)
-            index_tomorrow = data['daily']['time'].index(tomorrow_date)
+            index_today = data['daily'].get('time', []).index(current_date)
+            index_tomorrow = data['daily'].get('time', []).index(tomorrow_date)
 
-            shortwave_radiation_today = data['daily']['shortwave_radiation_sum'][index_today]
-            shortwave_radiation_tomorrow = data['daily']['shortwave_radiation_sum'][index_tomorrow]
+            shortwave_radiation_today = data['daily'].get('shortwave_radiation_sum', [])[index_today]
+            shortwave_radiation_tomorrow = data['daily'].get('shortwave_radiation_sum', [])[index_tomorrow]
 
-            sunset = data['daily']['sunset'][index_today]
-            sunrise = data['daily']['sunrise'][index_today]
+            sunset_current_day = data['daily'].get('sunset', [])[index_today]
+            sunrise_current_day = data['daily'].get('sunrise', [])[index_today]
 
-            sunshine_duration_current_day = data['daily']['sunshine_duration'][index_today]
-            sunshine_duration_tomorrow_day = data['daily']['sunshine_duration'][index_tomorrow]
+            sunset_tomorrow_day = data['daily'].get('sunset', [])[index_tomorrow]
+            sunrise_tomorrow_day = data['daily'].get('sunrise', [])[index_tomorrow]
+
+            sunshine_duration_current_day = data['daily'].get('sunshine_duration', [])[index_today]
+            sunshine_duration_tomorrow_day = data['daily'].get('sunshine_duration', [])[index_tomorrow]
 
             total_watt_hours_current_day += (shortwave_radiation_today / 3.6) * 1000
             total_watt_hours_tomorrow_day += (shortwave_radiation_tomorrow / 3.6) * 1000
@@ -135,8 +139,10 @@ class OpenMeteo:
         solardata.update_total_current_hour(total_watts_current_hour)
         solardata.update_total_current_day(round((total_watt_hours_current_day * total_area) * 0.25, 4))
         solardata.update_total_tomorrow_day(round((total_watt_hours_tomorrow_day * total_area) * 0.25, 4))
-        solardata.update_sunset(sunset)
-        solardata.update_sunrise(sunrise)
+        solardata.update_sunset_current_day (sunset_current_day)
+        solardata.update_sunrise_current_day(sunrise_current_day)
+        solardata.update_sunset_tomorrow_day(sunset_tomorrow_day)
+        solardata.update_sunrise_tomorrow_day(sunrise_tomorrow_day)
         solardata.update_sun_time_today(sunshine_duration_current_day / 60)
         solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 

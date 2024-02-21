@@ -117,7 +117,9 @@ class Victron(ESSUnit):
                 rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Dc/Battery/Soc")
                 if rc == 0:
                     # Extrahieren des Werts
-                    self.logger.log_info(f"{self._name} SOC: {self._process_result(mqtt_result.result)}%")
+                    soc = self._process_result(mqtt_result.result)
+                    self.logger.log_info(f"{self._name} SOC: {soc}%")
+                    return soc
                 return None
         except (TypeError, json.JSONDecodeError) as e:
             self.logger.log_error(f"Error decoding JSON: {e}")
