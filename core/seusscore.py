@@ -72,6 +72,7 @@ class SEUSS:
     def run_markets(self):
         self.items = self.update_items()
         self.seuss_web.set_item_list(self.items)
+        self.run_essunit()
 
     def run_essunit(self):
         essunit = self.initialize_essunit()
@@ -85,15 +86,18 @@ class SEUSS:
             self.handle_no_data(essunit)
 
         next_minute = (self.current_time.minute // 15 + 1) * 15
-        next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
-        next_run_time = next_hour.replace(minute=next_minute % 60)
+        if next_minute >= 60:
+            next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
+            next_minute = 0
+        else:
+            next_hour = self.current_time.replace(second=0, microsecond=0, minute=next_minute)
+        next_run_time = next_hour
         self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
 
     def run_svs(self):
         self.load_configuration()
         self.initialize_logging()
         self.config.observer.add_observer("seuss", self)
-        starting = True
 
         try:
             while True:
@@ -106,9 +110,10 @@ class SEUSS:
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
                         self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
-                if self.current_time.minute % 15 == 0 and self.current_time.second == 0 or starting:
+                interval_minutes = 15
+                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
+                        self.current_time.second == 0):
                     self.run_essunit()
-                    starting = False
 
                 self.perform_test_run()
                 self.handle_no_data_sleep()
