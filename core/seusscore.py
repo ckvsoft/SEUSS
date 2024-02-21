@@ -114,6 +114,10 @@ class SEUSS:
                 if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
                         self.current_time.second == 0):
                     self.run_essunit()
+                    if self.items:
+                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
                 self.perform_test_run()
                 self.handle_no_data_sleep()
