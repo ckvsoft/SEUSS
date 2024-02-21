@@ -80,10 +80,6 @@ class OpenMeteo:
         tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
         for panel in self.panels:
-            damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel[
-                'damping_morning'] <= 1 else 0
-            damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel[
-                'damping_evening'] <= 1 else 0
             url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=temperature_2m,snow_depth,global_tilted_irradiance&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
 
             solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
@@ -127,8 +123,13 @@ class OpenMeteo:
             sunshine_duration_current_day = data['daily'].get('sunshine_duration', [])[index_today]
             sunshine_duration_tomorrow_day = data['daily'].get('sunshine_duration', [])[index_tomorrow]
 
-            total_watt_hours_current_day += (shortwave_radiation_today / 3.6) * 1000
-            total_watt_hours_tomorrow_day += (shortwave_radiation_tomorrow / 3.6) * 1000
+            total_watt_hours_today = (shortwave_radiation_today / 3.6) * 1000
+            total_watt_hours_tomorrow = (shortwave_radiation_tomorrow / 3.6) * 1000
+
+            efficiency = panel.get('efficiency', 20) / 100
+
+            total_watt_hours_current_day += round((total_watt_hours_today * total_area) * efficiency, 2)
+            total_watt_hours_tomorrow_day += round((total_watt_hours_tomorrow * total_area) * efficiency, 2)
 
             watts_current_hour = hourly_data.get('global_tilted_irradiance', [])[index]
 
@@ -137,8 +138,11 @@ class OpenMeteo:
 
         # Update der Gesamtwerte für Solardaten
         solardata.update_total_current_hour(total_watts_current_hour)
-        solardata.update_total_current_day(round((total_watt_hours_current_day * total_area) * 0.25, 4))
-        solardata.update_total_tomorrow_day(round((total_watt_hours_tomorrow_day * total_area) * 0.25, 4))
+        efficiency_inverter = 92 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
+        total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
+        total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
+        solardata.update_total_current_day(total_current_day)
+        solardata.update_total_tomorrow_day(total_tomorrow_day)
         solardata.update_sunset_current_day (sunset_current_day)
         solardata.update_sunrise_current_day(sunrise_current_day)
         solardata.update_sunset_tomorrow_day(sunset_tomorrow_day)

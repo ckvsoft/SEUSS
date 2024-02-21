@@ -66,8 +66,7 @@ class Config(Singleton):
                 "direction": -90,
                 "totPower": 1.6,
                 "total_area": 0,
-                "damping_morning": 0,
-                "damping_evening": 0,
+                "efficiency": 20,
                 "enabled": False
             },
             {
@@ -78,8 +77,7 @@ class Config(Singleton):
                 "direction": 0,
                 "totPower": 1.6,
                 "total_area": 0,
-                "damping_morning": 0,
-                "damping_evening": 0,
+                "efficiency": 20,
                 "enabled": False
             },
             {
@@ -90,8 +88,7 @@ class Config(Singleton):
                 "direction": 90,
                 "totPower": 1.6,
                 "total_area": 0,
-                "damping_morning": 0,
-                "damping_evening": 0,
+                "efficiency": 20,
                 "enabled": False
             }
         ],
