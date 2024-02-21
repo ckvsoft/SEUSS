@@ -102,7 +102,7 @@ class SEUSS:
                 if self.current_time.minute == 0 and self.current_time.second == 5 or self.items.get_item_count() == 0:
                     self.run_markets()
                     if self.items:
-                        next_hour = self.current_time.replace(second=0, microsecond=0) + timedelta(hours=1)
+                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
                         self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
