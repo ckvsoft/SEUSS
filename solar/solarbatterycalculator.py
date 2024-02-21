@@ -43,13 +43,14 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
+from datetime import datetime
 from core.statsmanager import StatsManager
+from core.timeutilities import TimeUtilities
 
 class SolarBatteryCalculator:
     def __init__(self, solardata):
-        self.solar_production = solardata.total_current_day
+        self.solardata = solardata
         self.solar_peak_power = solardata.power_peak
-        self.daylight_hours = solardata.sun_time_today_minutes
         self.average_consumption = 0.0
         self.efficiency = 0.0
 
@@ -63,10 +64,23 @@ class SolarBatteryCalculator:
 
     def calculate_battery_percentage(self):
         try:
-            max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
 
-            # Tatsächliche Solarproduktion während der Sonnenstunden berechnen
-            actual_solar_during_daylight = min(max_solar_per_hour * self.daylight_hours / 60, self.solar_production)
+            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
+
+            current_time = TimeUtilities.get_now().time()
+            if current_time > sunset_time:
+                forecast = self.solardata.total_tomorrow_day
+                daylight_hours = self.solardata.sun_time_tomorrow_minutes
+            else:
+                forecast = self.solardata.total_current_day
+                daylight_hours = self.solardata.sun_time_today_minutes
+
+            max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
+            if forecast is not None and forecast < self.solar_peak_power:
+                max_solar_per_hour = (forecast * self.efficiency) / 100
+
+
+            actual_solar_during_daylight = min(max_solar_per_hour * daylight_hours / 60, forecast)
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= self.average_consumption:
