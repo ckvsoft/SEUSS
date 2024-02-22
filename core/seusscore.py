@@ -66,6 +66,7 @@ class SEUSS:
 #            time.sleep(1)
 
     def handle_config_update(self, config_data):
+        self.logger.log_info("Run checks while configuration was changed")
         self.run_markets()
         self.run_essunit()
 

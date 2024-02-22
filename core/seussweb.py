@@ -57,10 +57,10 @@ class SEUSSWeb:
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
+        self.logger.log_info(f"save configuration to {self.config.config_file}")
         self.config.save_config(config)
         self.config.load_config()
         self.logger.log_info(f"{self.config.config_data}")
-        self.logger.log_info(f"save configuration to {self.config.config_file}")
 
         #restart = os.path.join(self.main_script_directory, 'restart.sh')
         #if os.path.exists('/data/rc.local'):

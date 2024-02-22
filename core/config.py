@@ -261,10 +261,10 @@ class Config(Singleton):
                     item[key] = value
 
     def save_config(self, config_data):
-        self.observer.notify_observers(config_data=config_data)
-
         with open(self.config_file, 'w') as file:
             json.dump(config_data, file, indent=4)
+
+        self.observer.notify_observers(config_data=config_data)
 
     def _set_os_timezone(self):
         uid = os.getuid()
