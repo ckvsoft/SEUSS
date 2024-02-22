@@ -156,6 +156,7 @@ class SEUSS:
 
     def get_total_solar_yield(self, essunit):
         self.solardata.update_soc(essunit.get_soc())
+        essunit.get_battery_capacity()
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0

@@ -110,6 +110,41 @@ class Victron(ESSUnit):
                 self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(subsribers.get('Schedule', 'Soc'))}")
                 self.logger.log_info(f"{self._name} Schedule/Start: {self._process_result(subsribers.get('Schedule', 'Start'))}")
 
+    def get_battery_capacity(self):
+        instance = self.get_battery_instance()
+        if instance:
+            try:
+                with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                    mqtt_result = MqttResult()
+                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Capacity")
+                    if rc == 0:
+                        # Extrahieren des Werts
+                        capacity = self._process_result(mqtt_result.result)
+                        self.logger.log_info(f"{self._name} Batterie capacity: {capacity}Ah")
+                    return None
+            except (TypeError, json.JSONDecodeError) as e:
+                self.logger.log_error(f"Error decoding JSON: {e}")
+                return None
+        return None
+
+    def get_battery_instance(self):
+        try:
+            with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                mqtt_result = MqttResult()
+                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
+                if rc == 0:
+                    # Extrahieren des Werts
+                    batteries = self._process_result(mqtt_result.result)
+                    data_instance = batteries[0]
+                    active_battery_service = data_instance.get('active_battery_service')
+                    if active_battery_service:
+                        instance = data_instance.get('instance')
+                        return instance
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
+
     def get_soc(self):
         try:
             with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
