@@ -80,7 +80,7 @@ class OpenMeteo:
         tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
         for panel in self.panels:
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=temperature_2m,snow_depth,global_tilted_irradiance&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=cloud_cover,temperature_2m,snow_depth,global_tilted_irradiance&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
 
             solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
             total_area += panel['total_area']
