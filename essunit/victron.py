@@ -92,7 +92,8 @@ class Victron(ESSUnit):
                                f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
                                f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
                                f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
-                               f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower"]
+                               f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                               f"BatteryLife:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"]
 
         with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
             rc = mqtt.subscribe_multiple(subsribers, topics_to_subscribe)
@@ -109,6 +110,40 @@ class Victron(ESSUnit):
                 self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(subsribers.get('Schedule', 'Duration'))}")
                 self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(subsribers.get('Schedule', 'Soc'))}")
                 self.logger.log_info(f"{self._name} Schedule/Start: {self._process_result(subsribers.get('Schedule', 'Start'))}")
+                self.logger.log_info(f"{self._name} BatteryLife/MinimumSocLimit: {self._process_result(subsribers.get('BatteryLife', 'MinimumSocLimit'))}")
+
+    def get_battery_current_voltage(self):
+        instance = self.get_battery_instance()
+        if instance:
+            try:
+                with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                    mqtt_result = MqttResult()
+                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Voltages/Sum")
+                    if rc == 0:
+                        # Extrahieren des Werts
+                        currentvoltage = self._process_result(mqtt_result.result)
+                        self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage}V")
+                        return currentvoltage
+                    return None
+            except (TypeError, json.JSONDecodeError) as e:
+                self.logger.log_error(f"Error decoding JSON: {e}")
+                return None
+        return None
+
+    def get_battery_minimum_soc_limit(self):
+        try:
+            with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                mqtt_result = MqttResult()
+                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit")
+                if rc == 0:
+                    # Extrahieren des Werts
+                    minimumsoclimit = self._process_result(mqtt_result.result)
+                    self.logger.log_info(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}Ah")
+                    return minimumsoclimit
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
 
     def get_battery_capacity(self):
         instance = self.get_battery_instance()
@@ -121,6 +156,7 @@ class Victron(ESSUnit):
                         # Extrahieren des Werts
                         capacity = self._process_result(mqtt_result.result)
                         self.logger.log_info(f"{self._name} Batterie capacity: {capacity}Ah")
+                        return capacity
                     return None
             except (TypeError, json.JSONDecodeError) as e:
                 self.logger.log_error(f"Error decoding JSON: {e}")

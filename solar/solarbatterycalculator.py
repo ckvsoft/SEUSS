@@ -50,7 +50,7 @@ from core.timeutilities import TimeUtilities
 class SolarBatteryCalculator:
     def __init__(self, solardata):
         self.solardata = solardata
-        self.solar_peak_power = solardata.power_peak
+        self.solar_peak_power = solardata.power_peak * 1000
         self.average_consumption = 0.0
         self.efficiency = 0.0
 
@@ -62,9 +62,13 @@ class SolarBatteryCalculator:
         if efficiency_data is not None:
             self.efficiency = round(efficiency_data[0], 2)
 
+    def calculate_full_capacity(self):
+        if self.solardata.soc <= 0: return 0
+        full_capacity = (self.solardata.battery_capacity / self.solardata.soc) * 100
+        return full_capacity
+
     def calculate_battery_percentage(self):
         try:
-
             sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
 
             current_time = TimeUtilities.get_now().time()
@@ -84,16 +88,37 @@ class SolarBatteryCalculator:
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= self.average_consumption:
-                return 0  # Der Akku muss während der Sonnenstunden nicht geladen werden
+                return self.solardata.battery_minimum_soc_limit  # Der Akku muss während der Sonnenstunden nicht geladen werden
+##################################
 
-            # Berechnen, wie viel Strom aus Akkus benötigt wird, um den Rest des Verbrauchs zu decken
             battery_power_needed = self.average_consumption - actual_solar_during_daylight
 
+            actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
+            full_voltage = self.solardata.battery_current_voltage / (self.solardata.soc/ 100)
+            full_battery_capacity_wh = self.calculate_full_capacity() * full_voltage
+
+            # Berechnen des verbleibenden Speicherplatzes in der Batterie
+            remaining_battery_capacity = actual_battery_capacity_wh - actual_solar_during_daylight
+
+            # Berechnen des Prozentsatzes relativ zum verbleibenden Anteil nach Berücksichtigung des unteren Grenzwerts und der Batteriekapazität
+            remaining_percentage = 100 - self.solardata.battery_minimum_soc_limit
+            battery_percentage = (( battery_power_needed / self.average_consumption) * remaining_percentage) + self.solardata.battery_minimum_soc_limit
+
+            # Berücksichtigung der verbleibenden Batteriekapazität
+            battery_percentage = min(battery_percentage, (remaining_battery_capacity / full_battery_capacity_wh) * 100)
+
+            # Sicherstellen, dass der Prozentsatz zwischen dem unteren Grenzwert und 100 liegt
+            battery_percentage = max(min(battery_percentage, 100), self.solardata.battery_minimum_soc_limit)
+
+            ##################################
+            # Berechnen, wie viel Strom aus Akkus benötigt wird, um den Rest des Verbrauchs zu decken
+#            battery_power_needed = self.average_consumption - actual_solar_during_daylight
+
             # Berechnen des Prozentsatzes aus Akkus
-            battery_percentage = (battery_power_needed / self.average_consumption) * 100
+#            battery_percentage = (battery_power_needed / self.average_consumption) * 100
 
             # Sicherstellen, dass der Prozentsatz zwischen 0 und 100 liegt
-            battery_percentage = max(min(battery_percentage, 100), 0)
+#            battery_percentage = max(min(battery_percentage, 100), 0)
 
             return round(battery_percentage, 2)
 

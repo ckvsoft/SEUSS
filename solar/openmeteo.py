@@ -131,7 +131,7 @@ class OpenMeteo:
             total_watt_hours_current_day += round((total_watt_hours_today * total_area) * efficiency, 2)
             total_watt_hours_tomorrow_day += round((total_watt_hours_tomorrow * total_area) * efficiency, 2)
 
-            total_watts_current_hour = 0
+            total_current_hour = 0
 
             # Iteration über die Stunden von Mitternacht bis zur aktuellen Stunde
             for i in range(index):
@@ -140,18 +140,19 @@ class OpenMeteo:
 
                 # Berechnung der Gesamtleistung für die aktuelle Stunde
                 if watts_current_hour is not None:
-                    total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
-                    total_watts_current_hour += total_watt_current_hour
+                    total_current_hour += watts_current_hour
+
+            total_current_hour = round((total_current_hour * total_area) * efficiency, 2)
 
             # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
             # total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
 
             # Akkumulierung der Gesamtwerte
-            total_watts_current_hour += total_watts_current_hour if total_watts_current_hour is not None else 0
+            total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
 
         # Update der Gesamtwerte für Solardaten
-        solardata.update_total_current_hour(total_watts_current_hour)
         efficiency_inverter = 92 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
+        solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
         total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
         total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
         solardata.update_total_current_day(total_current_day)
@@ -164,7 +165,7 @@ class OpenMeteo:
         solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 
         # Log der Gesamtwerte
-        self.logger.log_info(f"Total Solar Watt Hours for the current hour: {total_watts_current_hour}")
+        self.logger.log_info(f"Total Solar Watt Hours for the current hour: {solardata.total_current_hour}")
         self.logger.log_info(
             f"Total Solar Watt Hours for the current day ({current_date}): {solardata.total_current_day}")
         self.logger.log_info(

@@ -41,6 +41,9 @@ class Solardata:
         self.power_peak = 0.0
         self.need_soc = 0
         self.soc = 0
+        self.battery_capacity = 0
+        self.battery_minimum_soc_limit = 5
+        self.battery_current_voltage = None
         self.abort_solar = True
 
     def outside_sun_hours(self):
@@ -101,6 +104,15 @@ class Solardata:
 
     def update_soc(self, percentage):
         self.soc = percentage
+
+    def update_battery_capacity(self, capacity):
+        self.battery_capacity = capacity
+
+    def update_battery_minimum_soc_limit(self, limit):
+        self.battery_minimum_soc_limit = limit
+
+    def update_battery_current_voltage(self, voltage):
+        self.battery_current_voltage = voltage
 
     def update_abort_solar(self, abort):
         self.abort_solar = abort
