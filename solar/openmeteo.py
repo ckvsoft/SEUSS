@@ -80,7 +80,7 @@ class OpenMeteo:
         tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
         for panel in self.panels:
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=cloud_cover,temperature_2m,snow_depth,global_tilted_irradiance&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=shortwave_radiation,cloud_cover,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
 
             solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
             total_area += panel['total_area']
@@ -131,10 +131,23 @@ class OpenMeteo:
             total_watt_hours_current_day += round((total_watt_hours_today * total_area) * efficiency, 2)
             total_watt_hours_tomorrow_day += round((total_watt_hours_tomorrow * total_area) * efficiency, 2)
 
-            watts_current_hour = hourly_data.get('global_tilted_irradiance', [])[index]
+            total_watts_current_hour = 0
+
+            # Iteration über die Stunden von Mitternacht bis zur aktuellen Stunde
+            for i in range(index):
+                # Abrufen der kurzwellige Strahlung für die aktuelle Stunde
+                watts_current_hour = hourly_data.get('shortwave_radiation', [])[i]
+
+                # Berechnung der Gesamtleistung für die aktuelle Stunde
+                if watts_current_hour is not None:
+                    total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
+                    total_watts_current_hour += total_watt_current_hour
+
+            # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
+            # total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
 
             # Akkumulierung der Gesamtwerte
-            total_watts_current_hour += watts_current_hour if watts_current_hour is not None else 0
+            total_watts_current_hour += total_watts_current_hour if total_watts_current_hour is not None else 0
 
         # Update der Gesamtwerte für Solardaten
         solardata.update_total_current_hour(total_watts_current_hour)
@@ -151,10 +164,10 @@ class OpenMeteo:
         solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 
         # Log der Gesamtwerte
-        self.logger.log_info(f"Total Solar Watts for the current hour: {total_watts_current_hour}")
+        self.logger.log_info(f"Total Solar Watt Hours for the current hour: {total_watts_current_hour}")
         self.logger.log_info(
             f"Total Solar Watt Hours for the current day ({current_date}): {solardata.total_current_day}")
         self.logger.log_info(
             f"Total Solar Watt Hours for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day}")
 
-        return solardata.total_current_day
+        return solardata.total_current_hour
