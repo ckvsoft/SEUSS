@@ -31,7 +31,7 @@ import socket
 import sys
 
 from core.log import CustomLogger
-from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults
+from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus, EssUnitNameResolutionError#
 from core.config import Config
 
@@ -92,7 +92,8 @@ class Victron(ESSUnit):
                                f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
                                f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
                                f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
-                               f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower"]
+                               f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                               f"BatteryLife:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"]
 
         with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
             rc = mqtt.subscribe_multiple(subsribers, topics_to_subscribe)
@@ -109,6 +110,76 @@ class Victron(ESSUnit):
                 self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(subsribers.get('Schedule', 'Duration'))}")
                 self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(subsribers.get('Schedule', 'Soc'))}")
                 self.logger.log_info(f"{self._name} Schedule/Start: {self._process_result(subsribers.get('Schedule', 'Start'))}")
+                self.logger.log_info(f"{self._name} BatteryLife/MinimumSocLimit: {self._process_result(subsribers.get('BatteryLife', 'MinimumSocLimit'))}")
+
+    def get_battery_current_voltage(self):
+        instance = self.get_battery_instance()
+        if instance:
+            try:
+                with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                    mqtt_result = MqttResult()
+                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Voltages/Sum")
+                    if rc == 0:
+                        # Extrahieren des Werts
+                        currentvoltage = self._process_result(mqtt_result.result)
+                        self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage}V")
+                        return currentvoltage
+                    return None
+            except (TypeError, json.JSONDecodeError) as e:
+                self.logger.log_error(f"Error decoding JSON: {e}")
+                return None
+        return None
+
+    def get_battery_minimum_soc_limit(self):
+        try:
+            with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                mqtt_result = MqttResult()
+                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit")
+                if rc == 0:
+                    # Extrahieren des Werts
+                    minimumsoclimit = self._process_result(mqtt_result.result)
+                    self.logger.log_info(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}Ah")
+                    return minimumsoclimit
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
+
+    def get_battery_capacity(self):
+        instance = self.get_battery_instance()
+        if instance:
+            try:
+                with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                    mqtt_result = MqttResult()
+                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Capacity")
+                    if rc == 0:
+                        # Extrahieren des Werts
+                        capacity = self._process_result(mqtt_result.result)
+                        self.logger.log_info(f"{self._name} Batterie capacity: {capacity}Ah")
+                        return capacity
+                    return None
+            except (TypeError, json.JSONDecodeError) as e:
+                self.logger.log_error(f"Error decoding JSON: {e}")
+                return None
+        return None
+
+    def get_battery_instance(self):
+        try:
+            with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                mqtt_result = MqttResult()
+                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
+                if rc == 0:
+                    # Extrahieren des Werts
+                    batteries = self._process_result(mqtt_result.result)
+                    data_instance = batteries[0]
+                    active_battery_service = data_instance.get('active_battery_service')
+                    if active_battery_service:
+                        instance = data_instance.get('instance')
+                        return instance
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
 
     def get_soc(self):
         try:
@@ -117,7 +188,9 @@ class Victron(ESSUnit):
                 rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Dc/Battery/Soc")
                 if rc == 0:
                     # Extrahieren des Werts
-                    self.logger.log_info(f"{self._name} SOC: {self._process_result(mqtt_result.result)}%")
+                    soc = self._process_result(mqtt_result.result)
+                    self.logger.log_info(f"{self._name} SOC: {soc}%")
+                    return soc
                 return None
         except (TypeError, json.JSONDecodeError) as e:
             self.logger.log_error(f"Error decoding JSON: {e}")
@@ -146,6 +219,18 @@ class Victron(ESSUnit):
 
         except (TypeError, ValueError) as e:
             self.logger.log_error(f"Error: {e}")
+
+    def get_grid_meters(self):
+        meters = self._gridmeters(f'N/{self.unit_id}/grid')
+        return meters
+
+    def _gridmeters(self, base_topic):
+        discovery_topic = f"{base_topic}/#"
+        with MqttClient(self.mqtt_config) as mqtt:
+            gridmeters = GridMetersResults()
+            mqtt.subscribe(gridmeters, discovery_topic)
+
+            return gridmeters
 
     def get_solar_energy(self):
         inverters = self._inverters(f'N/{self.unit_id}/pvinverter')

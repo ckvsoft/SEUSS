@@ -39,7 +39,7 @@ class Forecastsolar:
         self.logger = CustomLogger()
         self.panels = self.config.get_pv_panels()
 
-    def forecast(self):
+    def forecast(self, solardata):
         pv_info = {}
         total_forcast = 0.0
         max_retries = 3  # Adjust the number of retries as needed
@@ -48,6 +48,8 @@ class Forecastsolar:
             damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel['damping_morning'] <= 1 else 0
             damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel['damping_evening'] <= 1 else 0
             url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}?damping={damping_morning},{damping_evening}"
+
+            solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
 
             for retry in range(max_retries):
                 try:
@@ -80,6 +82,42 @@ class Forecastsolar:
             watt_hours_current_day = data['result']['watt_hours_day'].get(current_date, None)
             watt_hours_tomorrow_day = data['result']['watt_hours_day'].get(tomorrow_date, None)
 
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for today
+            watt_hours = data['result']['watt_hours']
+
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for today
+            watt_hours_today = {key: value for key, value in watt_hours.items() if key.startswith(current_date)}
+
+            # Sunrise and sunset_current_day for today
+            sunrise_today = min(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
+            sunset_today = max(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
+
+            # Calculate sun time for today
+            sunrise_today_datetime = datetime.strptime(sunrise_today, "%Y-%m-%d %H:%M:%S")
+            sunset_today_datetime = datetime.strptime(sunset_today, "%Y-%m-%d %H:%M:%S")
+            sun_time_today_minutes = int((sunset_today_datetime - sunrise_today_datetime).total_seconds() / 60)
+
+            # Fetching sunrise_current_day, sunset_current_day, and sun time for tomorrow
+            watt_hours_tomorrow = {key: value for key, value in watt_hours.items() if key.startswith(tomorrow_date)}
+
+            # Sunrise and sunset_current_day for tomorrow
+            sunrise_tomorrow = min(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
+            sunset_tomorrow = max(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
+
+            # Calculate sun time for tomorrow
+            sunrise_tomorrow_datetime = datetime.strptime(sunrise_tomorrow, "%Y-%m-%d %H:%M:%S")
+            sunset_tomorrow_datetime = datetime.strptime(sunset_tomorrow, "%Y-%m-%d %H:%M:%S")
+            sun_time_tomorrow_minutes = int((sunset_tomorrow_datetime - sunrise_tomorrow_datetime).total_seconds() / 60)
+
+            # Update Solardata values
+            solardata.update_sunrise(sunrise_today)
+            solardata.update_sunset(sunset_today)
+            solardata.update_sun_time_today(sun_time_today_minutes)
+            solardata.update_sun_time_tomorrow(sun_time_tomorrow_minutes)
+            solardata.update_total_current_hour(watts_current_hour)
+            solardata.update_total_current_day(watt_hours_current_day)
+            solardata.update_total_tomorrow_day(watt_hours_tomorrow_day)
+
             self.logger.log_info(f"Place: {data['message']['info']['place']}")
 
             if watts_current_hour is not None:
@@ -94,33 +132,6 @@ class Forecastsolar:
 
             if watt_hours_tomorrow_day is not None:
                 self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
-
-            # Fetching sunrise, sunset, and sun time for today
-            watt_hours = data['result']['watt_hours']
-
-            # Fetching sunrise, sunset, and sun time for today
-            watt_hours_today = {key: value for key, value in watt_hours.items() if key.startswith(current_date)}
-
-            # Sunrise and sunset for today
-            sunrise_today = min(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
-            sunset_today = max(watt_hours_today.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
-
-            # Calculate sun time for today
-            sunrise_today_datetime = datetime.strptime(sunrise_today, "%Y-%m-%d %H:%M:%S")
-            sunset_today_datetime = datetime.strptime(sunset_today, "%Y-%m-%d %H:%M:%S")
-            sun_time_today_minutes = int((sunset_today_datetime - sunrise_today_datetime).total_seconds() / 60)
-
-            # Fetching sunrise, sunset, and sun time for tomorrow
-            watt_hours_tomorrow = {key: value for key, value in watt_hours.items() if key.startswith(tomorrow_date)}
-
-            # Sunrise and sunset for tomorrow
-            sunrise_tomorrow = min(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
-            sunset_tomorrow = max(watt_hours_tomorrow.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
-
-            # Calculate sun time for tomorrow
-            sunrise_tomorrow_datetime = datetime.strptime(sunrise_tomorrow, "%Y-%m-%d %H:%M:%S")
-            sunset_tomorrow_datetime = datetime.strptime(sunset_tomorrow, "%Y-%m-%d %H:%M:%S")
-            sun_time_tomorrow_minutes = int((sunset_tomorrow_datetime - sunrise_tomorrow_datetime).total_seconds() / 60)
 
             # Log the results
             self.logger.log_info(f"Sunrise today: {sunrise_today}")

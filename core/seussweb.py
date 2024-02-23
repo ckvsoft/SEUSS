@@ -57,10 +57,10 @@ class SEUSSWeb:
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
+        self.logger.log_info(f"save configuration to {self.config.config_file}")
         self.config.save_config(config)
         self.config.load_config()
         self.logger.log_info(f"{self.config.config_data}")
-        self.logger.log_info(f"save configuration to {self.config.config_file}")
 
         #restart = os.path.join(self.main_script_directory, 'restart.sh')
         #if os.path.exists('/data/rc.local'):
@@ -217,7 +217,7 @@ class SEUSSWeb:
 
         config = self.config.config_data
 
-        unit_id = config['ess_unit'][0]['unit_id']
+        unit_id = Config.get_unit_id(config)
         if not self._is_hex(unit_id):
             config['ess_unit'][0]['unit_id'] = Config.find_venus_unique_id()
         config = Utils.decode_passwords_from_base64(config)

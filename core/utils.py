@@ -29,6 +29,7 @@ import base64
 import binascii
 from typing import Dict, List
 import json
+import random
 
 class Utils:
     @staticmethod
@@ -88,3 +89,9 @@ class Utils:
             return isinstance(json_object, dict)
         except json.JSONDecodeError:
             return False
+
+    @staticmethod
+    def generate_random_hex(length):
+        random_hex = ''.join(random.choices('0123456789abcdef', k=length))
+        return random_hex
+

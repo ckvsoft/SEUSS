@@ -25,7 +25,6 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-from design_patterns.observer.config_observer import ConfigObserver
 from core.config import Config
 from enum import Enum
 
@@ -55,3 +54,6 @@ class ESSUnit:
     def get_soc(self):
         # Grundlegende Logik zum Abrufen des SoC
         pass
+
+    def get_name(self):
+        return self._name

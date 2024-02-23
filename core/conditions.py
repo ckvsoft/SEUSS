@@ -36,21 +36,23 @@ class ConditionResult:
         self.condition = ""
 
 class Conditions:
-    def __init__(self, itemlist):
+    def __init__(self, itemlist, solardata):
         self.items = itemlist
+        self.solardata = solardata
         self.config = Config()
         self.logger = CustomLogger()
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
         self.available_operation_modes = ["charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
+        self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
         self.charging_conditions = {}
         self.discharge_conditions = {}
         self.charging_descriptions = ""
         self.discharge_descriptions = ""
         self.add_additional_charging_conditions()
         self.add_additional_discharging_conditions()
-
+        self.add_abort_conditions()
 
     def info(self):
         self.logger.log_info(f"Current price: {self.items.get_current_price(True)} Cent/kWh")
@@ -143,6 +145,21 @@ class Conditions:
                                        self.conditions_by_operation_mode["discharging"].values() if
                                        isinstance(condition, dict)]
 
+    def add_abort_conditions(self):
+        # Abbruchbedingungen für das Laden
+        charging_abort_conditions = {
+            "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
+            # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
+        }
+
+        discharging_abort_conditions = {}
+        if self.solardata.soc is not None and self.solardata.need_soc is not None:
+            discharging_abort_conditions["Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False
+
+        # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
+        self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)
+        self.abort_conditions_by_operation_mode["discharging_abort"].update(discharging_abort_conditions)
+
     def evaluate_conditions(self, condition_result, operation_mode):
         if operation_mode not in self.available_operation_modes:
             self.logger.log_error(f"Invalid operation mode: {operation_mode}")
@@ -165,3 +182,20 @@ class Conditions:
                 condition_result.condition = condition_key
                 if self.config.log_level != "DEBUG":
                     break
+
+        # Execute abort conditions (set execute to False)
+        abort_conditions = self.abort_conditions_by_operation_mode.get(operation_mode + "_abort", {})
+        for condition_key, condition_function in abort_conditions.items():
+            result = False
+            try:
+                result = condition_function()
+                self.logger.log_debug(
+                    f"Evaluating abort condition: {condition_key} - Result: {result}")
+            except Exception as e:
+                self.logger.log_error(
+                    f"Error while evaluating abort condition: {e}")
+
+            if result:
+                condition_result.execute = not result
+                condition_result.condition = condition_key
+                break

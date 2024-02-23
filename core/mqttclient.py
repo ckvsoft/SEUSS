@@ -29,8 +29,10 @@ import time
 import re
 import json
 import paho.mqtt.client as mqtt
+from datetime import datetime
 from core.log import CustomLogger
 from core.utils import Utils
+from core.timeutilities import TimeUtilities
 
 class MqttResult:
     def __init__(self):
@@ -60,11 +62,11 @@ class PvInverterResults(MqttResult):
         match = re.match(pattern, topic)
 
         if match:
-            id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            device_id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
             keyword = match.group(2)
 
-            if id not in self.inverters:
-                self.inverters[id] = {}
+            if device_id not in self.inverters:
+                self.inverters[device_id] = {}
 
             index = topic.find(keyword)
 
@@ -72,15 +74,15 @@ class PvInverterResults(MqttResult):
                 result = topic[index:]
                 if result == 'ProductName':
                     if result.lower() == "opentpu" or result.lower == "ahoi":
-                        self.inverters[id]['PI'] = '{"value": 1000}'
+                        self.inverters[device_id]['PI'] = '{"value": 1000}'
                     else:
-                        self.inverters[id]['PI'] = '{"value": 1000}'
+                        self.inverters[device_id]['PI'] = '{"value": 1000}'
 
-                self.inverters[id][result] = value
+                self.inverters[device_id][result] = value
 
-    def get_forward_kwh(self, id):
-        pi = self.get_value(id, 'PI')
-        forward = self.get_value(id, 'Ac/Energy/Forward')
+    def get_forward_kwh(self, device_id):
+        pi = self.get_value(device_id, 'PI')
+        forward = self.get_value(device_id, 'Ac/Energy/Forward')
         if forward is None:
             return 0.0
 
@@ -97,6 +99,65 @@ class PvInverterResults(MqttResult):
         else:
             return None
 
+class GridMetersResults(MqttResult):
+    def __init__(self):
+        super().__init__()
+        self.results = {}
+        self.gridmeters = {}
+        # self.status = StatsManager()
+
+    def add_value(self, topic, value):
+        self.results[topic] = value
+        self.add_gridmeters(topic, value)
+
+    def add_gridmeters(self, topic, value):
+        pattern = r'N/[^/]+/grid/(\d+)/([^/]+)'
+
+        # Verwenden Sie re.match, um den regulären Ausdruck auf die Zeichenkette anzuwenden
+        match = re.match(pattern, topic)
+
+        if match:
+            id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            keyword = match.group(2)
+
+            if id not in self.gridmeters:
+                self.gridmeters[id] = {}
+
+            index = topic.find(keyword)
+
+            if index != -1:
+                result = topic[index:]
+                self.gridmeters[id][result] = value
+
+    def get_forward_kwh(self, device_id):
+        pi = 1000
+        forward = self.get_value(device_id, 'Ac/Energy/Forward')
+        if forward is None:
+            return 0.0
+
+        stats_manager_instance = StatsManager()
+        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+        forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
+        forward = forward - forward_start
+        return float(forward * pi)
+
+    def get_hourly_kwh(self, device_id):
+        forward = self.get_forward_kwh(device_id)
+        now = TimeUtilities.get_now()
+
+        midnight = datetime(now.year, now.month, now.day).astimezone(TimeUtilities.TZ)
+        time_since_midnight = now - midnight
+
+        # Umwandlung der vergangenen Zeit in Stunden
+        hours_since_midnight = time_since_midnight.total_seconds() / 3600
+        return forward / hours_since_midnight
+
+    def get_value(self,device_id, key):
+        if device_id in self.gridmeters and key in self.gridmeters[device_id]:
+            value_str = self.gridmeters[device_id][key]
+            return json.loads(value_str)['value']
+        else:
+            return None
 
 class Subscribers(MqttResult):
     def __init__(self):
@@ -190,7 +251,7 @@ class Subscribers(MqttResult):
 class MqttClient:
     def __init__(self, mqtt_config):
         self.logger = CustomLogger()
-        self.client = mqtt.Client()
+        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.on_publish = self.on_publish
@@ -275,7 +336,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
@@ -287,6 +348,7 @@ class MqttClient:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
                 self.logger.log_debug(f"subscribe: {actual_topic}")
                 self.client.subscribe(f"{actual_topic}")
+                self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             start_time = time.time()
 
@@ -318,7 +380,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
@@ -336,6 +398,7 @@ class MqttClient:
 
             self.logger.log_debug(f"subscribe: {query_topic}")
             self.client.subscribe(f"{query_topic}")
+            self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             # Warten auf den Payload
             start_time = time.time()
@@ -365,7 +428,7 @@ class MqttClient:
         try:
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
-                plain_password = Utils.decode_passwords_from_base64(self.password)
+                plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
