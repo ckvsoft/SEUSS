@@ -365,6 +365,7 @@ class MqttClient:
 
         except TimeoutError:
             self.logger.log_warning("Timeout during the MQTT subscription process.")
+            self.logger.log_debug(f"Timeout MQTT Topics: {query_topics}.")
             result = 1
 
         finally:
@@ -404,7 +405,6 @@ class MqttClient:
             start_time = time.time()
             while self.response_payload is None:
                 if time.time() - start_time > self.timeout:
-                    self.logger.log_warning("Timeout during the MQTT subscription process.")
                     raise TimeoutError
                 time.sleep(1)
 
@@ -415,6 +415,8 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
+            self.logger.log_warning("Timeout during the MQTT subscription process.")
+            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
@@ -451,6 +453,8 @@ class MqttClient:
             result = result.rc
 
         except TimeoutError:
+            self.logger.log_warning("Timeout during the MQTT publish process.")
+            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
@@ -463,7 +467,6 @@ class MqttClient:
         try:
             self.logger.log_debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
-            self.logger.log_debug("after connect to ...")
             return True
         except ConnectionRefusedError:
             self.logger.log_error("Error: The connection to the MQTT broker was denied. Check the broker configuration.")
