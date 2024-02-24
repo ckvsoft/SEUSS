@@ -138,7 +138,16 @@ class GridMetersResults(MqttResult):
         stats_manager_instance = StatsManager()
         stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
         forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
+        if forward_start is None:
+            return 0.0
+
         forward = forward - forward_start
+        if forward <= 0.0:
+            stats_manager_instance.remove_data("gridmeters", "date_forward_start")
+            stats_manager_instance.remove_data("gridmeters", "forward_start")
+            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+            return self.get_forward_kwh(device_id)
+
         return float(forward * pi)
 
     def get_hourly_kwh(self, device_id):
