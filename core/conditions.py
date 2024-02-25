@@ -155,6 +155,7 @@ class Conditions:
         discharging_abort_conditions = {}
         if self.solardata.soc is not None and self.solardata.need_soc is not None:
             discharging_abort_conditions["Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False
+            discharging_abort_conditions["Abort discharge condition - Soc is lower or equal the minimum Soc Limit"] = lambda: self.solardata.soc <= self.solardata.battery_minimum_soc_limit
 
         # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
         self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)

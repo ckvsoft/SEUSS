@@ -78,22 +78,23 @@ class SEUSS:
     def run_essunit(self):
         essunit = self.initialize_essunit()
         total_solar = self.process_solar_data(essunit)
-
         self.process_solar_forecast(total_solar)
-
         if self.items.get_item_count() > 0:
             self.evaluate_conditions_and_control_charging_discharging(essunit)
         else:
             self.handle_no_data(essunit)
 
-        next_minute = (self.current_time.minute // 15 + 1) * 15
-        if next_minute >= 60:
-            next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
-            next_minute = 0
-        else:
-            next_hour = self.current_time.replace(second=0, microsecond=0, minute=next_minute)
-        next_run_time = next_hour
-        self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
+        if essunit is not None:
+            next_minute = (self.current_time.minute // 15 + 1) * 15
+            if next_minute >= 60:
+                next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
+            else:
+                next_hour = self.current_time.replace(second=0, microsecond=0, minute=next_minute)
+            next_run_time = next_hour
+            self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
+            return
+
+        self.logger.log_info("No enabled essunit found.")
 
     def run_svs(self):
         self.load_configuration()

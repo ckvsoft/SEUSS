@@ -138,7 +138,7 @@ class Victron(ESSUnit):
                 if rc == 0:
                     # Extrahieren des Werts
                     minimumsoclimit = self._process_result(mqtt_result.result)
-                    self.logger.log_info(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}Ah")
+                    self.logger.log_debug(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}%")
                     return minimumsoclimit
                 return None
         except (TypeError, json.JSONDecodeError) as e:
@@ -155,7 +155,7 @@ class Victron(ESSUnit):
                     if rc == 0:
                         # Extrahieren des Werts
                         capacity = self._process_result(mqtt_result.result)
-                        self.logger.log_info(f"{self._name} Batterie capacity: {capacity}Ah")
+                        self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
                         return capacity
                     return None
             except (TypeError, json.JSONDecodeError) as e:

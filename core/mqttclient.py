@@ -138,7 +138,16 @@ class GridMetersResults(MqttResult):
         stats_manager_instance = StatsManager()
         stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
         forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
+        if forward_start is None:
+            return 0.0
+
         forward = forward - forward_start
+        if forward <= 0.0:
+            stats_manager_instance.remove_data("gridmeters", "date_forward_start")
+            stats_manager_instance.remove_data("gridmeters", "forward_start")
+            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+            return self.get_forward_kwh(device_id)
+
         return float(forward * pi)
 
     def get_hourly_kwh(self, device_id):
@@ -150,7 +159,8 @@ class GridMetersResults(MqttResult):
 
         # Umwandlung der vergangenen Zeit in Stunden
         hours_since_midnight = time_since_midnight.total_seconds() / 3600
-        return forward / hours_since_midnight
+        stats_manager_instance = StatsManager()
+        return stats_manager_instance.update_percent_status_data("gridmeters", 'average', forward / hours_since_midnight, 30)
 
     def get_value(self,device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:
@@ -365,6 +375,7 @@ class MqttClient:
 
         except TimeoutError:
             self.logger.log_warning("Timeout during the MQTT subscription process.")
+            self.logger.log_debug(f"Timeout MQTT Topics: {query_topics}.")
             result = 1
 
         finally:
@@ -404,7 +415,6 @@ class MqttClient:
             start_time = time.time()
             while self.response_payload is None:
                 if time.time() - start_time > self.timeout:
-                    self.logger.log_warning("Timeout during the MQTT subscription process.")
                     raise TimeoutError
                 time.sleep(1)
 
@@ -415,6 +425,8 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
+            self.logger.log_warning("Timeout during the MQTT subscription process.")
+            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
@@ -451,6 +463,8 @@ class MqttClient:
             result = result.rc
 
         except TimeoutError:
+            self.logger.log_warning("Timeout during the MQTT publish process.")
+            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
@@ -463,7 +477,6 @@ class MqttClient:
         try:
             self.logger.log_debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
-            self.logger.log_debug("after connect to ...")
             return True
         except ConnectionRefusedError:
             self.logger.log_error("Error: The connection to the MQTT broker was denied. Check the broker configuration.")
