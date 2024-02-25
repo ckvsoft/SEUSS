@@ -77,20 +77,20 @@ class SolarBatteryCalculator:
             if current_time > sunset_time:
                 self.logger.log_debug("Use tomorrow_day forecast")
                 forecast = self.solardata.total_tomorrow_day
-                daylight_hours = self.solardata.sun_time_tomorrow_minutes
+                daylight_hours = self.solardata.sun_time_tomorrow_minutes / 60
             else:
                 self.logger.log_debug("Use current_day forecast")
                 forecast = self.solardata.total_current_day
-                daylight_hours = self.solardata.sun_time_today_minutes
+                daylight_hours = self.solardata.sun_time_today_minutes / 60
 
             max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
-            if forecast is not None and forecast < self.solar_peak_power:
+            if forecast is not None and forecast / daylight_hours < max_solar_per_hour:
                 max_solar_per_hour = (forecast * self.efficiency) / 100
 
 
-            actual_solar_during_daylight = min(max_solar_per_hour * (daylight_hours / 60), forecast)
+            actual_solar_during_daylight = min(max_solar_per_hour * daylight_hours, forecast)
 
-            average_consumption = self.average_consumption * (daylight_hours / 60)
+            average_consumption = self.average_consumption * daylight_hours
             battery_power_needed = average_consumption - actual_solar_during_daylight
 
             actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
