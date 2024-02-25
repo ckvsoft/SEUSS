@@ -159,7 +159,8 @@ class GridMetersResults(MqttResult):
 
         # Umwandlung der vergangenen Zeit in Stunden
         hours_since_midnight = time_since_midnight.total_seconds() / 3600
-        return forward / hours_since_midnight
+        stats_manager_instance = StatsManager()
+        return stats_manager_instance.update_percent_status_data("gridmeters", 'average', forward / hours_since_midnight, 30)
 
     def get_value(self,device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:

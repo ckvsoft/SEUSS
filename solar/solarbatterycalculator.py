@@ -84,13 +84,14 @@ class SolarBatteryCalculator:
                 daylight_hours = self.solardata.sun_time_today_minutes / 60
 
             max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
-            if forecast is not None and forecast / daylight_hours < max_solar_per_hour:
-                max_solar_per_hour = (forecast * self.efficiency) / 100
+            forecast_per_hour = ((forecast / daylight_hours) * self.efficiency) / 100
+            if forecast is not None and forecast_per_hour < max_solar_per_hour:
+                max_solar_per_hour = forecast_per_hour
 
 
-            actual_solar_during_daylight = min(max_solar_per_hour * daylight_hours, forecast)
+            actual_solar_during_daylight = max_solar_per_hour * daylight_hours
 
-            average_consumption = self.average_consumption * daylight_hours
+            average_consumption = self.average_consumption * 24
             battery_power_needed = average_consumption - actual_solar_during_daylight
 
             actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
@@ -111,10 +112,11 @@ class SolarBatteryCalculator:
             battery_percentage = (( battery_power_needed / average_consumption) * remaining_percentage) + self.solardata.battery_minimum_soc_limit
 
             # Berücksichtigung der verbleibenden Batteriekapazität
-            battery_percentage = min(battery_percentage, (remaining_battery_capacity / full_battery_capacity_wh) * 100)
+            battery_percentage = min(max(battery_percentage, 0), 100)
 
             # Sicherstellen, dass der Prozentsatz zwischen dem unteren Grenzwert und 100 liegt
-            battery_percentage = max(min(battery_percentage, 100), min(self.solardata.battery_minimum_soc_limit + battery_percentage, 100))
+            battery_percentage_limit = self.solardata.battery_minimum_soc_limit + battery_percentage
+            battery_percentage = max(min(battery_percentage, 100), min(battery_percentage_limit, 100))
 
             ##################################
             # Berechnen, wie viel Strom aus Akkus benötigt wird, um den Rest des Verbrauchs zu decken
