@@ -142,7 +142,7 @@ class GridMetersResults(MqttResult):
             return 0.0
 
         forward = forward - forward_start
-        if forward <= 0.0:
+        if forward < 0.0:
             stats_manager_instance.remove_data("gridmeters", "date_forward_start")
             stats_manager_instance.remove_data("gridmeters", "forward_start")
             stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
@@ -160,7 +160,7 @@ class GridMetersResults(MqttResult):
         # Umwandlung der vergangenen Zeit in Stunden
         hours_since_midnight = time_since_midnight.total_seconds() / 3600
         stats_manager_instance = StatsManager()
-        return stats_manager_instance.update_percent_status_data("gridmeters", 'average', forward / hours_since_midnight, 30)
+        return forward / hours_since_midnight
 
     def get_value(self,device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:
