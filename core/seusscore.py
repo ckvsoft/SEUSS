@@ -204,6 +204,8 @@ class SEUSS:
             efficiency = None
             if total_solar > 0.0:
                 efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
+            else:
+                efficiency = StatsManager.get_data('solar', 'efficiency')
             rounded_percentage = round(percentage, 2)
             self.logger.log_info(f"Solar current percent: {rounded_percentage}%. (average: {efficiency})%")
         else:

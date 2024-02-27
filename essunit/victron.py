@@ -118,7 +118,7 @@ class Victron(ESSUnit):
             try:
                 with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
                     mqtt_result = MqttResult()
-                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Voltages/Sum")
+                    rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/battery/{instance}/Dc/0/Voltage")
                     if rc == 0:
                         # Extrahieren des Werts
                         currentvoltage = self._process_result(mqtt_result.result)
