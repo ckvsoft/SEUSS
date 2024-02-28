@@ -98,12 +98,12 @@ class SolarBatteryCalculator:
             available_hours = differenz.total_seconds() / 3600
 
             # verbrauch bis sonnenuntergang oder verbrauch bis sonnenaufgang wenn nacht
+            self.logger.log_debug(f"average_consumption {self.average_consumption} * available_hours: {available_hours}")
             average_consumption = self.average_consumption * available_hours
             # restliche battery capazität über minimum soc
             remaining_battery_soc = self.solardata.soc - self.solardata.battery_minimum_soc_limit
 
 #            battery_power_needed = average_consumption - actual_solar_during_daylight
-            self.logger.log_debug(f"average_consumption {average_consumption}, available_hours: {available_hours}")
 
             actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
             full_voltage = 57.6 # self.solardata.battery_current_voltage / (self.solardata.soc/ 100)
