@@ -118,11 +118,14 @@ class SolarBatteryCalculator:
 
             # Berechnen des verbleibenden Speicherplatzes in der Batterie
             remaining_battery_capacity = available_battery_capacity + actual_solar_during_daylight - average_consumption
+            self.logger.log_debug(f"Remaining battery capacity: {remaining_battery_capacity}")
             battery_percentage = 0.0
             if remaining_battery_capacity < 0.0:
                 battery_percentage = ((remaining_battery_capacity / full_battery_capacity_wh) * 100) * -1
+                self.logger.log_debug(f"Battery percentage add: {battery_percentage}")
 
             battery_percentage = battery_percentage + self.solardata.battery_minimum_soc_limit
+            self.logger.log_debug(f"Battery percentage: {battery_percentage}")
 
             # Berücksichtigung der verbleibenden Batteriekapazität
             battery_percentage = min(min(battery_percentage, 100), 100)
