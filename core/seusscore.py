@@ -209,7 +209,7 @@ class SEUSS:
                 if efficiency_list is not None:
                     efficiency = round(efficiency_list[0], 2)
             rounded_percentage = round(percentage, 2)
-            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. (average: {efficiency})%")
+            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
         else:
             self.logger.log_info("Solar forecast is zero or not available.")
 

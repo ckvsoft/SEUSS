@@ -38,6 +38,8 @@ class Solardata:
         self.total_current_hour = None
         self.total_current_day = None
         self.total_tomorrow_day = None
+        self.total_seuss_current_day = None
+        self.total_seuss_tomorrow_day = None
         self.power_peak = 0.0
         self.need_soc = 0
         self.soc = 0
@@ -95,6 +97,12 @@ class Solardata:
 
     def update_total_tomorrow_day(self, total_tomorrow_day):
         self.total_tomorrow_day = total_tomorrow_day
+
+    def update_total_seuss_current_day(self, total_current_day):
+        self.total_seuss_current_day = total_current_day
+
+    def update_total_seuss_tomorrow_day(self, total_tomorrow_day):
+        self.total_seuss_tomorrow_day = total_tomorrow_day
 
     def update_power_peak(self, peak):
         self.power_peak = peak
