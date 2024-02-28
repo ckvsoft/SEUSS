@@ -114,6 +114,7 @@ class SolarBatteryCalculator:
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= average_consumption:
+                self.logger.log_debug("return while actual_solar_during_daylight >= average_consumption")
                 return self.solardata.battery_minimum_soc_limit  # Der Akku muss während der Sonnenstunden nicht geladen werden
 
             # Berechnen des verbleibenden Speicherplatzes in der Batterie
