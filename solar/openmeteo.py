@@ -159,8 +159,8 @@ class OpenMeteo:
 
             efficiency_seuss_list = StatsManager.get_data('solar', 'efficiency')
             if efficiency_seuss_list is not None:
-                total_seuss_current_day = round((total_watt_hours_current_day * efficiency_inverter) * efficiency_seuss_list[0], 2)
-                total_seuss_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter * efficiency_seuss_list[0], 2)
+                total_seuss_current_day = round(((total_watt_hours_current_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
+                total_seuss_tomorrow_day = round(((total_watt_hours_tomorrow_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
                 solardata.update_total_seuss_current_day(total_seuss_current_day)
                 solardata.update_total_seuss_tomorrow_day(total_seuss_tomorrow_day)
 
