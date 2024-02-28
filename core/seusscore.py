@@ -67,6 +67,7 @@ class SEUSS:
 
     def handle_config_update(self, config_data):
         self.logger.log_info("Run checks while configuration was changed")
+        self.load_configuration()
         self.run_markets()
 
     def run_markets(self):
