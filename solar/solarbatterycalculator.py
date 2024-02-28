@@ -103,6 +103,7 @@ class SolarBatteryCalculator:
             remaining_battery_soc = self.solardata.soc - self.solardata.battery_minimum_soc_limit
 
 #            battery_power_needed = average_consumption - actual_solar_during_daylight
+            self.logger.log_debug(f"average_consumption {average_consumption}, available_hours: {available_hours}")
 
             actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
             full_voltage = 57.6 # self.solardata.battery_current_voltage / (self.solardata.soc/ 100)
