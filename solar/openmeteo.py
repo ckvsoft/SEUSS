@@ -152,7 +152,7 @@ class OpenMeteo:
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
 
             # Update der Gesamtwerte für Solardaten
-            efficiency_inverter = 92 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
+            efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
             solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
             total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
             total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
@@ -176,9 +176,9 @@ class OpenMeteo:
             # Log der Gesamtwerte
             self.logger.log_info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
             self.logger.log_info(
-                f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh, estimated: {solardata.total_seuss_current_day} Wh")
+                f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh, seuss estimated: {solardata.total_seuss_current_day} Wh")
             self.logger.log_info(
-                f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh, estimated: {solardata.total_seuss_tomorrow_day} Wh")
+                f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh, seuss estimated: {solardata.total_seuss_tomorrow_day} Wh")
 
             return solardata.total_current_hour
 
