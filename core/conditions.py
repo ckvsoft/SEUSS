@@ -136,6 +136,7 @@ class Conditions:
 
         # Weitere Bedingungen für Entladung hinzufügen
         additional_conditions = {
+            "Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc,
             # Füge weitere Bedingungen hier hinzu
         }
         self.conditions_by_operation_mode["discharging"].update(additional_conditions)
