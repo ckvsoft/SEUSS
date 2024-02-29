@@ -90,7 +90,9 @@ class SolarBatteryCalculator:
                 differenz = sunset_date - current_date
 
             max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
-            forecast_per_hour = ((forecast / daylight_hours) * self.efficiency) / 100
+            forecast_per_hour = 0.0
+            if daylight_hours > 0.0:
+                forecast_per_hour = ((forecast / daylight_hours) * self.efficiency) / 100
             if forecast is not None and forecast_per_hour < max_solar_per_hour:
                 max_solar_per_hour = forecast_per_hour
 
