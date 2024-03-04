@@ -74,9 +74,11 @@ class Victron(ESSUnit):
     def handle_config_update(self, config_data):
         victron_ess_unit = next((ess for ess in config_data.get('ess_unit', []) if ess.get('name') == self._name), None)
         enabled_value = victron_ess_unit.get('enabled') if victron_ess_unit else None
-        if not enabled_value:
+        only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else None
+
+        if not enabled_value or not only_observation_value:
             self.logger.log_debug(f"ESS Unit {self._name} handle configuration change.")
-            self.logger.log_info(f"ESS Unit {self._name} has been disabled.")
+            self.logger.log_info(f"ESS Unit {self._name} has been disabled or in observation mode.")
             self.logger.log_info(f"Charging mode is deactivated.")
             self.logger.log_info(f"Discharge mode is activated.")
             self.set_charge('off')

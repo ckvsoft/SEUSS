@@ -47,6 +47,9 @@ class ESSUnit:
     def set_charge(self, state):
         pass
 
+    def set_discharge(self, state):
+        pass
+
     def get_max_discharge_power(self):
         # Grundlegende Logik zum Abrufen des maximalen Entladestroms
         pass

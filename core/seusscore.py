@@ -214,15 +214,18 @@ class SEUSS:
             self.logger.log_info("Solar forecast is zero or not available.")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
-        condition_charging_result = ConditionResult()
-        condition_discharging_result = ConditionResult()
-        conditions_instance = Conditions(self.items, self.solardata)
-        conditions_instance.info()
-        conditions_instance.evaluate_conditions(condition_charging_result, "charging")
-        conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+        info = self.config.get_essunit_info(essunit.get_name())
+        only_observation = info.get("only_observation", False)
+        if not only_observation:
+            condition_charging_result = ConditionResult()
+            condition_discharging_result = ConditionResult()
+            conditions_instance = Conditions(self.items, self.solardata)
+            conditions_instance.info()
+            conditions_instance.evaluate_conditions(condition_charging_result, "charging")
+            conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
 
-        self.control_charging(essunit, condition_charging_result)
-        self.control_discharging(essunit, condition_discharging_result)
+            self.control_charging(essunit, condition_charging_result)
+            self.control_discharging(essunit, condition_discharging_result)
 
         self.items.log_items()
         self.no_data[0] = 0
