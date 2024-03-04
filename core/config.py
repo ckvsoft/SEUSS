@@ -43,6 +43,7 @@ class Info:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+
 class Config(Singleton):
     DEFAULT_CONFIG_TEMPLATE = {
         "time_zone": "Europe/Vienna",
@@ -67,6 +68,8 @@ class Config(Singleton):
                 "totPower": 1.6,
                 "total_area": 0,
                 "efficiency": 20,
+                "damping_morning": 0,
+                "damping_evening": 0,
                 "enabled": False
             },
             {
@@ -78,6 +81,8 @@ class Config(Singleton):
                 "totPower": 1.6,
                 "total_area": 0,
                 "efficiency": 20,
+                "damping_morning": 0,
+                "damping_evening": 0,
                 "enabled": False
             },
             {
@@ -89,6 +94,8 @@ class Config(Singleton):
                 "totPower": 1.6,
                 "total_area": 0,
                 "efficiency": 20,
+                "damping_morning": 0,
+                "damping_evening": 0,
                 "enabled": False
             }
         ],
@@ -244,7 +251,6 @@ class Config(Singleton):
                             for item_key, item_value in item_template.items():
                                 if item_key not in sub_item:
                                     sub_item[item_key] = item_value
-
 
         self.move_key_to_end(self.config_data['markets'], 'primary')
 
