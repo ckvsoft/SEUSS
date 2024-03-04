@@ -129,10 +129,12 @@ class SolarBatteryCalculator:
                 self.logger.log_debug(f"Battery percentage add: {battery_percentage}")
 
             battery_percentage = battery_percentage + self.solardata.battery_minimum_soc_limit
-            self.logger.log_debug(f"Battery percentage: {battery_percentage}")
+            self.logger.log_debug(f"Battery percentage total: {battery_percentage}")
 
             # Berücksichtigung der verbleibenden Batteriekapazität
             battery_percentage = min(min(battery_percentage, 100), 100)
+            battery_percentage = battery_percentage - (battery_percentage / 100) * 5
+            self.logger.log_debug(f"Battery percentage (- 5% spare: {battery_percentage}")
 
             return round(battery_percentage, 2)
 
