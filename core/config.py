@@ -101,6 +101,7 @@ class Config(Singleton):
                 "user": "",
                 "password": "",
                 "max_discharge_power": -1,
+                "only_observation": False,
                 "enabled": False
             }
         ],

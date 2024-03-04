@@ -67,8 +67,8 @@ class SEUSS:
 
     def handle_config_update(self, config_data):
         self.logger.log_info("Run checks while configuration was changed")
+        self.load_configuration()
         self.run_markets()
-        self.run_essunit()
 
     def run_markets(self):
         self.items = self.update_items()
@@ -205,22 +205,27 @@ class SEUSS:
             if total_solar > 0.0:
                 efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
             else:
-                efficiency = StatsManager.get_data('solar', 'efficiency')
+                efficiency_list = StatsManager.get_data('solar', 'efficiency')
+                if efficiency_list is not None:
+                    efficiency = round(efficiency_list[0], 2)
             rounded_percentage = round(percentage, 2)
-            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. (average: {efficiency})%")
+            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
         else:
             self.logger.log_info("Solar forecast is zero or not available.")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
-        condition_charging_result = ConditionResult()
-        condition_discharging_result = ConditionResult()
-        conditions_instance = Conditions(self.items, self.solardata)
-        conditions_instance.info()
-        conditions_instance.evaluate_conditions(condition_charging_result, "charging")
-        conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+        info = self.config.get_essunit_info(essunit.get_name())
+        only_observation = info.get("only_observation", False)
+        if not only_observation:
+            condition_charging_result = ConditionResult()
+            condition_discharging_result = ConditionResult()
+            conditions_instance = Conditions(self.items, self.solardata)
+            conditions_instance.info()
+            conditions_instance.evaluate_conditions(condition_charging_result, "charging")
+            conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
 
-        self.control_charging(essunit, condition_charging_result)
-        self.control_discharging(essunit, condition_discharging_result)
+            self.control_charging(essunit, condition_charging_result)
+            self.control_discharging(essunit, condition_discharging_result)
 
         self.items.log_items()
         self.no_data[0] = 0

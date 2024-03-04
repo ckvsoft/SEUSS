@@ -50,7 +50,7 @@ import pytz
 from requests.exceptions import RequestException
 from core.config import Config
 from core.log import CustomLogger
-
+from core.statsmanager import StatsManager
 class OpenMeteo:
     def __init__(self, **kwargs) -> None:
         self.config = Config()
@@ -152,10 +152,18 @@ class OpenMeteo:
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
 
             # Update der Gesamtwerte für Solardaten
-            efficiency_inverter = 92 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
+            efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
             solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
             total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
             total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
+
+            efficiency_seuss_list = StatsManager.get_data('solar', 'efficiency')
+            if efficiency_seuss_list is not None:
+                total_seuss_current_day = round(((total_watt_hours_current_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
+                total_seuss_tomorrow_day = round(((total_watt_hours_tomorrow_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
+                solardata.update_total_seuss_current_day(total_seuss_current_day)
+                solardata.update_total_seuss_tomorrow_day(total_seuss_tomorrow_day)
+
             solardata.update_total_current_day(total_current_day)
             solardata.update_total_tomorrow_day(total_tomorrow_day)
             solardata.update_sunset_current_day (sunset_current_day)
@@ -166,11 +174,11 @@ class OpenMeteo:
             solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 
             # Log der Gesamtwerte
-            self.logger.log_info(f"Total Solar Watt Hours for the current hour: {solardata.total_current_hour}")
+            self.logger.log_info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
             self.logger.log_info(
-                f"Total Solar Watt Hours for the current day ({current_date}): {solardata.total_current_day}")
+                f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh, seuss estimated: {solardata.total_seuss_current_day} Wh")
             self.logger.log_info(
-                f"Total Solar Watt Hours for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day}")
+                f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh, seuss estimated: {solardata.total_seuss_tomorrow_day} Wh")
 
             return solardata.total_current_hour
 
