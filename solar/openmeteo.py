@@ -202,8 +202,10 @@ class OpenMeteo:
             damping = self.damping[1]
 
         if damping == 0:
+            self.logger.log_debug(f"exponential_damping: hour {hour}, damping {damping}, exponential damping 1.0")
             return 1.0  # Keine Dämpfung, daher ist der Dämpfungsfaktor immer 1
         elif damping == 1:
+            self.logger.log_debug(f"exponential_damping: hour {hour}, damping {damping}, exponential damping 0.0")
             return 0.0  # Volle Dämpfung, daher ist der Dämpfungsfaktor immer 0
         else:
             # Berechnung des Dämpfungsfaktors basierend auf dem gewünschten Verhalten
