@@ -73,8 +73,8 @@ class Victron(ESSUnit):
         # self.mqtt = MqttClient(self.mqtt_config)
     def handle_config_update(self, config_data):
         victron_ess_unit = next((ess for ess in config_data.get('ess_unit', []) if ess.get('name') == self._name), None)
-        enabled_value = victron_ess_unit.get('enabled') if victron_ess_unit else None
-        only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else None
+        enabled_value = victron_ess_unit.get('enabled') if victron_ess_unit else False
+        only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else False
 
         if not enabled_value or not only_observation_value:
             self.logger.log_debug(f"ESS Unit {self._name} handle configuration change.")
