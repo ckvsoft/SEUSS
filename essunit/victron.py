@@ -76,7 +76,7 @@ class Victron(ESSUnit):
         enabled_value = victron_ess_unit.get('enabled') if victron_ess_unit else False
         only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else False
 
-        if not enabled_value or not only_observation_value:
+        if not enabled_value or only_observation_value:
             self.logger.log_debug(f"ESS Unit {self._name} handle configuration change.")
             self.logger.log_info(f"ESS Unit {self._name} has been disabled or in observation mode.")
             self.logger.log_info(f"Charging mode is deactivated.")
