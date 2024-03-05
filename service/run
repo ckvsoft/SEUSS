@@ -33,7 +33,7 @@ error_file="/tmp/seuss_error.log"
 
 {
     bash /data/seuss/missing.sh
-} 2> "$error_file"
+} 2>> "$error_file"
 
-exec >> "$error_file" 2>&1
+exec 2>> "$error_file"
 python /data/seuss/seuss.py
