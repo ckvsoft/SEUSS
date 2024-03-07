@@ -143,17 +143,6 @@ class OpenMeteo:
                 total_watt_hours_current_day += round((shortwave_radiation_today * total_area) * efficiency, 2)
                 total_watt_hours_tomorrow_day += round((shortwave_radiation_tomorrow * total_area) * efficiency, 2)
 
-                total_current_hour = 0
-
-                # Iteration über die Stunden von Mitternacht bis zur aktuellen Stunde
-                #for i in range(index):
-                #    # Abrufen der kurzwellige Strahlung für die aktuelle Stunde
-                #    watts_current_hour = hourly_data.get('shortwave_radiation', [])[i]
-
-                #    # Berechnung der Gesamtleistung für die aktuelle Stunde
-                #    if watts_current_hour is not None:
-                #        total_current_hour += watts_current_hour
-
                 total_current_hour = round((self.calculate_shortwave_radiation(hourly_data, 0, index) * total_area) * efficiency, 2)
 
                 # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
