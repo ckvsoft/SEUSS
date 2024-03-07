@@ -61,7 +61,8 @@ class CustomLogger(Singleton):
 
     def handle_config_update(self, config_data):
         self.log_level = self.config.log_level
-
+        if os.path.exists('/data/rc.local'):
+            logzero.setup_default_logger(disableStderrLogger=True)
         # Setze den Log-Level für die Datei
         logzero.loglevel(self.config.log_level.upper())
         # Konfiguriere das Logfile mit maximaler Dateigröße und Anzahl der behaltenen Logdateien
