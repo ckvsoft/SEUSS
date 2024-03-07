@@ -84,8 +84,6 @@ class Victron(ESSUnit):
             self.set_charge('off')
             self.set_discharge('on')
 
-        # print(f"Unit '{self._name}' is handling configuration change.")
-
     def get_test(self):
         subsribers = Subscribers()
         topics_to_subscribe = [f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/AllowDischarge",
