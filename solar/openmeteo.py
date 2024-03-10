@@ -68,6 +68,7 @@ class OpenMeteo:
             max_retries = 3  # Adjust the number of retries as needed
 
             total_watts_current_hour = 0
+            total_watts_current_hour_real = 0
             total_watt_hours_current_day = 0
             total_watt_hours_tomorrow_day = 0
             total_area = 0.0
@@ -144,16 +145,19 @@ class OpenMeteo:
                 total_watt_hours_tomorrow_day += round((shortwave_radiation_tomorrow * total_area) * efficiency, 2)
 
                 total_current_hour = round((self.calculate_shortwave_radiation(hourly_data, 0, index) * total_area) * efficiency, 2)
+                total_current_hour_real = round(self.calculate_shortwave_radiation(hourly_data, 0, index - 1), 2)
 
                 # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
                 # total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
 
                 # Akkumulierung der Gesamtwerte
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
+                total_watts_current_hour_real += total_current_hour_real if total_current_hour_real is not None else 0
 
             # Update der Gesamtwerte für Solardaten
             efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
             solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
+            solardata.update_total_current_hour(total_watts_current_hour_real)
             total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
             total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
 
@@ -175,6 +179,7 @@ class OpenMeteo:
 
             # Log der Gesamtwerte
             self.logger.log_info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
+            self.logger.log_debug(f"Total Solar for the current hour real: {solardata.total_current_hour_real} Wh")
             self.logger.log_info(
                 f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh, seuss estimated: {solardata.total_seuss_current_day} Wh")
             self.logger.log_info(
