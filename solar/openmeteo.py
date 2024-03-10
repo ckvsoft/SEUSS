@@ -157,7 +157,7 @@ class OpenMeteo:
             # Update der Gesamtwerte für Solardaten
             efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
             solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
-            solardata.update_total_current_hour(total_watts_current_hour_real)
+            solardata.update_total_current_hour_real(total_watts_current_hour_real)
             total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
             total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
 
