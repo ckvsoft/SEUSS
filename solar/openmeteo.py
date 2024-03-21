@@ -51,6 +51,7 @@ from requests.exceptions import RequestException
 from core.config import Config
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
+
 class OpenMeteo:
     def __init__(self, **kwargs) -> None:
         self.config = Config()

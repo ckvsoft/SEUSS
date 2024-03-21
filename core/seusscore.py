@@ -46,6 +46,8 @@ from core.log import CustomLogger
 from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 from spotmarket.abstract_classes.itemlist import Itemlist
 from core.seussweb import SEUSSWeb
+from core.timeutilities import TimeUtilities
+
 
 class SEUSS:
     def __init__(self):
@@ -202,7 +204,10 @@ class SEUSS:
         if total_forecast is not None and total_forecast > 0.0:
             percentage = (total_solar / total_forecast) * 100
             efficiency = None
-            if total_solar > 0.0:
+            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
+            current_time = TimeUtilities.get_now().time()
+
+            if current_time < sunset_time and total_solar > 0.0:
                 efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
             else:
                 efficiency_list = StatsManager.get_data('solar', 'efficiency')
