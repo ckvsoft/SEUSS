@@ -234,7 +234,7 @@ class OpenMeteo:
         return total
 
     def calculate_cloud_cover(self, shortwave_radiation, cloud_cover):
-        reduktion_faktor = 1 - ((cloud_cover / 100) * 0.8)
+        reduktion_faktor = 1 - ((cloud_cover / 100) * 0.9)
 
         calculated = shortwave_radiation * reduktion_faktor
 
