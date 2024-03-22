@@ -233,10 +233,14 @@ class OpenMeteo:
 
         return total
 
-    def calculate_cloud_cover(self, shortwave_radiation, cloud_cover):
-        reduktion_faktor = 1 - (cloud_cover / 100)
 
-        calculated = shortwave_radiation * reduktion_faktor
+def calculate_solar_energy(shortwave_radiation, cloud_cover):
+    # Modellieren Sie den Einfluss der Wolkenbedeckung auf die Sonnenenergie
+    # Angenommen, 100% Wolkenbedeckung bedeutet nicht vollständige Dunkelheit
+    # Definieren Sie einen Faktor für den Einfluss der Wolkenbedeckung auf die Sonnenenergie
+    cloud_factor = 0.8  # Zum Beispiel: Wolken reduzieren die Sonnenenergie um 20%
 
-        return calculated
+    # Berechnen Sie die angepasste Sonnenenergie
+    calculated_energy = shortwave_radiation * (1 - cloud_cover / 100) * cloud_factor
 
+    return calculated_energy
