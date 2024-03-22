@@ -223,7 +223,8 @@ class OpenMeteo:
         total = 0
         current_hour = 0
         for i in range(from_hour, to_hour + 1):
-            watts_current_hour = hourly_data.get('shortwave_radiation', [])[i]
+            cloud_cover = hourly_data.get('cloud_cover', [])[i]
+            watts_current_hour = self.calculate_cloud_cover(hourly_data.get('shortwave_radiation', [])[i], cloud_cover)
 
             if watts_current_hour is not None:
                 total += watts_current_hour * self.calculate_exponential_damping(current_hour)
@@ -231,3 +232,11 @@ class OpenMeteo:
             current_hour += 1
 
         return total
+
+    def calculate_cloud_cover(self, shortwave_radiation, cloud_cover):
+        reduktion_faktor = 1 - (cloud_cover / 100)
+
+        calculated = shortwave_radiation * reduktion_faktor
+
+        return calculated
+
