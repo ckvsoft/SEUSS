@@ -87,7 +87,7 @@ class OpenMeteo:
             tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
             for panel in self.panels:
-                url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=shortwave_radiation,cloud_cover,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
+                url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=global_tilted_irradiance,shortwave_radiation,cloud_cover,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
                 self.damping = (panel.get('damping_morning', 0.0), panel.get('damping_evening', 0.0))
 
                 solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
@@ -224,7 +224,8 @@ class OpenMeteo:
         current_hour = 0
         for i in range(from_hour, to_hour + 1):
             cloud_cover = hourly_data.get('cloud_cover', [])[i]
-            watts_current_hour = self.calculate_cloud_cover(hourly_data.get('shortwave_radiation', [])[i], cloud_cover)
+            # watts_current_hour = self.calculate_cloud_cover(hourly_data.get('shortwave_radiation', [])[i], cloud_cover)
+            watts_current_hour = self.calculate_cloud_cover(hourly_data.get('global_tilted_irradiance', [])[i], cloud_cover)
 
             if watts_current_hour is not None:
                 total += watts_current_hour * self.calculate_exponential_damping(current_hour)
