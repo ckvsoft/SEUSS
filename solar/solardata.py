@@ -36,6 +36,7 @@ class Solardata:
         self.sun_time_today_minutes = None
         self.sun_time_tomorrow_minutes = None
         self.total_current_hour = None
+        self.total_current_hour_real = None
         self.total_current_day = None
         self.total_tomorrow_day = None
         self.total_seuss_current_day = None
@@ -91,6 +92,9 @@ class Solardata:
 
     def update_total_current_hour(self, total_current_hour):
         self.total_current_hour = total_current_hour
+
+    def update_total_current_hour_real(self, total_current_hour):
+        self.total_current_hour_real = total_current_hour
 
     def update_total_current_day(self, total_current_day):
         self.total_current_day = total_current_day

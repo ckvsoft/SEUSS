@@ -181,7 +181,7 @@ class Itemlist:
         items.remove_expired_items()
 
         if not items.get_current_list() or all(
-                item.is_expired() for item in items.get_current_list()):
+                item.is_expired() for item in items.get_current_list()) or items.get_current_price() is None:
             self.logger.log_info(f"Price update is done with {self.primary_market_name}...")
             market_info = self.config.get_market_info(self.primary_market_name)
             loader = GenericLoaderFactory.create_loader("spotmarket", market_info)
