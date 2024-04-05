@@ -33,6 +33,7 @@ import json
 import os, sys, glob
 import zipfile
 import threading
+import  core.version as version
 from waitress import serve
 from core.config import Config
 from core.logreader import LogReader
@@ -120,7 +121,7 @@ class SEUSSWeb:
         chart_avg_svg = self.generate_chart_svg(data, green_avg_hours, red_avg_hours)
         legend_svg = self.generate_legend_svg()
 
-        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, chart_avg_svg=chart_avg_svg, root=self.view_path)
+        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, chart_avg_svg=chart_avg_svg, version=version.__version__, root=self.view_path)
 
     def update_chart_endpoint(self):
         # Abrufen der Slider-Werte aus der Anfrage

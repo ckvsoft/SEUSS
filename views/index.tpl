@@ -44,6 +44,7 @@
         </div>
         <div class="right">
             <p id="datetime"></p>
+            <p>Version: {{ version }}</p>
             <div id="legend">
                 {{ !legend_svg }}
             </div>
