@@ -15,35 +15,34 @@
         <div class="left">
             <!-- SVG-Code oder andere Inhalte -->
             <div>{{ !chart_svg }}</div>
+            <!-- hide experimental
             <h1>Experimental</h1>
             <div id="chart_avg_svg">{{ !chart_avg_svg }}</div>
-            <!-- Slider für 0-99 Prozent -->
             <div>
                 <label for="slider1">Slider 1 (0-99%): </label>
                 <input type="range" id="slider1" min="0" max="99" value="99" oninput="handleSliderChange()">
                 <span id="slider1Value">99</span>
             </div>
-            <!-- Slider für 100-200 Prozent -->
             <div>
                 <label for="slider2">Slider 2 (100-200%): </label>
                 <input type="range" id="slider2" min="100" max="200" value="100" oninput="handleSliderChange()">
                 <span id="slider2Value">100</span>
             </div>
-            <!-- Slider für SOC -->
             <div>
                 <label for="sliderSOC">SOC Slider: </label>
                 <input disabled=true type="range" id="sliderSOC" min="0" max="100" value="50" oninput="handleSliderChange()">
                 <span id="sliderSOCValue">50</span>
             </div>
-            <!-- Slider für Sonnenenergie -->
             <div>
                 <label for="sliderSolar">Solar Slider: </label>
                 <input disabled=true type="range" id="sliderSolar" min="0" max="1000" value="500" oninput="handleSliderChange()">
                 <span id="sliderSolarValue">500</span>
             </div>
+            //-->
         </div>
         <div class="right">
             <p id="datetime"></p>
+            <p>Version: {{ version }}</p>
             <div id="legend">
                 {{ !legend_svg }}
             </div>
