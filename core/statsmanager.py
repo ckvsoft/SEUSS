@@ -140,9 +140,6 @@ class StatsManager(Singleton):
         if "hourly_data" not in cls.data:
             cls.data["hourly_data"] = {}
 
-        if hour < 0:
-            hour = 23
-
         date = datetime.now().strftime('%Y-%m-%d')
 
         if key not in cls.data["hourly_data"]:
@@ -162,17 +159,12 @@ class StatsManager(Singleton):
             data_entry['last_updated'] = date
             data_entry['cloudcover_last_updated'] = date
         else:
-            data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                        data_entry['count'] + 1)
-            data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
-                        data_entry['count'] + 1)
-            data_entry['count'] += 1
-
-        data_entry['cloudcover'][cloudcover] = (data_entry['cloudcover'].get(cloudcover, 0) * data_entry[
-            'cloudcover_count'] + value) / (data_entry[
-                                                'cloudcover_count'] + 1)  # Cloudcover-Prozent mit dem Wert verknüpfen
-        data_entry['cloudcover_count'] += 1
-        data_entry['cloudcover_last_updated'] = date
+            data_entry['total_value'] = value
+            data_entry['total_cloudcover'] = cloudcover
+            data_entry['count'] = 1
+            data_entry['cloudcover'][cloudcover] = value
+            data_entry['cloudcover_count'] = 1
+            data_entry['cloudcover_last_updated'] = date
 
         cls.save_data()
 
