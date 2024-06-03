@@ -208,7 +208,7 @@ class SEUSS:
             current_time = TimeUtilities.get_now().time()
 
             hour = current_time.hour - 1
-            StatsManager.insert_hourly_status_data("solar", hour, StatsManager.calculate_factor(total_forecast , total_solar), self.solardata.current_cloudcover)
+            StatsManager.insert_hourly_status_data('solar', hour, StatsManager.calculate_factor(total_forecast , total_solar), self.solardata.current_cloudcover)
 
             if current_time < sunset_time and total_solar > 0.0:
                 efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
