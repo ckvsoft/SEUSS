@@ -136,31 +136,66 @@ class StatsManager(Singleton):
         return round(value, 2)
 
     @classmethod
-    def insert_hourly_status_data(cls, hour, value):
+    def insert_hourly_status_data(cls, key, hour, value, cloudcover):
         if "hourly_data" not in cls.data:
             cls.data["hourly_data"] = {}
 
         if hour < 0:
             hour = 23
 
-        hour_key = str(hour)
-        if hour_key not in cls.data["hourly_data"]:
-            cls.data["hourly_data"][hour_key] = {'total_value': 0, 'count': 0}
+        date = datetime.now().strftime('%Y-%m-%d')
 
-        data_entry = cls.data["hourly_data"][hour_key]
-        data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                    data_entry['count'] + 1)
-        data_entry['count'] += 1
+        if key not in cls.data["hourly_data"]:
+            cls.data["hourly_data"][key] = {}
+
+        if hour not in cls.data["hourly_data"][key]:
+            cls.data["hourly_data"][key][hour] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
+                                                  'last_updated': None}
+
+        data_entry = cls.data["hourly_data"][key][hour]
+
+        if data_entry['last_updated'] != date:
+            data_entry['total_value'] = value
+            data_entry['total_cloudcover'] = cloudcover
+            data_entry['count'] = 1
+            data_entry['last_updated'] = date
+        else:
+            data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
+                        data_entry['count'] + 1)
+            data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
+                        data_entry['count'] + 1)
+            data_entry['count'] += 1
+
         cls.save_data()
 
     @classmethod
-    def get_hourly_data(cls, hour):
-        hour_key = str(hour)
-        if "hourly_data" in cls.data and hour_key in cls.data["hourly_data"]:
-            data_entry = cls.data["hourly_data"][hour_key]
-            if data_entry['count'] > 0:
-                return data_entry['total_value']
+    def get_hourly_data(cls, key, hour, cloudcover):
+        date = datetime.now().strftime('%Y-%m-%d')
+        if key in cls.data["hourly_data"] and hour in cls.data["hourly_data"][key]:
+            data_entry = cls.data["hourly_data"][key][hour]
+            cloudcover_data = data_entry['cloudcover']
+            if cloudcover in cloudcover_data:
+                return cloudcover_data[cloudcover]
+            else:
+                # Interpolation der Werte für das nächstgelegene Cloudcover-Prozent
+                lower_cloudcover, upper_cloudcover = cls.find_nearest_cloudcovers(cloudcover_data.keys(), cloudcover)
+                lower_value = cloudcover_data.get(lower_cloudcover, None)
+                upper_value = cloudcover_data.get(upper_cloudcover, None)
+                if lower_value is not None and upper_value is not None:
+                    interpolated_value = cls.interpolate(lower_cloudcover, lower_value, upper_cloudcover, upper_value,
+                                                         cloudcover)
+                    return interpolated_value
         return None
+
+    @classmethod
+    def find_nearest_cloudcovers(cls, cloudcovers, target):
+        lower = min(cloudcovers, key=lambda x: abs(x - target))
+        upper = min(cloudcovers, key=lambda x: abs(x - target) if x != lower else float('inf'))
+        return lower, upper
+
+    @classmethod
+    def interpolate(cls, x0, y0, x1, y1, x):
+        return y0 + (x - x0) * (y1 - y0) / (x1 - x0)
 
     @classmethod
     def calculate_factor(cls, value1, value2):

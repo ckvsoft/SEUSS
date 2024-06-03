@@ -154,6 +154,7 @@ class OpenMeteo:
                 # Akkumulierung der Gesamtwerte
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
                 total_watts_current_hour_real += total_current_hour_real if total_current_hour_real is not None else 0
+                solardata.update_current_cloudcover(hourly_data.get('cloud_cover', [])[current_datetime.hour -1])
 
             # Update der Gesamtwerte für Solardaten
             efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter

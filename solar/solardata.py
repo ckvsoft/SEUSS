@@ -47,6 +47,7 @@ class Solardata:
         self.battery_capacity = 0
         self.battery_minimum_soc_limit = 5
         self.battery_current_voltage = None
+        self.current_cloudcover = 0
         self.abort_solar = True
 
     def outside_sun_hours(self):
@@ -128,3 +129,6 @@ class Solardata:
 
     def update_abort_solar(self, abort):
         self.abort_solar = abort
+
+    def update_current_cloudcover(self, clouds):
+        self.current_cloudcover = clouds
