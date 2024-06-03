@@ -31,7 +31,6 @@ import os, sys
 
 from design_patterns.singleton import Singleton
 
-
 class StatsManager(Singleton):
     max_entries = 24 * 3
     download_times = []
@@ -102,7 +101,7 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value, max_count=1000):
+    def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -119,7 +118,7 @@ class StatsManager(Singleton):
             if isinstance(cls.data[group][key], list):
                 value, count = cls.data[group][key]
                 if count >= max_count:
-                    e_value = value * count
+                    e_value =value * count
                     e_value = (e_value - value)
                     count -= 1
                     value = e_value / count
@@ -146,65 +145,46 @@ class StatsManager(Singleton):
         if key not in cls.data["hourly_data"]:
             cls.data["hourly_data"][key] = {}
 
-        if date not in cls.data["hourly_data"][key]:
-            cls.data["hourly_data"][key][date] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
+        if str(hour) not in cls.data["hourly_data"][key]:
+            cls.data["hourly_data"][key][str(hour)] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
                                                   'last_updated': None, 'cloudcover': {}}
 
-        data_entry = cls.data["hourly_data"][key][date]
+        data_entry = cls.data["hourly_data"][key][str(hour)]
 
         if data_entry['last_updated'] != date:
             data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                    data_entry['count'] + 1)
+                        data_entry['count'] + 1)
             data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
-                    data_entry['count'] + 1)
+                        data_entry['count'] + 1)
             data_entry['count'] += 1
             data_entry['last_updated'] = date
-
-            if cloudcover in data_entry['cloudcover']:
-                cloudcover_data = data_entry['cloudcover'][cloudcover]
+            if str(cloudcover) in data_entry['cloudcover']:
+                cloudcover_data = data_entry['cloudcover'][str(cloudcover)]
                 cloudcover_data['value'] = (cloudcover_data['value'] * cloudcover_data['cloudcover_count'] + value) / (
-                        cloudcover_data['cloudcover_count'] + 1)
+                            cloudcover_data['cloudcover_count'] + 1)
                 cloudcover_data['cloudcover_count'] += 1
             else:
-                data_entry['cloudcover'][cloudcover] = {
+                data_entry['cloudcover'][str(cloudcover)] = {
                     'value': value,
-                    'cloudcover_count': 1,
-                    'cloudcover_last_updated': date
-                }
-        else:
-            data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                    data_entry['count'] + 1)
-            data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
-                    data_entry['count'] + 1)
-            data_entry['count'] += 1
-
-            if cloudcover in data_entry['cloudcover']:
-                cloudcover_data = data_entry['cloudcover'][cloudcover]
-                cloudcover_data['value'] = (cloudcover_data['value'] * cloudcover_data['cloudcover_count'] + value) / (
-                        cloudcover_data['cloudcover_count'] + 1)
-                cloudcover_data['cloudcover_count'] += 1
-            else:
-                data_entry['cloudcover'][cloudcover] = {
-                    'value': value,
-                    'cloudcover_count': 1,
-                    'cloudcover_last_updated': date
+                    'cloudcover_count': 1
                 }
 
-        cls.save_data()
+            cls.save_data()
 
     @classmethod
     def get_hourly_data(cls, key, hour, cloudcover):
         date = datetime.now().strftime('%Y-%m-%d')
-        if key in cls.data["hourly_data"] and hour in cls.data["hourly_data"][key]:
-            data_entry = cls.data["hourly_data"][key][hour]
-            if cloudcover in data_entry['cloudcover']:
-                return data_entry['cloudcover'][cloudcover]['value']
+        if key in cls.data["hourly_data"] and str(hour) in cls.data["hourly_data"][key]:
+            data_entry = cls.data["hourly_data"][key][str(hour)]
+            if str(cloudcover) in data_entry['cloudcover']:
+                return data_entry['cloudcover'][str(cloudcover)]['value']
             else:
                 # Interpolation der Werte für das nächstgelegene Cloudcover-Prozent
                 nearest_cloudcover = cls.find_nearest_cloudcover(data_entry['cloudcover'].keys(), cloudcover)
                 lower_cloudcover, upper_cloudcover = nearest_cloudcover
-                lower_data = data_entry['cloudcover'].get(lower_cloudcover, None)
-                upper_data = data_entry['cloudcover'].get(upper_cloudcover, None)
+                lower_data = data_entry['cloudcover'].get(str(lower_cloudcover), {'value': 0.0})
+                total_value = data_entry['total_value']
+                upper_data = data_entry['cloudcover'].get(str(upper_cloudcover), {'value': total_value})
                 if lower_data and upper_data:
                     interpolated_value = cls.interpolate(lower_cloudcover, lower_data['value'], upper_cloudcover,
                                                          upper_data['value'], cloudcover)
@@ -219,11 +199,13 @@ class StatsManager(Singleton):
             if cloudcovers[i] <= target <= cloudcovers[i + 1]:
                 return cloudcovers[i], cloudcovers[i + 1]
         # If target is smaller than the smallest cloudcover, return the smallest cloudcover
-        if target < cloudcovers[0]:
+        if target < int(cloudcovers[0]):
             return cloudcovers[0], cloudcovers[0]
         # If target is larger than the largest cloudcover, return the largest cloudcover
-        if target > cloudcovers[-1]:
+        if target > int(cloudcovers[-1]):
             return cloudcovers[-1], cloudcovers[-1]
+
+        return 0, target
 
     @classmethod
     def interpolate(cls, x0, y0, x1, y1, x):
