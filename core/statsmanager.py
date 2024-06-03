@@ -158,6 +158,8 @@ class StatsManager(Singleton):
             data_entry['count'] = 1
             data_entry['last_updated'] = date
             data_entry['cloudcover_last_updated'] = date
+            data_entry['cloudcover'][cloudcover] = value
+            data_entry['cloudcover_count'] = 1
         else:
             data_entry['total_value'] = value
             data_entry['total_cloudcover'] = cloudcover
