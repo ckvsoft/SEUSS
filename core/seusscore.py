@@ -218,7 +218,7 @@ class SEUSS:
                     efficiency = round(efficiency_list[0], 2)
             rounded_percentage = round(percentage, 2)
             self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
-            self.logger.log_info(f"Solar factor: {StatsManager.get_hourly_data("solar", current_time.hour, self.solardata.current_cloudcover)}")
+            self.logger.log_info(f"Solar factor: {StatsManager.get_hourly_data('solar', current_time.hour, self.solardata.current_cloudcover)}")
         else:
             self.logger.log_info("Solar forecast is zero or not available.")
 
