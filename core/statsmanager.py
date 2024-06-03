@@ -136,7 +136,6 @@ class StatsManager(Singleton):
         return round(value, 2)
 
     @classmethod
-    @classmethod
     def insert_hourly_status_data(cls, key, hour, value, cloudcover):
         if "hourly_data" not in cls.data:
             cls.data["hourly_data"] = {}
