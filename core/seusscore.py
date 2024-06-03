@@ -207,6 +207,10 @@ class SEUSS:
             sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
             current_time = TimeUtilities.get_now().time()
 
+            if current_time.minute == 0:
+                hour = current_time.hour - 1
+                StatsManager.insert_hourly_status_data(hour, StatsManager.calculate_factor(total_forecast , total_solar))
+
             if current_time < sunset_time and total_solar > 0.0:
                 efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
             else:
@@ -215,6 +219,7 @@ class SEUSS:
                     efficiency = round(efficiency_list[0], 2)
             rounded_percentage = round(percentage, 2)
             self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
+            self.logger.log_info(f"Solar factor: {StatsManager.get_hourly_data(current_time.hour)}")
         else:
             self.logger.log_info("Solar forecast is zero or not available.")
 

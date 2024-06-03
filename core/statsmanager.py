@@ -136,6 +136,39 @@ class StatsManager(Singleton):
         return round(value, 2)
 
     @classmethod
+    def insert_hourly_status_data(cls, hour, value):
+        if "hourly_data" not in cls.data:
+            cls.data["hourly_data"] = {}
+
+        if hour < 0:
+            hour = 23
+
+        hour_key = str(hour)
+        if hour_key not in cls.data["hourly_data"]:
+            cls.data["hourly_data"][hour_key] = {'total_value': 0, 'count': 0}
+
+        data_entry = cls.data["hourly_data"][hour_key]
+        data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
+                    data_entry['count'] + 1)
+        data_entry['count'] += 1
+        cls.save_data()
+
+    @classmethod
+    def get_hourly_data(cls, hour):
+        hour_key = str(hour)
+        if "hourly_data" in cls.data and hour_key in cls.data["hourly_data"]:
+            data_entry = cls.data["hourly_data"][hour_key]
+            if data_entry['count'] > 0:
+                return data_entry['total_value']
+        return None
+
+    @classmethod
+    def calculate_factor(cls, value1, value2):
+        if value2 == 0:
+            return None
+        return value1 / value2
+
+    @classmethod
     def cleanup_old_entries(cls, group_to_cleanup):
         today = datetime.now().strftime('%Y-%m-%d')
 
