@@ -31,6 +31,7 @@ import os, sys
 
 from design_patterns.singleton import Singleton
 
+
 class StatsManager(Singleton):
     max_entries = 24 * 3
     download_times = []
@@ -101,7 +102,7 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
+    def update_percent_status_data(cls, group, key, new_value, max_count=1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -118,7 +119,7 @@ class StatsManager(Singleton):
             if isinstance(cls.data[group][key], list):
                 value, count = cls.data[group][key]
                 if count >= max_count:
-                    e_value =value * count
+                    e_value = value * count
                     e_value = (e_value - value)
                     count -= 1
                     value = e_value / count
@@ -145,23 +146,24 @@ class StatsManager(Singleton):
         if key not in cls.data["hourly_data"]:
             cls.data["hourly_data"][key] = {}
 
-        if hour not in cls.data["hourly_data"][key]:
-            cls.data["hourly_data"][key][hour] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
+        if date not in cls.data["hourly_data"][key]:
+            cls.data["hourly_data"][key][date] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
                                                   'last_updated': None, 'cloudcover': {}}
 
-        data_entry = cls.data["hourly_data"][key][hour]
+        data_entry = cls.data["hourly_data"][key][date]
 
         if data_entry['last_updated'] != date:
             data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                        data_entry['count'] + 1)
+                    data_entry['count'] + 1)
             data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
-                        data_entry['count'] + 1)
+                    data_entry['count'] + 1)
             data_entry['count'] += 1
             data_entry['last_updated'] = date
+
             if cloudcover in data_entry['cloudcover']:
                 cloudcover_data = data_entry['cloudcover'][cloudcover]
                 cloudcover_data['value'] = (cloudcover_data['value'] * cloudcover_data['cloudcover_count'] + value) / (
-                            cloudcover_data['cloudcover_count'] + 1)
+                        cloudcover_data['cloudcover_count'] + 1)
                 cloudcover_data['cloudcover_count'] += 1
             else:
                 data_entry['cloudcover'][cloudcover] = {
@@ -171,14 +173,15 @@ class StatsManager(Singleton):
                 }
         else:
             data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                        data_entry['count'] + 1)
+                    data_entry['count'] + 1)
             data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
-                        data_entry['count'] + 1)
+                    data_entry['count'] + 1)
             data_entry['count'] += 1
+
             if cloudcover in data_entry['cloudcover']:
                 cloudcover_data = data_entry['cloudcover'][cloudcover]
                 cloudcover_data['value'] = (cloudcover_data['value'] * cloudcover_data['cloudcover_count'] + value) / (
-                            cloudcover_data['cloudcover_count'] + 1)
+                        cloudcover_data['cloudcover_count'] + 1)
                 cloudcover_data['cloudcover_count'] += 1
             else:
                 data_entry['cloudcover'][cloudcover] = {
