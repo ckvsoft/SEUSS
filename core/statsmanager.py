@@ -136,6 +136,7 @@ class StatsManager(Singleton):
         return round(value, 2)
 
     @classmethod
+    @classmethod
     def insert_hourly_status_data(cls, key, hour, value, cloudcover):
         if "hourly_data" not in cls.data:
             cls.data["hourly_data"] = {}
@@ -150,21 +151,29 @@ class StatsManager(Singleton):
 
         if hour not in cls.data["hourly_data"][key]:
             cls.data["hourly_data"][key][hour] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
-                                                  'last_updated': None}
+                                                  'last_updated': None, 'cloudcover': {}, 'cloudcover_count': 0,
+                                                  'cloudcover_last_updated': None}
 
         data_entry = cls.data["hourly_data"][key][hour]
 
-        if data_entry['last_updated'] != date:
+        if data_entry['last_updated'] != date or data_entry['cloudcover_last_updated'] != date:
             data_entry['total_value'] = value
             data_entry['total_cloudcover'] = cloudcover
             data_entry['count'] = 1
             data_entry['last_updated'] = date
+            data_entry['cloudcover_last_updated'] = date
         else:
             data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
                         data_entry['count'] + 1)
             data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
                         data_entry['count'] + 1)
             data_entry['count'] += 1
+
+        data_entry['cloudcover'][cloudcover] = (data_entry['cloudcover'].get(cloudcover, 0) * data_entry[
+            'cloudcover_count'] + value) / (data_entry[
+                                                'cloudcover_count'] + 1)  # Cloudcover-Prozent mit dem Wert verknüpfen
+        data_entry['cloudcover_count'] += 1
+        data_entry['cloudcover_last_updated'] = date
 
         cls.save_data()
 
