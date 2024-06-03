@@ -146,15 +146,13 @@ class StatsManager(Singleton):
             cls.data["hourly_data"][key] = {}
 
         if str(hour) not in cls.data["hourly_data"][key]:
-            cls.data["hourly_data"][key][str(hour)] = {'total_value': 0, 'total_cloudcover': 0, 'count': 0,
+            cls.data["hourly_data"][key][str(hour)] = {'total_value': 0, 'count': 0,
                                                   'last_updated': None, 'cloudcover': {}}
 
         data_entry = cls.data["hourly_data"][key][str(hour)]
 
         if data_entry['last_updated'] != date:
             data_entry['total_value'] = (data_entry['total_value'] * data_entry['count'] + value) / (
-                        data_entry['count'] + 1)
-            data_entry['total_cloudcover'] = (data_entry['total_cloudcover'] * data_entry['count'] + cloudcover) / (
                         data_entry['count'] + 1)
             data_entry['count'] += 1
             data_entry['last_updated'] = date
