@@ -229,9 +229,9 @@ class StatsManager(Singleton):
 
     @classmethod
     def calculate_factor(cls, value1, value2):
-        if value2 == 0:
+        if value1 == 0:
             return None
-        return value1 / value2
+        return value2 / value1
 
     @classmethod
     def cleanup_old_entries(cls, group_to_cleanup):
