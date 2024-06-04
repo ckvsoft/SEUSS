@@ -176,39 +176,10 @@ class StatsManager(Singleton):
             data_entry = cls.data["hourly_data"][key][str(hour)]
             if str(cloudcover) in data_entry['cloudcover']:
                 return data_entry['cloudcover'][str(cloudcover)]['value']
-            else:
-                # Interpolation der Werte für das nächstgelegene Cloudcover-Prozent
-                nearest_cloudcover = cls.find_nearest_cloudcover(data_entry['cloudcover'].keys(), cloudcover)
-                lower_cloudcover, upper_cloudcover = nearest_cloudcover
-                lower_data = data_entry['cloudcover'].get(str(lower_cloudcover), {'value': 0.0})
-                total_value = data_entry['total_value']
-                upper_data = data_entry['cloudcover'].get(str(upper_cloudcover), {'value': total_value})
-                if lower_data and upper_data:
-                    interpolated_value = cls.interpolate(lower_cloudcover, lower_data['value'], upper_cloudcover,
-                                                         upper_data['value'], cloudcover)
-                    return interpolated_value
+            elif 'total_value' in data_entry:
+                return data_entry['total_value']
+
         return None
-
-    @classmethod
-    def find_nearest_cloudcover(cls, cloudcovers, target):
-        # Find nearest lower and upper cloudcover percentages
-        cloudcovers = sorted(cloudcovers)
-        for i in range(len(cloudcovers) - 1):
-            if cloudcovers[i] <= target <= cloudcovers[i + 1]:
-                return cloudcovers[i], cloudcovers[i + 1]
-        # If target is smaller than the smallest cloudcover, return the smallest cloudcover
-        if target < int(cloudcovers[0]):
-            return cloudcovers[0], cloudcovers[0]
-        # If target is larger than the largest cloudcover, return the largest cloudcover
-        if target > int(cloudcovers[-1]):
-            return cloudcovers[-1], cloudcovers[-1]
-
-        return 0, target
-
-    @classmethod
-    def interpolate(cls, x0, y0, x1, y1, x):
-        # Interpolate the value for the given x using linear interpolation
-        return y0 + (x - x0) * (y1 - y0) / (x1 - x0)
 
     @classmethod
     def calculate_factor(cls, value1, value2):
