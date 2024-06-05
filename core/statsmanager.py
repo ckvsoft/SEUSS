@@ -141,13 +141,26 @@ class StatsManager(Singleton):
             cls.data["hourly_data"] = {}
 
         date = datetime.now().strftime('%Y-%m-%d')
+        date_hour = datetime.now().strftime('%Y-%m-%d.%H')
 
         if key not in cls.data["hourly_data"]:
             cls.data["hourly_data"][key] = {}
 
+        if 'total' not in cls.data["hourly_data"][key]:
+            cls.data["hourly_data"][key]['total'] = {'total_value': 0, 'count': 0,
+                                                  'last_updated': None}
+
+        key_entry = cls.data["hourly_data"][key]['total']
+        if key_entry['last_updated'] != date_hour:
+            key_entry['total_value'] = (key_entry['total_value'] * key_entry['count'] + value) / (
+                    key_entry['count'] + 1)
+            key_entry['count'] += 1
+            key_entry['last_updated'] = date_hour
+
         if str(hour) not in cls.data["hourly_data"][key]:
             cls.data["hourly_data"][key][str(hour)] = {'total_value': 0, 'count': 0,
                                                   'last_updated': None, 'cloudcover': {}}
+
 
         data_entry = cls.data["hourly_data"][key][str(hour)]
 
@@ -177,6 +190,11 @@ class StatsManager(Singleton):
             if str(cloudcover) in data_entry['cloudcover']:
                 return data_entry['cloudcover'][str(cloudcover)]['value']
             elif 'total_value' in data_entry:
+                return data_entry['total_value']
+
+        if key in cls.data["hourly_data"] and 'total' in cls.data["hourly_data"][key]:
+            data_entry = cls.data["hourly_data"][key]['total']
+            if 'total_value' in data_entry:
                 return data_entry['total_value']
 
         return None
