@@ -145,8 +145,10 @@ class OpenMeteo:
 
                 efficiency = panel.get('efficiency', 20) / 100
 
-                total_watt_hours_current_day += round((shortwave_radiation_today * total_area) * efficiency, 2)
-                total_watt_hours_tomorrow_day += round((shortwave_radiation_tomorrow * total_area) * efficiency, 2)
+                # total_watt_hours_current_day += round((shortwave_radiation_today * total_area) * efficiency, 2)
+                # total_watt_hours_tomorrow_day += round((shortwave_radiation_tomorrow * total_area) * efficiency, 2)
+                total_watt_hours_current_day += round(shortwave_radiation_today, 2)
+                total_watt_hours_tomorrow_day += round(shortwave_radiation_tomorrow, 2)
 
                 total_current_hour = round((self.calculate_shortwave_radiation(hourly_data, 0, index) * total_area) * efficiency, 2)
                 total_current_hour_real = round(self.calculate_shortwave_radiation(hourly_data, 0, index - 1), 2)
@@ -165,8 +167,10 @@ class OpenMeteo:
             efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
             self.solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
             self.solardata.update_total_current_hour_real(total_watts_current_hour_real)
-            total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
-            total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
+            # total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
+            # total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
+            total_current_day = round(total_watt_hours_current_day, 2)
+            total_tomorrow_day = round(total_watt_hours_tomorrow_day, 2)
 
             efficiency_seuss_list = StatsManager.get_data('solar', 'efficiency')
             if efficiency_seuss_list is not None:
