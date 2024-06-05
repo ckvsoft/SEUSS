@@ -189,9 +189,41 @@ class StatsManager(Singleton):
             data_entry = cls.data["hourly_data"][key][str(hour)]
             if str(cloudcover) in data_entry['cloudcover']:
                 return data_entry['cloudcover'][str(cloudcover)]['value']
+
+            # Falls der spezifische Cloudcover-Wert nicht existiert, versuchen wir zu interpolieren
+            cloudcover_data = data_entry['cloudcover']
+            cloudcover_keys = sorted(int(k) for k in cloudcover_data.keys())
+
+            if len(cloudcover_keys) >= 2:
+                lower_key = None
+                upper_key = None
+
+                if cloudcover < cloudcover_keys[0]:
+                    lower_key = cloudcover_keys[0]
+                    upper_key = cloudcover_keys[1]
+                else:
+                    for k in cloudcover_keys:
+                        if k <= cloudcover:
+                            lower_key = k
+                        if k >= cloudcover:
+                            upper_key = k
+                            break
+
+                if lower_key is not None and upper_key is not None and lower_key != upper_key:
+                    lower_value = cloudcover_data[str(lower_key)]['value']
+                    upper_value = cloudcover_data[str(upper_key)]['value']
+
+                    # Sicherstellen, dass wir keine Division durch 0 haben
+                    if upper_key != lower_key:
+                        # Lineare Interpolation
+                        interpolated_value = lower_value + (upper_value - lower_value) * (cloudcover - lower_key) / (
+                                    upper_key - lower_key)
+                        return interpolated_value
+
             elif 'total_value' in data_entry:
                 return data_entry['total_value']
 
+        # Wenn keine spezifischen Daten vorhanden sind, geben wir den Gesamtwert zurück
         if key in cls.data["hourly_data"] and 'total' in cls.data["hourly_data"][key]:
             data_entry = cls.data["hourly_data"][key]['total']
             if 'total_value' in data_entry:
