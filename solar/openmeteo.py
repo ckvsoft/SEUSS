@@ -86,6 +86,7 @@ class OpenMeteo:
             tomorrow_datetime = current_datetime + timedelta(days=1)
             tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
+            solardata.update_current_hour_forcast(0)
             for panel in self.panels:
                 url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=global_tilted_irradiance,shortwave_radiation,cloud_cover,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
                 self.damping = (panel.get('damping_morning', 0.0), panel.get('damping_evening', 0.0))
@@ -147,14 +148,16 @@ class OpenMeteo:
 
                 total_current_hour = round((self.calculate_shortwave_radiation(hourly_data, 0, index) * total_area) * efficiency, 2)
                 total_current_hour_real = round(self.calculate_shortwave_radiation(hourly_data, 0, index - 1), 2)
-
+                new_datetime = current_datetime - timedelta(hours=1)
+                current_forcast = hourly_data.get('global_tilted_irradiance', [])[new_datetime.hour]
+                solardata.update_current_hour_forcast(solardata.current_hour_forcast + current_forcast)
                 # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
                 # total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
 
                 # Akkumulierung der Gesamtwerte
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
                 total_watts_current_hour_real += total_current_hour_real if total_current_hour_real is not None else 0
-                solardata.update_current_cloudcover(hourly_data.get('cloud_cover', [])[current_datetime.hour -1])
+                solardata.update_current_cloudcover(hourly_data.get('cloud_cover', [])[new_datetime.hour])
 
             # Update der Gesamtwerte für Solardaten
             efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
