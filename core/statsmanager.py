@@ -137,6 +137,9 @@ class StatsManager(Singleton):
 
     @classmethod
     def insert_hourly_status_data(cls, key, hour, value, cloudcover):
+        if value is None or cloudcover is None:
+            return
+
         if "hourly_data" not in cls.data:
             cls.data["hourly_data"] = {}
 
