@@ -167,6 +167,7 @@ class SEUSS:
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
+        current_power = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
@@ -182,6 +183,7 @@ class SEUSS:
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')
             productname = inverters.get_value(key_outer, 'ProductName')
+            current_power += inverters.get_value(key_outer, 'Ac/Power')
             forward = inverters.get_forward_kwh(key_outer)
             total_solar += float(forward)
             self.logger.log_debug(f"Found PV Inverter:  {productname} {customname}.")
@@ -190,8 +192,10 @@ class SEUSS:
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        peek = StatsManager.insert_peek_data('solar_wh', round(total_solar, 2))
-        self.logger.log_info(f"All Inverters yield peek:  {peek} Wh.")
+        peek = StatsManager.insert_peek_data('solar_w', round(current_power, 2))
+        peek_wh = StatsManager.insert_peek_data('solar_wh', round(total_solar, 2))
+        self.logger.log_info(f"All Inverters Power peek:  {peek} W.")
+        self.logger.log_info(f"All Inverters yield peek:  {peek_wh} Wh.")
         self.logger.log_info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
         return total_solar
 
