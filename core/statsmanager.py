@@ -115,13 +115,13 @@ class StatsManager(Singleton):
             if existing_value < value:
                 cls.data['peek'][key] = {'value': value, 'timestamp': now}
             else:
-                return round(existing_value, 2)
+                return round(existing_value, 2), cls.data['peek'][key]['timestamp']
         else:
             cls.data['peek'][key] = {'value': value, 'timestamp': now}
 
         cls.save_data()
 
-        return round(value, 2)
+        return round(value, 2), now
 
     @classmethod
     def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
