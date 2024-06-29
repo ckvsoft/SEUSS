@@ -101,6 +101,29 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
+    def insert_peek_data(cls, key, value):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if 'peek' not in cls.data:
+            cls.data['peek'] = {}
+
+        if key in cls.data['peek']:
+            existing_value = cls.data['peek'][key]['value']
+            if existing_value < value:
+                cls.data['peek'][key] = {'value': value, 'timestamp': now}
+            else:
+                return round(existing_value, 2)
+        else:
+            cls.data['peek'][key] = {'value': value, 'timestamp': now}
+
+        cls.save_data()
+
+        return round(value, 2)
+
+    @classmethod
     def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None

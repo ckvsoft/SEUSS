@@ -190,6 +190,8 @@ class SEUSS:
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
+        peek = StatsManager.insert_peek_data('solar_wh', round(total_solar, 2))
+        self.logger.log_info(f"All Inverters yield peek:  {peek} Wh.")
         self.logger.log_info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
         return total_solar
 
