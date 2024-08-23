@@ -36,12 +36,17 @@ from core.timeutilities import TimeUtilities
 
 class MqttResult:
     def __init__(self):
+        self.received_topics = set()
         self.results = {}
         self.result = None
 
     def add_value(self, topic, value):
         self.result = value
         self.results[topic] = value
+
+    def has_received_topic(self, topic):
+        return topic in self.received_topics  # `received_values` ist eine Liste oder ein Set von Topics, die bereits eine Antwort erhalten haben
+
 
 from core.statsmanager import StatsManager
 class PvInverterResults(MqttResult):
@@ -175,7 +180,6 @@ class Subscribers(MqttResult):
         self.subscribesValues = {}
         self.subscribesTopics = {}
         self.logger = CustomLogger()
-        self.received_topics = set()
 
     def add_value(self, topic, value):
         group = self.find_group_by_topic(topic)
@@ -258,10 +262,8 @@ class Subscribers(MqttResult):
 
         return values_count
 
-
 class MqttClient:
     def __init__(self, mqtt_config):
-        self.received_values = set()
         self.logger = CustomLogger()
         self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
         self.client.on_connect = self.on_connect
@@ -326,7 +328,7 @@ class MqttClient:
     def on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = msg.payload.decode('utf-8')
-        self.received_values.add(topic)
+        self.subscribers_instance.received_topics.add(topic)
         self.logger.log_debug(f"Received message on topic {topic}: {payload}")
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
@@ -373,7 +375,7 @@ class MqttClient:
                     # Fehlende Topics ermitteln und loggen
                     missing_topics = [
                         topic for topic in subscribers_instance.subscribesValues
-                        if not subscribers_instance.has_received_value(topic)
+                        if not subscribers_instance.has_received_topic(topic)
                     ]
                     self.logger.log_debug(f"Missing Topics: {missing_topics}")
                     raise TimeoutError
@@ -382,8 +384,11 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT subscription process.")
-            self.logger.log_debug(f"Timeout MQTT Topics: {query_topics}.")
+            missing_topics = [
+                topic for topic in self.subscribers_instance.subscribesValues
+                if not self.subscribers_instance.has_received_topic(topic)
+            ]
+            self.logger.log_warning(f"Timeout during the MQTT subscription process. Missing Topics: {missing_topics}")
             result = 1
 
         finally:
@@ -433,11 +438,8 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
-            missing_topics = [
-                topic for topic in self.subscribers_instance.subscribesValues
-                if not self.subscribers_instance.has_received_value(topic)
-            ]
-            self.logger.log_warning(f"Timeout during the MQTT subscription process. Missing Topics: {missing_topics}")
+            self.logger.log_warning("Timeout during the MQTT publish process.")
+            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
@@ -483,9 +485,6 @@ class MqttClient:
             self.disconnect()
 
         return result
-
-    def has_received_value(self, topic):
-        return topic in self.received_values  # `received_values` ist eine Liste oder ein Set von Topics, die bereits eine Antwort erhalten haben
 
     def connect(self):
         try:
