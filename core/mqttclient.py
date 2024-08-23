@@ -260,6 +260,7 @@ class Subscribers(MqttResult):
 
 class MqttClient:
     def __init__(self, mqtt_config):
+        self.received_values = set()
         self.logger = CustomLogger()
         self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
         self.client.on_connect = self.on_connect
@@ -324,6 +325,7 @@ class MqttClient:
     def on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = msg.payload.decode('utf-8')
+        self.received_values.add(topic)
         self.logger.log_debug(f"Received message on topic {topic}: {payload}")
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
@@ -367,8 +369,13 @@ class MqttClient:
                     > subscribers_instance.count_values(subscribers_instance.subscribesValues)
             ):
                 if time.time() - start_time > self.timeout:
+                    # Fehlende Topics ermitteln und loggen
+                    missing_topics = [
+                        topic for topic in subscribers_instance.subscribesValues
+                        if not subscribers_instance.has_received_value(topic)
+                    ]
+                    self.logger.log_debug(f"Missing Topics: {missing_topics}")
                     raise TimeoutError
-
                 time.sleep(1)
 
             result = 0
@@ -425,8 +432,11 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT subscription process.")
-            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
+            missing_topics = [
+                topic for topic in self.subscribers_instance.subscribesValues
+                if not self.subscribers_instance.has_received_value(topic)
+            ]
+            self.logger.log_warning(f"Timeout during the MQTT subscription process. Missing Topics: {missing_topics}")
             result = 1
 
         finally:
@@ -472,6 +482,9 @@ class MqttClient:
             self.disconnect()
 
         return result
+
+    def has_received_value(self, topic):
+        return topic in self.received_values  # `received_values` ist eine Liste oder ein Set von Topics, die bereits eine Antwort erhalten haben
 
     def connect(self):
         try:
