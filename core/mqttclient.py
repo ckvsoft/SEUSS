@@ -355,6 +355,7 @@ class MqttClient:
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
+                self.logger.log_error("Failed to connect to the MQTT broker.")
                 return 1
 
             self.client.loop_start()
@@ -380,10 +381,15 @@ class MqttClient:
                             subscribers_instance.subscribesValues[topic]['topic'])
                     ]
                     self.logger.log_debug(f"Missing Topics: {missing_topics}")
-                    raise TimeoutError
-                time.sleep(1)
+                    self.logger.log_warning("Timeout during the MQTT subscription process.")
+                    result = 1
+                    break  # Beende die Schleife, wenn ein Timeout auftritt
 
-            result = 0
+                time.sleep(1)
+            else:
+                # Erfolgreich abgeschlossen
+                self.logger.log_debug("Successfully subscribed to all topics.")
+                result = 0
 
         except TimeoutError:
             self.logger.log_debug(f"Final subscribesValues: {self.subscribers_instance.subscribesValues}")
