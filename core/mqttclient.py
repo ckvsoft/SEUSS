@@ -245,7 +245,7 @@ class Subscribers(MqttResult):
             if isinstance(value, dict):
                 nested_topic_count = self.count_topics(value)
                 topic_count += nested_topic_count
-            elif key == 'topic':
+            elif 'topic' in value:
                 topic_count += 1
 
         return topic_count
@@ -257,7 +257,7 @@ class Subscribers(MqttResult):
             if isinstance(value, dict):
                 nested_values_count = self.count_values(value)
                 values_count += nested_values_count
-            elif key == 'value':
+            elif 'value' in value:
                 values_count += 1
 
         return values_count
@@ -361,7 +361,7 @@ class MqttClient:
 
             for query_topic in query_topics:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
-                self.logger.log_debug(f"subscribe: {actual_topic}")
+                self.logger.log_debug(f"Subscribing to: {actual_topic}")
                 self.client.subscribe(f"{actual_topic}")
                 self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
@@ -373,6 +373,7 @@ class MqttClient:
             ):
                 if time.time() - start_time > self.timeout:
                     # Fehlende Topics ermitteln und loggen
+                    self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
                     missing_topics = [
                         topic for topic in subscribers_instance.subscribesValues
                         if not subscribers_instance.has_received_topic(
@@ -385,6 +386,7 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
+            self.logger.log_debug(f"Final subscribesValues: {self.subscribers_instance.subscribesValues}")
             missing_topics = [
                 topic for topic in self.subscribers_instance.subscribesValues
                 if
