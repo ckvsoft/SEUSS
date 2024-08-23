@@ -349,6 +349,7 @@ class MqttClient:
         self.subscribers_instance.flag_connected = False
 
         try:
+            # MQTT-Broker-Verbindung und Authentifizierung einrichten
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
                 plain_password = Utils.decode_from_base64(self.password)
@@ -360,48 +361,45 @@ class MqttClient:
 
             self.client.loop_start()
 
+            # Abonnements für die angegebenen Themen einrichten
             for query_topic in query_topics:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
                 self.logger.log_debug(f"Subscribing to: {actual_topic}")
-                self.client.subscribe(f"{actual_topic}")
-                self.client.publish(f"R/{self.unit_id}/keepalive", "")
+                self.client.subscribe(actual_topic)
+
+            self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             start_time = time.time()
 
-            while (
-                    subscribers_instance.count_topics(subscribers_instance.subscribesValues)
-                    > subscribers_instance.count_values(subscribers_instance.subscribesValues)
+            result = 0
+            # Warte auf das Empfangen aller Themen
+            while not all(
+                    'value' in subtopic_data and subtopic_data['value']
+                    for topic, subtopics in subscribers_instance.subscribesValues.items()
+                    for subtopic, subtopic_data in subtopics.items()
             ):
                 if time.time() - start_time > self.timeout:
-                    # Fehlende Topics ermitteln und loggen
-                    self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
+                    # Timeout erreicht, fehlende oder ungültige Werte protokollieren
                     missing_topics = [
-                        topic for topic in subscribers_instance.subscribesValues
-                        if not subscribers_instance.has_received_topic(
-                            subscribers_instance.subscribesValues[topic]['topic'])
+                        f"{topic}/{subtopic}" for topic, subtopics in subscribers_instance.subscribesValues.items()
+                        for subtopic, subtopic_data in subtopics.items()
+                        if 'value' not in subtopic_data or not subtopic_data['value']
                     ]
-                    self.logger.log_debug(f"Missing Topics: {missing_topics}")
+                    self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
+                    self.logger.log_debug(f"Missing or Invalid Topics: {missing_topics}")
                     self.logger.log_warning("Timeout during the MQTT subscription process.")
                     result = 1
-                    break  # Beende die Schleife, wenn ein Timeout auftritt
+                    break
 
                 time.sleep(1)
-            else:
-                # Erfolgreich abgeschlossen
-                self.logger.log_debug("Successfully subscribed to all topics.")
-                result = 0
 
-        except TimeoutError:
-            self.logger.log_debug(f"Final subscribesValues: {self.subscribers_instance.subscribesValues}")
-            missing_topics = [
-                topic for topic in self.subscribers_instance.subscribesValues
-                if
-                not subscribers_instance.has_received_topic(self.subscribers_instance.subscribesValues[topic]['topic'])
-            ]
-            self.logger.log_warning(f"Timeout during the MQTT subscription process. Missing Topics: {missing_topics}")
+        except Exception as e:
+            # Fehlerbehandlung
+            self.logger.log_error(f"Exception during subscription: {str(e)}")
             result = 1
 
         finally:
+            # Ressourcen freigeben
             self.client.loop_stop()
             self.disconnect()
 
