@@ -175,6 +175,7 @@ class Subscribers(MqttResult):
         self.subscribesValues = {}
         self.subscribesTopics = {}
         self.logger = CustomLogger()
+        self.received_topics = set()
 
     def add_value(self, topic, value):
         group = self.find_group_by_topic(topic)
