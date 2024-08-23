@@ -375,7 +375,8 @@ class MqttClient:
                     # Fehlende Topics ermitteln und loggen
                     missing_topics = [
                         topic for topic in subscribers_instance.subscribesValues
-                        if not subscribers_instance.has_received_topic(topic)
+                        if not subscribers_instance.has_received_topic(
+                            subscribers_instance.subscribesValues[topic]['topic'])
                     ]
                     self.logger.log_debug(f"Missing Topics: {missing_topics}")
                     raise TimeoutError
@@ -386,7 +387,8 @@ class MqttClient:
         except TimeoutError:
             missing_topics = [
                 topic for topic in self.subscribers_instance.subscribesValues
-                if not self.subscribers_instance.has_received_topic(topic)
+                if
+                not subscribers_instance.has_received_topic(self.subscribers_instance.subscribesValues[topic]['topic'])
             ]
             self.logger.log_warning(f"Timeout during the MQTT subscription process. Missing Topics: {missing_topics}")
             result = 1
