@@ -97,12 +97,13 @@ class PvInverterResults(MqttResult):
         forward = forward - forward_start
         return float(forward * pi)
 
-    def get_value(self,device_id, key):
+    def get_value(self,device_id, key, default=0.0):
         if device_id in self.inverters and key in self.inverters[device_id]:
             value_str = self.inverters[device_id][key]
-            return json.loads(value_str)['value']
+            value = json.loads(value_str)['value']
+            return value if value is not None else default
         else:
-            return None
+            return default
 
 class GridMetersResults(MqttResult):
     def __init__(self):
