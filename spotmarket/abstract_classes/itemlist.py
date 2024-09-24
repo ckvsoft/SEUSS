@@ -63,12 +63,25 @@ class Itemlist:
         return len(self.item_list)
 
     def get_valid_items_count_until_midnight(self, price_list):
-        now = datetime.now(timezone.utc)
-        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+        # Aktuelle Zeit in UTC
+        local_now = datetime.now()
+
+        # Berechne Mitternacht für heute (lokale Zeit) und konvertiere sie nach UTC
+        local_midnight = datetime.combine(local_now.date() + timedelta(days=1), datetime.min.time())
+        now = local_now.astimezone(timezone.utc)
+        midnight = local_midnight.astimezone(timezone.utc)
 
         valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
 
         return len(valid_items)
+#    def get_valid_items_count_until_midnight(self, price_list):
+#        now = datetime.now(timezone.utc)
+#        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+
+#        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
+
+#        return len(valid_items)
+
 
     def is_valid_item(self, item, now, midnight):
         end_datetime = item.get_end_datetime()
