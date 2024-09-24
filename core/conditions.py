@@ -24,8 +24,10 @@
 #
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
+from typing import Any
 
 from core.config import Config
+from core.statsmanager import StatsManager
 from core.log import CustomLogger
 from spotmarket.abstract_classes.item import Item
 
@@ -135,9 +137,16 @@ class Conditions:
         self.logger.log_info(message)
 
         # Weitere Bedingungen für Entladung hinzufügen
+        # additional_conditions = {
+        #     "Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc,
+        #     # Füge weitere Bedingungen hier hinzu
+        # }
+
+        future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
+
         additional_conditions = {
-            "Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc,
-            # Füge weitere Bedingungen hier hinzu
+            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)})": lambda: self._calculate_discharge_conditions(
+                future_high_prices)
         }
         self.conditions_by_operation_mode["discharging"].update(additional_conditions)
 
@@ -201,3 +210,48 @@ class Conditions:
                 condition_result.execute = not result
                 condition_result.condition = condition_key
                 break
+
+    def _calculate_required_capacity(self, upcoming_high_prices):
+        average_consumption = 0.0
+        average_consumption_list = StatsManager.get_data('gridmeters', 'average')
+        if average_consumption_list is not None:
+            average_consumption = round(average_consumption_list[0], 2)
+
+        # Calculate the required capacity based on the number of upcoming high-price periods
+        return len(upcoming_high_prices) * average_consumption  # Multiply by average hourly consumption
+
+    def _calculate_discharge_conditions(self, upcoming_high_prices):
+        """Helper function to encapsulate the discharge calculation logic."""
+
+        # Calculate the current state of charge in kWh
+        full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
+        akkukapazitaet_kwh = full_capacity * 54.20
+        current_soc_kwh = (self.solardata.soc / 100) * akkukapazitaet_kwh
+
+        # Calculate the available surplus energy
+        min_soc_kwh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_kwh
+        available_surplus = current_soc_kwh - min_soc_kwh
+        self.logger.log_debug(f"Available Surplus: {available_surplus:.2f} kWh")
+
+        # Calculate the required capacity based on future high prices
+        if upcoming_high_prices:
+            # Calculate the required capacity
+            required_capacity = self._calculate_required_capacity(upcoming_high_prices)
+            self.logger.log_debug(f"Required Capacity: {required_capacity:.2f} kWh")
+
+            # Calculate the maximum dischargeable amount without falling below the required capacity
+            max_dischargeable_amount = current_soc_kwh - (required_capacity + min_soc_kwh)
+            self.logger.log_debug(f"Max Dischargeable Amount: {max_dischargeable_amount:.2f} kWh")
+
+            if max_dischargeable_amount < 0:
+                return False  # Not enough SOC for future high prices, discharging not allowed
+            else:
+                dischargeable_amount = min(available_surplus, max_dischargeable_amount)
+                return dischargeable_amount > 0  # Discharge allowed if there's available energy to discharge
+        else:
+            # No future high prices, allow discharge if there's enough available surplus energy
+            dischargeable_amount = available_surplus
+            if dischargeable_amount > 0:
+                return True
+            else:
+                return False  # Not enough SOC or surplus energy for discharging
