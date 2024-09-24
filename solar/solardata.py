@@ -44,6 +44,7 @@ class Solardata:
         self.power_peak = 0.0
         self.need_soc = 0
         self.soc = 0
+        self.scheduler_soc = 0
         self.battery_capacity = 0
         self.battery_minimum_soc_limit = 5
         self.battery_current_voltage = None
@@ -118,6 +119,9 @@ class Solardata:
 
     def update_soc(self, percentage):
         self.soc = percentage
+
+    def update_scheduler_soc(self, percentage):
+        self.scheduler_soc = percentage
 
     def update_battery_capacity(self, capacity):
         self.battery_capacity = capacity

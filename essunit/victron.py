@@ -196,6 +196,20 @@ class Victron(ESSUnit):
             self.logger.log_error(f"Error decoding JSON: {e}")
             return None
 
+    def get_scheduler_soc(self):
+        try:
+            with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                mqtt_result = MqttResult()
+                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc")
+                if rc == 0:
+                    # Extrahieren des Werts
+                    soc = self._process_result(mqtt_result.result)
+                    self.logger.log_info(f"{self._name} Scheduler SOC: {soc}%")
+                    return soc
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
 
     def set_discharge(self, status):
         try:
