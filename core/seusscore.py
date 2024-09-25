@@ -175,6 +175,7 @@ class SEUSS:
             productname = gridmeters.get_value(key_outer, 'ProductName')
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
+            StatsManager.update_percent_status_data('gridmeters', 'forward_hourly', forward_hourly)
             self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
             self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
 

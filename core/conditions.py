@@ -144,10 +144,10 @@ class Conditions:
         # }
 
         future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
-        self._calculate_available_surplus()
+        current_soc_Wh, min_soc_Wh, required_capacity = self._calculate_available_surplus(future_high_prices)
 
         additional_conditions = {
-            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)}). Available surplus: {self.available_surplus:.2f} kWh": lambda: self._calculate_discharge_conditions(
+            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}% [{current_soc_Wh / 1000:.2f} Wh]) and forecasted high prices ({len(future_high_prices)} [{required_capacity / 1000:.2f} Wh]). Available surplus: {self.available_surplus / 1000:.2f} Wh": lambda: self._calculate_discharge_conditions(
                 future_high_prices)
         }
         self.conditions_by_operation_mode["discharging"].update(additional_conditions)
@@ -216,38 +216,48 @@ class Conditions:
 
     def _calculate_required_capacity(self, upcoming_high_prices):
         average_consumption = 0.0
-        average_consumption_list = StatsManager.get_data('gridmeters', 'average')
+        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
         if average_consumption_list is not None:
             average_consumption = round(average_consumption_list[0], 2)
 
         # Calculate the required capacity based on the number of upcoming high-price periods
-        return len(upcoming_high_prices) * average_consumption  # Multiply by average hourly consumption
+        required_capacity = len(upcoming_high_prices) * average_consumption * 1.10  # Add 10% buffer - Multiply by average hourly consumption
+        self.logger.log_debug(f"Required capacity: {required_capacity:.2f} Wh")
+        return required_capacity
 
-    def _calculate_available_surplus(self):
-        # Calculate the current state of charge in kWh
+    def _calculate_available_surplus(self, upcoming_high_prices):
+        # Calculate the current state of charge in Wh
         full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
-        akkukapazitaet_kwh = full_capacity * 54.20
-        current_soc_kwh = (self.solardata.soc / 100) * akkukapazitaet_kwh
+        akkukapazitaet_Wh = full_capacity * 54.20
+        current_soc_Wh = (self.solardata.soc / 100) * akkukapazitaet_Wh
 
-        # Calculate the available surplus energy
-        min_soc_kwh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_kwh
-        self.available_surplus = current_soc_kwh - min_soc_kwh
-        self.logger.log_debug(f"Available Surplus: {self.available_surplus:.2f} kWh")
-        return current_soc_kwh, min_soc_kwh
+        # Calculate the minimum SOC in Wh (includes the minimum SOC limit)
+        min_soc_Wh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_Wh
+        required_capacity = self._calculate_required_capacity(upcoming_high_prices)
+
+        # Add a 10% buffer to the required capacity to maintain a safety margin
+        buffer = 0.10 * current_soc_Wh
+
+        # Calculate the available surplus energy with the buffer
+        self.available_surplus = current_soc_Wh - min_soc_Wh - buffer - required_capacity
+        self.available_surplus = max(0, self.available_surplus)  # Ensure surplus is not negative
+
+        self.logger.log_debug(
+            f"Current SOC: {current_soc_Wh:.2f} Wh, Min SOC: {min_soc_Wh:.2f} Wh, Buffer: {buffer:.2f} Wh")
+        self.logger.log_debug(f"Available Surplus: {self.available_surplus:.2f} Wh")
+
+        return current_soc_Wh, min_soc_Wh, required_capacity
 
     def _calculate_discharge_conditions(self, upcoming_high_prices):
         """Helper function to encapsulate the discharge calculation logic."""
 
-        current_soc_kwh, min_soc_kwh = self._calculate_available_surplus()
+        current_soc_Wh, min_soc_Wh, required_capacity = self._calculate_available_surplus(upcoming_high_prices)
         # Calculate the required capacity based on future high prices
         if upcoming_high_prices:
-            # Calculate the required capacity
-            required_capacity = self._calculate_required_capacity(upcoming_high_prices)
-            self.logger.log_debug(f"Required Capacity: {required_capacity:.2f} kWh")
 
             # Calculate the maximum dischargeable amount without falling below the required capacity
-            max_dischargeable_amount = current_soc_kwh - (required_capacity + min_soc_kwh)
-            self.logger.log_debug(f"Max Dischargeable Amount: {max_dischargeable_amount:.2f} kWh")
+            max_dischargeable_amount = current_soc_Wh - (required_capacity + min_soc_Wh)
+            self.logger.log_debug(f"Max Dischargeable Amount: {max_dischargeable_amount:.2f} Wh")
 
             if max_dischargeable_amount < 0:
                 return False  # Not enough SOC for future high prices, discharging not allowed

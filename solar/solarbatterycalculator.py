@@ -38,7 +38,7 @@ class SolarBatteryCalculator:
         self.average_consumption = 0.0
         self.efficiency = 0.0
 
-        average_consumption_list = StatsManager.get_data('gridmeters', 'average')
+        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
         if average_consumption_list is not None:
             self.average_consumption = round(average_consumption_list[0], 2)
 
