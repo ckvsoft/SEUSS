@@ -39,7 +39,6 @@ import core.version as version
 from core.statsmanager import StatsManager
 from solar.openmeteo import OpenMeteo
 from solar.solardata import Solardata
-from solar.solarbatterycalculator import SolarBatteryCalculator
 from core.conditions import Conditions, ConditionResult
 from core.config import Config
 from core.log import CustomLogger
@@ -205,9 +204,7 @@ class SEUSS:
         forecast = OpenMeteo() # Forecastsolar()
         # self.solardata = Solardata()
         total_forecast = forecast.forecast(self.solardata)
-        calculator = SolarBatteryCalculator(self.solardata)
-        self.solardata.update_need_soc(calculator.calculate_battery_percentage())
-        self.logger.log_info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
+        self.logger.log_info(f"Minimum SOC Unless grid fails: {self.solardata.battery_minimum_soc_limit}%.")
 
         if total_forecast is not None and total_forecast > 0.0:
             percentage = (total_solar / total_forecast) * 100
