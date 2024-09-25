@@ -144,7 +144,7 @@ class Conditions:
         # }
 
         future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
-        self._calculate_required_capacity(future_high_prices)
+        self._calculate_available_surplus()
 
         additional_conditions = {
             f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)}). Available surplus: {self.available_surplus:.2f} kWh": lambda: self._calculate_discharge_conditions(
@@ -223,9 +223,7 @@ class Conditions:
         # Calculate the required capacity based on the number of upcoming high-price periods
         return len(upcoming_high_prices) * average_consumption  # Multiply by average hourly consumption
 
-    def _calculate_discharge_conditions(self, upcoming_high_prices):
-        """Helper function to encapsulate the discharge calculation logic."""
-
+    def _calculate_available_surplus(self):
         # Calculate the current state of charge in kWh
         full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
         akkukapazitaet_kwh = full_capacity * 54.20
@@ -235,7 +233,12 @@ class Conditions:
         min_soc_kwh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_kwh
         self.available_surplus = current_soc_kwh - min_soc_kwh
         self.logger.log_debug(f"Available Surplus: {self.available_surplus:.2f} kWh")
+        return current_soc_kwh, min_soc_kwh
 
+    def _calculate_discharge_conditions(self, upcoming_high_prices):
+        """Helper function to encapsulate the discharge calculation logic."""
+
+        current_soc_kwh, min_soc_kwh = self._calculate_available_surplus()
         # Calculate the required capacity based on future high prices
         if upcoming_high_prices:
             # Calculate the required capacity
