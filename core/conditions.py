@@ -144,6 +144,7 @@ class Conditions:
         # }
 
         future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
+        self._calculate_required_capacity(future_high_prices)
 
         additional_conditions = {
             f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)}). Available surplus: {self.available_surplus:.2f} kWh": lambda: self._calculate_discharge_conditions(
