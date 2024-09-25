@@ -194,7 +194,7 @@ class SEUSS:
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        StatsManager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly + total_solar)
+        StatsManager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         peek, timestamp = StatsManager.insert_peek_data('solar_w', round(current_power, 2))
         peek_wh = StatsManager.insert_peek_data('solar_wh', round(total_solar, 2))[0]
