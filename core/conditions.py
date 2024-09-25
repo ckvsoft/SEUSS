@@ -43,6 +43,7 @@ class Conditions:
         self.solardata = solardata
         self.config = Config()
         self.logger = CustomLogger()
+        self.available_surplus = 0.0
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
         self.available_operation_modes = ["charging", "discharging"]
@@ -145,7 +146,7 @@ class Conditions:
         future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
 
         additional_conditions = {
-            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)})": lambda: self._calculate_discharge_conditions(
+            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}%) and forecasted high prices ({len(future_high_prices)}). Available surplus: {self.available_surplus:.2f} kWh": lambda: self._calculate_discharge_conditions(
                 future_high_prices)
         }
         self.conditions_by_operation_mode["discharging"].update(additional_conditions)
@@ -231,8 +232,8 @@ class Conditions:
 
         # Calculate the available surplus energy
         min_soc_kwh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_kwh
-        available_surplus = current_soc_kwh - min_soc_kwh
-        self.logger.log_debug(f"Available Surplus: {available_surplus:.2f} kWh")
+        self.available_surplus = current_soc_kwh - min_soc_kwh
+        self.logger.log_debug(f"Available Surplus: {self.available_surplus:.2f} kWh")
 
         # Calculate the required capacity based on future high prices
         if upcoming_high_prices:
@@ -247,11 +248,11 @@ class Conditions:
             if max_dischargeable_amount < 0:
                 return False  # Not enough SOC for future high prices, discharging not allowed
             else:
-                dischargeable_amount = min(available_surplus, max_dischargeable_amount)
+                dischargeable_amount = min(self.available_surplus, max_dischargeable_amount)
                 return dischargeable_amount > 0  # Discharge allowed if there's available energy to discharge
         else:
             # No future high prices, allow discharge if there's enough available surplus energy
-            dischargeable_amount = available_surplus
+            dischargeable_amount = self.available_surplus
             if dischargeable_amount > 0:
                 return True
             else:
