@@ -136,7 +136,7 @@ class GridMetersResults(MqttResult):
                 self.gridmeters[id][result] = value
 
     def get_forward_kwh(self, device_id):
-        pi = 1000
+        pi = 1 #1000
         forward = self.get_value(device_id, 'Ac/Energy/Forward')
         if forward is None:
             return 0.0
