@@ -29,8 +29,9 @@ from typing import Any
 from core.config import Config
 from core.statsmanager import StatsManager
 from core.log import CustomLogger
+from core.timeutilities import TimeUtilities
 from spotmarket.abstract_classes.item import Item
-
+from datetime import datetime
 
 class ConditionResult:
     def __init__(self):
@@ -161,10 +162,15 @@ class Conditions:
                                        isinstance(condition, dict)]
 
     def add_abort_conditions(self):
+
+        self._calculate_required_capacity_for_period()
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
-            "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
-            "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
+            # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
+            # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
+            "Abort charge condition - Required capacity is lower than current SOC": lambda: (
+                    self._calculate_current_soc_wh()[0] < self._calculate_required_capacity_for_period()
+            ) if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
         }
 
@@ -217,39 +223,43 @@ class Conditions:
                 condition_result.condition = condition_key
                 break
 
-    def _calculate_required_capacity(self, upcoming_high_prices):
+    def _calculate_required_capacity(self, upcoming_hours):
         average_consumption = 0.0
         average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
         if average_consumption_list is not None:
             average_consumption = round(average_consumption_list[0], 2)
 
         # Calculate the required capacity based on the number of upcoming high-price periods
-        required_capacity = len(upcoming_high_prices) * average_consumption * 1.10  # Add 10% buffer - Multiply by average hourly consumption
+        required_capacity = upcoming_hours * average_consumption * 1.10  # Add 10% buffer - Multiply by average hourly consumption
         self.logger.log_debug(f"Required capacity: {required_capacity:.2f} Wh")
         return required_capacity
 
-    def _calculate_available_surplus(self, upcoming_high_prices):
+    def _calculate_current_soc_wh(self):
         # Calculate the current state of charge in Wh
         full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
-        akkukapazitaet_Wh = full_capacity * 54.20
-        current_soc_Wh = (self.solardata.soc / 100) * akkukapazitaet_Wh
+        akkukapazitaet_wh = full_capacity * 54.20
+        current_soc_wh = (self.solardata.soc / 100) * akkukapazitaet_wh
+        return  current_soc_wh, akkukapazitaet_wh
+
+    def _calculate_available_surplus(self, upcoming_high_prices):
+        current_soc_wh, akkukapazitaet_wh = self._calculate_current_soc_wh()
 
         # Calculate the minimum SOC in Wh (includes the minimum SOC limit)
-        min_soc_Wh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_Wh
-        required_capacity = self._calculate_required_capacity(upcoming_high_prices)
+        min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_wh
+        required_capacity = self._calculate_required_capacity(len(upcoming_high_prices))
 
         # Add a 10% buffer to the required capacity to maintain a safety margin
-        buffer = 0.10 * current_soc_Wh
+        buffer = 0.10 * current_soc_wh
 
         # Calculate the available surplus energy with the buffer
-        self.available_surplus = current_soc_Wh - min_soc_Wh - buffer - required_capacity
+        self.available_surplus = current_soc_wh - min_soc_wh - buffer - required_capacity
         self.available_surplus = max(0, self.available_surplus)  # Ensure surplus is not negative
 
         self.logger.log_debug(
-            f"Current SOC: {current_soc_Wh:.2f} Wh, Min SOC: {min_soc_Wh:.2f} Wh, Buffer: {buffer:.2f} Wh")
+            f"Current SOC: {current_soc_wh:.2f} Wh, Min SOC: {min_soc_wh:.2f} Wh, Buffer: {buffer:.2f} Wh")
         self.logger.log_debug(f"Available Surplus: {self.available_surplus:.2f} Wh")
 
-        return current_soc_Wh, min_soc_Wh, required_capacity
+        return current_soc_wh, min_soc_wh, required_capacity
 
     def _calculate_discharge_conditions(self, upcoming_high_prices):
         """Helper function to encapsulate the discharge calculation logic."""
@@ -274,3 +284,49 @@ class Conditions:
                 return True
             else:
                 return False  # Not enough SOC or surplus energy for discharging
+
+    def _calculate_required_capacity_for_period(self):
+        """
+        Berechnet die erforderliche Kapazität für die Zeit vor und nach Mitternacht basierend auf Sonnenuntergang und -aufgang.
+        Nutzt die Solarvorhersage, um den Bedarf abzuschätzen.
+        """
+
+        current_time = TimeUtilities.get_now()
+
+        # Konvertiere sunset und sunrise in die richtige Zeitzone
+        sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(tzinfo=TimeUtilities.TZ)
+        sunrise = datetime.strptime(self.solardata.sunrise_current_day, "%Y-%m-%dT%H:%M").replace(
+            tzinfo=TimeUtilities.TZ)
+
+        # Definiere midnight (Mitternacht des aktuellen Tages)
+        midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        expected_solar_energy = self.solardata.total_current_day
+
+        required_capacity = 0.0  # Anfangswert für die erforderliche Kapazität
+
+        if current_time < sunset:
+            # Aktuelle Zeit ist vor dem Sonnenuntergang
+            remaining_until_sunset = (sunset - current_time).total_seconds() / 3600
+            # Berechne benötigte Kapazität bis Sonnenuntergang
+            required_capacity += self._calculate_required_capacity(remaining_until_sunset)
+
+        # Nach Sonnenuntergang
+        if current_time >= sunset:
+            # Vor Mitternacht
+            if current_time < midnight:
+                remaining_until_midnight = (midnight - current_time).total_seconds() / 3600  # Stunden bis Mitternacht
+                required_capacity += self._calculate_required_capacity(remaining_until_midnight)
+
+            # Ab Mitternacht bis Sonnenaufgang
+            if midnight <= current_time < sunrise:
+                # Nutze Solarvorhersage ab Mitternacht bis Sonnenaufgang
+                required_capacity = max(0, required_capacity - expected_solar_energy)
+
+        # Berechnung für den nächsten Tag (nach Sonnenaufgang)
+        if current_time >= sunrise:
+            # Berechne ob Solarenergie für den kommenden Tag ausreicht
+            required_capacity = max(0, required_capacity - expected_solar_energy)
+
+        self.logger.log_debug(f"Required capacity for period: {required_capacity:.2f} Wh")
+        return required_capacity
