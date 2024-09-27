@@ -264,12 +264,12 @@ class Conditions:
     def _calculate_discharge_conditions(self, upcoming_high_prices):
         """Helper function to encapsulate the discharge calculation logic."""
 
-        current_soc_Wh, min_soc_Wh, required_capacity = self._calculate_available_surplus(upcoming_high_prices)
+        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(upcoming_high_prices)
         # Calculate the required capacity based on future high prices
         if upcoming_high_prices:
 
             # Calculate the maximum dischargeable amount without falling below the required capacity
-            max_dischargeable_amount = current_soc_Wh - (required_capacity + min_soc_Wh)
+            max_dischargeable_amount = current_soc_wh - (required_capacity + min_soc_wh)
             self.logger.log_debug(f"Max Dischargeable Amount: {max_dischargeable_amount:.2f} Wh")
 
             if max_dischargeable_amount < 0:
@@ -328,5 +328,5 @@ class Conditions:
             # Berechne ob Solarenergie für den kommenden Tag ausreicht
             required_capacity = max(0, required_capacity - expected_solar_energy)
 
-        self.logger.log_debug(f"Required capacity for period: {required_capacity:.2f} Wh")
+        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh")
         return required_capacity
