@@ -332,5 +332,5 @@ class Conditions:
 
             required_capacity += self._calculate_required_capacity(remaining_until_next_sunrise)
 
-        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description}")
+        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()})")
         return required_capacity
