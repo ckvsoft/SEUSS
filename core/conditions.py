@@ -31,7 +31,7 @@ from core.statsmanager import StatsManager
 from core.log import CustomLogger
 from core.timeutilities import TimeUtilities
 from spotmarket.abstract_classes.item import Item
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class ConditionResult:
     def __init__(self):
@@ -302,20 +302,21 @@ class Conditions:
         midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
 
         expected_solar_energy = self.solardata.total_current_day
-
         required_capacity = 0.0  # Anfangswert für die erforderliche Kapazität
 
+        remaining_description = ""
+        # Berechne benötigte Kapazität bis Sonnenuntergang
         if current_time < sunset:
-            # Aktuelle Zeit ist vor dem Sonnenuntergang
             remaining_until_sunset = (sunset - current_time).total_seconds() / 3600
-            # Berechne benötigte Kapazität bis Sonnenuntergang
+            remaining_description = f"/ remaining until sunset: {remaining_until_sunset:.2f} hour"
             required_capacity += self._calculate_required_capacity(remaining_until_sunset)
 
         # Nach Sonnenuntergang
-        if current_time >= sunset:
+        elif current_time >= sunset:
             # Vor Mitternacht
             if current_time < midnight:
                 remaining_until_midnight = (midnight - current_time).total_seconds() / 3600  # Stunden bis Mitternacht
+                remaining_description = f"/ remaining until midnight: {remaining_until_midnight:.2f} hour"
                 required_capacity += self._calculate_required_capacity(remaining_until_midnight)
 
             # Ab Mitternacht bis Sonnenaufgang
@@ -325,8 +326,11 @@ class Conditions:
 
         # Berechnung für den nächsten Tag (nach Sonnenaufgang)
         if current_time >= sunrise:
-            # Berechne ob Solarenergie für den kommenden Tag ausreicht
-            required_capacity = max(0, required_capacity - expected_solar_energy)
+            # Berechne den benötigten Verbrauch bis zum nächsten Sonnenaufgang
+            remaining_until_next_sunrise = (sunrise + timedelta(days=1) - current_time).total_seconds() / 3600
+            remaining_description = f"/ remaining until next sunrise: {remaining_until_next_sunrise:.2f} hour"
 
-        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh")
+            required_capacity += self._calculate_required_capacity(remaining_until_next_sunrise)
+
+        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description}")
         return required_capacity
