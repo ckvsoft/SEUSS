@@ -169,7 +169,7 @@ class Conditions:
             # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
             # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             "Abort charge condition - Required capacity is lower than current SOC": lambda: (
-                    self._calculate_current_soc_wh()[0] < self._calculate_required_capacity_for_period()
+                    self._calculate_required_capacity_for_period() < self._calculate_current_soc_wh()[0]
             ) if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
         }
