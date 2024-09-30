@@ -24,7 +24,6 @@
 #
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
-from typing import Any
 
 from core.config import Config
 from core.statsmanager import StatsManager
@@ -163,13 +162,15 @@ class Conditions:
 
     def add_abort_conditions(self):
 
-        self._calculate_required_capacity_for_period()
+        required_capacity = self._calculate_required_capacity_for_period()
+        available_soc_wh, _, min_soc_wh = self._calculate_current_soc_wh()
+        available_soc_wh -= min_soc_wh
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
             # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
             # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
-            "Abort charge condition - Required capacity is lower than current SOC": lambda: (
-                self._calculate_required_capacity_for_period() < self._calculate_current_soc_wh()[0]
+            f"Abort charge condition - Required capacity ({required_capacity / 1000:.2f} kWh) is lower than available SOC ({available_soc_wh / 1000:.2f} kWh)": lambda: (
+                    required_capacity < available_soc_wh
             ) if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
         }
@@ -239,13 +240,14 @@ class Conditions:
         full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
         akkukapazitaet_wh = full_capacity * 54.20
         current_soc_wh = (self.solardata.soc / 100) * akkukapazitaet_wh
-        return  current_soc_wh, akkukapazitaet_wh
-
-    def _calculate_available_surplus(self, upcoming_high_prices):
-        current_soc_wh, akkukapazitaet_wh = self._calculate_current_soc_wh()
-
         # Calculate the minimum SOC in Wh (includes the minimum SOC limit)
         min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_wh
+
+        return  current_soc_wh, akkukapazitaet_wh, min_soc_wh
+
+    def _calculate_available_surplus(self, upcoming_high_prices):
+        current_soc_wh, akkukapazitaet_wh, min_soc_wh = self._calculate_current_soc_wh()
+
         required_capacity = self._calculate_required_capacity(len(upcoming_high_prices))
 
         # Add a 10% buffer to the required capacity to maintain a safety margin
