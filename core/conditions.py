@@ -293,10 +293,21 @@ class Conditions:
 
         current_time = TimeUtilities.get_now()
 
-        # Konvertiere sunset und sunrise in die richtige Zeitzone
-        sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(tzinfo=TimeUtilities.TZ)
-        sunrise = datetime.strptime(self.solardata.sunrise_current_day, "%Y-%m-%dT%H:%M").replace(
-            tzinfo=TimeUtilities.TZ)
+        # Versuch sunset und sunrise zu parsen, falls nicht verfügbar, Standardzeiten verwenden
+        try:
+            sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(
+                tzinfo=TimeUtilities.TZ)
+        except (TypeError, ValueError):
+            self.logger.log_warning("Sunset data is invalid or not available, using default sunset time.")
+            sunset = current_time.replace(hour=18, minute=0, second=0,
+                                          microsecond=0)  # Standardzeit für Sonnenuntergang
+
+        try:
+            sunrise = datetime.strptime(self.solardata.sunrise_current_day, "%Y-%m-%dT%H:%M").replace(
+                tzinfo=TimeUtilities.TZ)
+        except (TypeError, ValueError):
+            self.logger.log_warning("Sunrise data is invalid or not available, using default sunrise time.")
+            sunrise = current_time.replace(hour=6, minute=0, second=0, microsecond=0)  # Standardzeit für Sonnenaufgang
 
         # Definiere midnight (Mitternacht des aktuellen Tages)
         midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -332,5 +343,8 @@ class Conditions:
 
             required_capacity += self._calculate_required_capacity(remaining_until_next_sunrise)
 
-        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f})")
+        # Ausgabe des Logs mit benötigter Kapazität und aktuellem SOC
+        self.logger.log_info(
+            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f})")
+
         return required_capacity
