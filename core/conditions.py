@@ -236,14 +236,37 @@ class Conditions:
         return required_capacity
 
     def _calculate_current_soc_wh(self):
-        # Calculate the current state of charge in Wh
-        full_capacity = 0.0 if self.solardata.soc <= 0 else (self.solardata.battery_capacity / self.solardata.soc) * 100
-        akkukapazitaet_wh = full_capacity * 54.20
-        current_soc_wh = (self.solardata.soc / 100) * akkukapazitaet_wh
-        # Calculate the minimum SOC in Wh (includes the minimum SOC limit)
-        min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * akkukapazitaet_wh
+        try:
+            # Check if the relevant data is present and valid
+            if self.solardata.soc is None or self.solardata.soc < 0:
+                raise ValueError("SOC value is missing or invalid.")
+            if self.solardata.battery_capacity is None or self.solardata.battery_capacity <= 0:
+                raise ValueError("Battery capacity is missing or invalid.")
+            if self.solardata.battery_minimum_soc_limit is None or self.solardata.battery_minimum_soc_limit < 0:
+                raise ValueError("Minimum SOC limit is missing or invalid.")
 
-        return  current_soc_wh, akkukapazitaet_wh, min_soc_wh
+            # Calculate the full capacity
+            full_capacity = (
+                                        self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
+            battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
+
+            # Calculate the current SOC in Wh
+            current_soc_wh = (self.solardata.soc / 100) * battery_capacity_wh
+
+            # Calculate the minimum SOC in Wh (including the minimum SOC limit)
+            min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * battery_capacity_wh
+
+            return current_soc_wh, battery_capacity_wh, min_soc_wh
+
+        except ZeroDivisionError:
+            # Error handling for division by zero when SOC is 0
+            self.logger.log_error("Division by zero during the calculation of full capacity.")
+            return 0.0, 0.0, 0.0
+
+        except ValueError as e:
+            # Error handling for invalid or missing inputs
+            self.logger.log_error(f"Error during SOC calculation: {str(e)}")
+            return 0.0, 0.0, 0.0
 
     def _calculate_available_surplus(self, upcoming_high_prices):
         current_soc_wh, akkukapazitaet_wh, min_soc_wh = self._calculate_current_soc_wh()
