@@ -246,8 +246,7 @@ class Conditions:
                 raise ValueError("Minimum SOC limit is missing or invalid.")
 
             # Calculate the full capacity
-            full_capacity = (
-                                        self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
+            full_capacity = ( self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
             battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
 
             # Calculate the current SOC in Wh
