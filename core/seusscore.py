@@ -1,155 +1,327 @@
+#  -*- coding: utf-8 -*-
+#
+#  MIT License
+#
+#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#  THE SOFTWARE.
+#
+#  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
+#
+# -*- coding: utf-8 -*-
+
+import os
+import signal
+import sys
+import threading
 import time
+import random
 import json
-import paho.mqtt.client as mqtt
+from datetime import datetime, timedelta
 
-# MQTT-Konfiguration
-broker = "venus.local"  # Ersetze durch deine Broker-Adresse
-port = 1883
-keep_alive_topic = "R/d83add7fec91/keepalive"
-data_topics = {
-    "P_L1": "N/d83add7fec91/grid/40/Ac/L1/Power",
-    "P_L2": "N/d83add7fec91/grid/40/Ac/L2/Power",
-    "P_L3": "N/d83add7fec91/grid/40/Ac/L3/Power",
-    "I_L1": "N/d83add7fec91/grid/40/Ac/L1/Current",
-    "I_L2": "N/d83add7fec91/grid/40/Ac/L2/Current",
-    "I_L3": "N/d83add7fec91/grid/40/Ac/L3/Current",
-    "P_AC_consumption_L1": "N/d83add7fec91/system/0/Ac/Consumption/L1/Power",
-    "P_AC_consumption_L2": "N/d83add7fec91/system/0/Ac/Consumption/L2/Power",
-    "P_AC_consumption_L3": "N/d83add7fec91/system/0/Ac/Consumption/L3/Power",
-    "P_PV_L1": "N/d83add7fec91/pvinverter/34/Ac/L1/Power",  # PV-Leistung für L1
-    "P_PV_L2": "N/d83add7fec91/pvinverter/34/Ac/L2/Power",  # PV-Leistung für L2
-    "P_PV_L3": "N/d83add7fec91/pvinverter/34/Ac/L3/Power",  # PV-Leistung für L3
-    "P_battery_DC": "N/d83add7fec91/system/0/Dc/Battery/Power",
-    "I_battery_DC": "N/d83add7fec91/system/0/Dc/Battery/Current",
-    "number_of_phases": "N/d83add7fec91/system/0/Ac/Consumption/NumberOfPhases"
-}
+import core.version as version
+from core.statsmanager import StatsManager
+from solar.openmeteo import OpenMeteo
+from solar.solardata import Solardata
+from solar.solarbatterycalculator import SolarBatteryCalculator
+from core.conditions import Conditions, ConditionResult
+from core.config import Config
+from core.log import CustomLogger
+from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
+from spotmarket.abstract_classes.itemlist import Itemlist
+from core.seussweb import SEUSSWeb
+from core.timeutilities import TimeUtilities
 
-# Initialisierte Variablen
-P_L1 = P_L2 = P_L3 = None
-I_L1 = I_L2 = I_L3 = None
-P_AC_consumption_L1 = P_AC_consumption_L2 = P_AC_consumption_L3 = None
-P_PV_L1 = P_PV_L2 = P_PV_L3 = None  # PV-Leistungen für die Phasen
-P_battery_DC = I_battery_DC = None
-V_battery_DC = 48  # Standardwert der Batteriespannung (wenn fest)
-interval_duration = 5  # Dauer des Intervalls in Sekunden
-number_of_phases = 3  # Standardanzahl der Phasen, anpassen nach Bedarf
 
-# Callback für das Empfangen von Nachrichten
-def on_message(client, userdata, msg):
-    global P_L1, P_L2, P_L3, I_L1, I_L2, I_L3
-    global P_AC_consumption_L1, P_AC_consumption_L2, P_AC_consumption_L3
-    global P_PV_L1, P_PV_L2, P_PV_L3  # Hinzufügen der PV-Leistungen
-    global P_battery_DC, I_battery_DC, number_of_phases
+class SEUSS:
+    def __init__(self):
+        self.config = Config()
+        self.logger = CustomLogger()
+        self.svs_thread = None
+        self.seuss_web = SEUSSWeb()
+        self.no_data = [0]
+        self.svs_thread_stop_flag = threading.Event()
+        self.solardata = Solardata()
+        self.items = self.initialize_items()
+        self.current_time = datetime.now()
 
-    topic = msg.topic
-    payload = json.loads(msg.payload.decode())
+    #    def run_scheduler(self):
+#        # Führen Sie den Scheduler aus
+#        while not self.svs_thread_stop_flag.is_set():
+#            schedule.run_pending()
+#            time.sleep(1)
 
-    if topic in data_topics.values():
-        if topic == data_topics["P_L1"]:
-            P_L1 = payload.get("value", 0)
-        elif topic == data_topics["P_L2"]:
-            P_L2 = payload.get("value", 0)
-        elif topic == data_topics["P_L3"]:
-            P_L3 = payload.get("value", 0)
-        elif topic == data_topics["I_L1"]:
-            I_L1 = payload.get("value", 0)
-        elif topic == data_topics["I_L2"]:
-            I_L2 = payload.get("value", 0)
-        elif topic == data_topics["I_L3"]:
-            I_L3 = payload.get("value", 0)
-        elif topic == data_topics["P_AC_consumption_L1"]:
-            P_AC_consumption_L1 = payload.get("value", 0)
-        elif topic == data_topics["P_AC_consumption_L2"]:
-            P_AC_consumption_L2 = payload.get("value", 0)
-        elif topic == data_topics["P_AC_consumption_L3"]:
-            P_AC_consumption_L3 = payload.get("value", 0)
-        elif topic == data_topics["P_PV_L1"]:
-            P_PV_L1 = payload.get("value", 0)
-        elif topic == data_topics["P_PV_L2"]:
-            P_PV_L2 = payload.get("value", 0)
-        elif topic == data_topics["P_PV_L3"]:
-            P_PV_L3 = payload.get("value", 0)
-        elif topic == data_topics["P_battery_DC"]:
-            P_battery_DC = payload.get("value", 0)
-        elif topic == data_topics["I_battery_DC"]:
-            I_battery_DC = payload.get("value", 0)
-        elif topic == data_topics["number_of_phases"]:
-            number_of_phases = payload.get("value", 3)
+    def handle_config_update(self, config_data):
+        self.logger.log_info("Run checks while configuration was changed")
+        self.load_configuration()
+        self.run_markets()
 
-def send_keep_alive(client):
-    client.publish(keep_alive_topic, payload="1", qos=1)
+    def run_markets(self):
+        self.items = self.update_items()
+        self.seuss_web.set_item_list(self.items)
+        self.run_essunit()
 
-def calculate_efficiency():
-    if None in (P_L1, P_L2, P_L3, I_L1, I_L2, I_L3,
-                P_AC_consumption_L1, P_AC_consumption_L2, P_AC_consumption_L3,
-                P_PV_L1, P_PV_L2, P_PV_L3,  # Prüfen der PV-Werte
-                P_battery_DC, I_battery_DC):
-        print("Warten auf alle Daten...")
-        return None, None
+    def run_essunit(self):
+        essunit = self.initialize_essunit()
+        total_solar = self.process_solar_data(essunit)
+        self.process_solar_forecast(total_solar)
+        if self.items.get_item_count() > 0:
+            self.evaluate_conditions_and_control_charging_discharging(essunit)
+        else:
+            self.handle_no_data(essunit)
 
-    # Gesamte Leistung und Strom aus den drei Phasen berechnen
-    P_grid = P_L1 + P_L2 + P_L3
-    I_grid = I_L1 + I_L2 + I_L3
+        if essunit is not None:
+            next_minute = (self.current_time.minute // 15 + 1) * 15
+            if next_minute >= 60:
+                next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
+            else:
+                next_hour = self.current_time.replace(second=0, microsecond=0, minute=next_minute)
+            next_run_time = next_hour
+            self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
+            return
 
-    # Gesamte AC-Verbrauchsleistung berechnen
-    P_AC_consumption = P_AC_consumption_L1 + P_AC_consumption_L2 + P_AC_consumption_L3
+        self.logger.log_info("No enabled essunit found.")
 
-    # Gesamte PV-Leistung berechnen
-    P_PV = P_PV_L1 + P_PV_L2 + P_PV_L3
+    def run_svs(self):
+        self.load_configuration()
+        self.initialize_logging()
+        self.config.observer.add_observer("seuss", self)
 
-    # Berechnung der Ladeleistung zur Batterie
-    P_charge = max(P_grid + P_PV - P_AC_consumption, 0)  # Leistung zur Batterie
-    P_battery_stored = V_battery_DC * I_battery_DC if I_battery_DC > 0 else 0  # Leistung beim Laden
-    P_battery_consumed = P_battery_DC if I_battery_DC < 0 else 0  # Leistung beim Entladen
+        try:
+            while True:
+                self.current_time = datetime.now()
 
-    # Energieübertragung berechnen
-    energy_grid = P_grid * interval_duration / 3600  # Energie in kWh
-    energy_battery_stored = P_battery_stored * interval_duration / 3600  # Energie in kWh
-    energy_battery_consumed = P_battery_consumed * interval_duration / 3600  # Energie in kWh
+                if self.current_time.minute == 0 and self.current_time.second == 5 or self.items.get_item_count() == 0:
+                    self.run_markets()
+                    if self.items:
+                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
-    # Wirkungsgrad für das Laden
-    eta_charge = P_battery_stored / P_charge if P_charge > 0 else 0
+                interval_minutes = 15
+                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
+                        self.current_time.second == 0):
+                    self.run_essunit()
+                    if self.items:
+                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
-    # Wirkungsgrad für das Entladen
-    eta_discharge = P_AC_consumption / P_battery_DC if P_battery_DC > 0 else 0
+                self.perform_test_run()
+                self.handle_no_data_sleep()
+                # self.handle_time_to_next_hour(current_time)
+                time.sleep(1)
 
-    # Berechnung des tatsächlichen Verbrauchs aus der Batterie unter Berücksichtigung des Wirkungsgrads
-    actual_battery_consumed = P_battery_consumed * eta_discharge  # Tatsächlicher Verbrauch aus der Batterie
+        except KeyboardInterrupt:
+            self.graceful_exit(signal.SIGINT, None)
 
-    # Eigenverbrauch und Differenzen berechnen
-    net_consumption = P_grid + P_PV - P_AC_consumption - actual_battery_consumed
+    def load_configuration(self):
+        self.config.load_config()
 
-    # Ausgabe
-    print(f"Direktverbrauch vom Netz: {P_AC_consumption:.2f} W")
-    print(f"PV-Leistung: {P_PV:.2f} W")  # Ausgabe der PV-Leistung
-    print(f"Zur Batterie geladene Leistung: {P_charge:.2f} W")
-    print(f"Von der Batterie verbrauchte Leistung: {actual_battery_consumed:.2f} W")
-    print(f"Energie vom Netz: {energy_grid:.2f} kWh")
-    print(f"Energie in der Batterie gespeichert: {energy_battery_stored:.2f} kWh")
-    print(f"Energie aus der Batterie verbraucht: {energy_battery_consumed:.2f} kWh")
-    print(f"Wirkungsgrad Laden: {eta_charge * 100:.2f}%")
-    print(f"Wirkungsgrad Entladen: {eta_discharge * 100:.2f}%")
-    print(f"Netzverbrauch nach Berücksichtigung der Batterie: {net_consumption:.2f} W")
+    def initialize_logging(self):
+        self.logger.log_info(f"SEUSS v{version.__version__} started...")
+        self.logger.log_info(f"{self.config.config_data}")
 
-# MQTT-Client initialisieren
-client = mqtt.Client()
-client.on_message = on_message
+    def initialize_items(self):
+        return Itemlist.create_item_list([])
 
-# MQTT-Verbindung herstellen
-client.connect(broker, port, keepalive=60)
-client.loop_start()
+    def update_items(self):
+        return self.items.perform_update(self.items)
 
-# Abonnieren der Themen
-for topic in data_topics.values():
-    client.subscribe(topic)
+    def initialize_essunit(self):
+        if self.config.essunit is None:
+            self.logger.log_warning(f"essunit is None. Try to reload config")
+            self.config.load_config()
 
-try:
-    while True:
-        send_keep_alive(client)
-        calculate_efficiency()  # Berechnung aufrufen
-        time.sleep(interval_duration)  # Pause zwischen den Berechnungen
-except KeyboardInterrupt:
-    print("Programm beendet.")
-finally:
-    client.loop_stop()
-    client.disconnect()
+        return GenericLoaderFactory.create_loader("essunit", self.config.essunit)
+
+    def process_solar_data(self, essunit):
+        total_solar = 0.0
+        if essunit is not None:
+            total_solar = self.get_total_solar_yield(essunit)
+
+        return total_solar
+
+    def get_total_solar_yield(self, essunit):
+        self.solardata.update_soc(essunit.get_soc())
+        self.solardata.update_battery_capacity(essunit.get_battery_capacity())
+        self.solardata.update_battery_minimum_soc_limit(essunit.get_battery_minimum_soc_limit())
+        self.solardata.update_battery_current_voltage(essunit.get_battery_current_voltage())
+
+        gridmeters = essunit.get_grid_meters()
+        inverters = essunit.get_solar_energy()
+        total_solar = 0.0
+
+        for key_outer, value_outer in gridmeters.gridmeters.items():
+            customname = gridmeters.get_value(key_outer, 'CustomName')
+            productname = gridmeters.get_value(key_outer, 'ProductName')
+            forward = gridmeters.get_forward_kwh(key_outer)
+            forward_hourly = gridmeters.get_hourly_kwh(key_outer)
+            self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
+            self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
+
+            for key_inner, value_inner in value_outer.items():
+                self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+
+        for key_outer, value_outer in inverters.inverters.items():
+            customname = inverters.get_value(key_outer, 'CustomName')
+            productname = inverters.get_value(key_outer, 'ProductName')
+            forward = inverters.get_forward_kwh(key_outer)
+            total_solar += float(forward)
+            self.logger.log_debug(f"Found PV Inverter:  {productname} {customname}.")
+            self.logger.log_info(f"{productname} {customname} yield today:  {round(forward, 2)} Wh.")
+
+            for key_inner, value_inner in value_outer.items():
+                self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+
+        self.logger.log_info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
+        return total_solar
+
+    def process_solar_forecast(self, total_solar):
+        forecast = OpenMeteo() # Forecastsolar()
+        # self.solardata = Solardata()
+        total_forecast = forecast.forecast(self.solardata)
+        calculator = SolarBatteryCalculator(self.solardata)
+        self.solardata.update_need_soc(calculator.calculate_battery_percentage())
+        self.logger.log_info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
+
+        if total_forecast is not None and total_forecast > 0.0:
+            percentage = (total_solar / total_forecast) * 100
+            efficiency = None
+            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
+            current_time = TimeUtilities.get_now().time()
+
+            if current_time < sunset_time and total_solar > 0.0:
+                efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
+            else:
+                efficiency_list = StatsManager.get_data('solar', 'efficiency')
+                if efficiency_list is not None:
+                    efficiency = round(efficiency_list[0], 2)
+            rounded_percentage = round(percentage, 2)
+            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
+        else:
+            self.logger.log_info("Solar forecast is zero or not available.")
+
+    def evaluate_conditions_and_control_charging_discharging(self, essunit):
+        only_observation = False
+        if essunit:
+            info = self.config.get_essunit_info(essunit.get_name())
+            only_observation = info.get("only_observation", False)
+
+        if not only_observation:
+            condition_charging_result = ConditionResult()
+            condition_discharging_result = ConditionResult()
+            conditions_instance = Conditions(self.items, self.solardata)
+            conditions_instance.info()
+            conditions_instance.evaluate_conditions(condition_charging_result, "charging")
+            conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+
+            self.control_charging(essunit, condition_charging_result)
+            self.control_discharging(essunit, condition_discharging_result)
+
+        self.items.log_items()
+        self.no_data[0] = 0
+
+    def control_charging(self, essunit, condition_charging_result):
+        if condition_charging_result.execute and essunit is not None:
+            self.logger.log_info(f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
+            essunit.set_charge("on")
+        elif condition_charging_result.condition and essunit is not None:
+            self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
+            essunit.set_charge("off")
+        elif essunit is not None:
+            self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
+            essunit.set_charge("off")
+
+    def control_discharging(self, essunit, condition_discharging_result):
+        if condition_discharging_result.execute and essunit is not None:
+            self.logger.log_info(
+                f"Condition {condition_discharging_result.condition} result: {condition_discharging_result.execute}, discharging is turned on.")
+            essunit.set_discharge("on")
+        elif condition_discharging_result.condition and essunit is not None:
+            self.logger.log_info(f"{condition_discharging_result.condition}, discharging is turned off.")
+        elif essunit is not None:
+            self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
+            essunit.set_discharge("off")
+
+    def handle_no_data(self, essunit):
+        self.logger.log_warning("No data available")
+        self.no_data[0] += 1
+        if essunit is not None:
+            self.logger.log_info("There are currently no prices, so the charging mode is turned off.")
+            essunit.set_discharge("off")
+            self.logger.log_info("There are currently no prices, so the discharging mode is turned on.")
+            essunit.set_discharge("on")
+
+    def perform_test_run(self):
+        test_run = os.environ.get('TESTRUN')
+        if test_run is not None:
+            self.graceful_exit(signal.SIGINT, None)
+
+    def handle_no_data_sleep(self):
+        if 0 < self.no_data[0] < 4:
+            sleeptime = random.randint(10, 60)
+            self.logger.log_info(f"There is no data available, attempt number {self.no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
+            time.sleep(sleeptime)
+        else:
+            self.no_data[0] = 0  # Aktualisiere die verpackte Variable
+
+    def handle_time_to_next_hour(self, current_time):
+        next_hour = (current_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        time_to_next_hour = int((next_hour - current_time).total_seconds())
+        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+        if self.items:
+            self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+        time.sleep(max(0, time_to_next_hour + 2))
+
+    def graceful_exit(self, signum, frame):
+        print("\r   ") # clear ^C
+        self.logger.log_info("Program will be terminated...")
+        self.seuss_web.stop()
+        self.svs_thread_stop_flag.set()
+
+        sys.exit(0)
+
+    def excepthook_handler(self, exc_type, exc_value, exc_traceback):
+        self.logger.log_error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
+
+    def start(self):
+        sys.excepthook = self.excepthook_handler
+        bottle_thread = threading.Thread(target=self.seuss_web.run)
+        bottle_thread.daemon = True
+        bottle_thread.start()
+
+        self.svs_thread = threading.Thread(target=self.run_svs)
+        self.svs_thread.daemon = True
+        self.svs_thread.start()
+
+#        schedule.every().hour.at(":05").do(self.run_markets)  # Jede volle Stunde + 5 Sekunden
+#        schedule.every(15).minutes.do(self.run_essunit)  # Alle 15 Minuten
+
+#        scheduler_thread = threading.Thread(target=self.run_scheduler)
+#        scheduler_thread.daemon = True
+#        scheduler_thread.start()
+
+        signal.signal(signal.SIGINT, self.graceful_exit)
+
+        try:
+            while not self.svs_thread_stop_flag.is_set():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.graceful_exit(signal.SIGINT, None)
