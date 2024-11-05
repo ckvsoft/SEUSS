@@ -147,7 +147,7 @@ class Conditions:
         current_soc_Wh, min_soc_Wh, required_capacity = self._calculate_available_surplus(future_high_prices)
 
         additional_conditions = {
-            f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh surplus (SOC: {self.solardata.soc:.2f}% ({current_soc_Wh / 1000:.2f} kWh), Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity / 1000:.2f} kWh)": lambda: self._calculate_discharge_conditions(
+            f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh surplus (SOC: {self.solardata.soc or 0:.2f}% ({current_soc_Wh / 1000:.2f} kWh), Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity / 1000:.2f} kWh)": lambda: self._calculate_discharge_conditions(
                 future_high_prices)
 
             #            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}% [{current_soc_Wh:.2f} Wh]) and forecasted high prices ({len(future_high_prices)} [{required_capacity:.2f} Wh]). Available surplus: {self.available_surplus:.2f} Wh": lambda: self._calculate_discharge_conditions(
@@ -250,7 +250,7 @@ class Conditions:
             battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
 
             # Calculate the current SOC in Wh
-            current_soc_wh = (self.solardata.soc / 100) * battery_capacity_wh
+            current_soc_wh = ((self.solardata.soc or 0) / 100) * battery_capacity_wh
 
             # Calculate the minimum SOC in Wh (including the minimum SOC limit)
             min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * battery_capacity_wh
