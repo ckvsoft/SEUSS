@@ -303,17 +303,17 @@ class SEUSSWeb:
         width = 35
 
         svg = f"""
-        <svg width="{width * 24}" height="320" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         average_price = sum(data.values()) / len(data) if data else 0
         avg_height = (abs(average_price) + 1) * 15
         svg += f"""
-        <line x1="0" y1="{250 - avg_height}" x2="{width * 24}" y2="{250 - avg_height}" stroke="magenta" stroke-width="2"/>
+        <line x1="0" y1="{330 - avg_height}" x2="{width * 24}" y2="{330 - avg_height}" stroke="magenta" stroke-width="2"/>
         """
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
         svg += f"""
-        <line x1="0" y1="{250 - charge_limit_height}" x2="{width * 24}" y2="{250 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
+        <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
         """
 
         # Erzeuge SVG für jeden Balken und Beschriftung basierend auf den Daten
@@ -331,7 +331,7 @@ class SEUSSWeb:
 
             # Berechne die Höhe und Ausrichtung des Balkens
             height = (abs(price) + 1) * 15
-            y = 250 - height if price >= 0 else 250
+            y = 330 - height if price >= 0 else 330
 
             # Füge Balken hinzu
             svg += f"""
@@ -340,7 +340,7 @@ class SEUSSWeb:
 
             # Füge Stunden-Beschriftung hinzu innerhalb der Gruppe
             svg += f"""
-            <text x="{hour * width + 15}" y="265" text-anchor="middle" font-size="10">{hour}</text>
+            <text x="{hour * width + 15}" y="345" text-anchor="middle" font-size="10">{hour}</text>
             """
 
             # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
