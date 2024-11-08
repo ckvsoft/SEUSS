@@ -241,6 +241,7 @@ class Victron(ESSUnit):
                     self.logger.log_debug(f"{self._name}: {name} {value}")
 
     def _process_result(self, result):
+        if result is None: return None
         parsed_result = json.loads(result)
         value = parsed_result.get('value')
         return value

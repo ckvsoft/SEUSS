@@ -280,7 +280,7 @@ class MqttClient:
         self.client.on_log = self.on_log
         self.client.on_disconnect = self.on_disconnect
         self.flag_connected = False
-        self.timeout = 30
+        self.timeout = 40
 
         self.mqtt_broker = mqtt_config.get('ip_adresse', "")
         self.mqtt_port = mqtt_config.get('mqtt_port', 1883)
@@ -393,7 +393,8 @@ class MqttClient:
                         if 'value' not in subtopic_data or not subtopic_data['value']
                     ]
                     self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
-                    self.logger.log_debug(f"Missing or Invalid Topics: {missing_topics}")
+                    count = len(missing_topics)
+                    self.logger.log_debug(f"Missing or Invalid Topics ({count}): {missing_topics}")
                     self.logger.log_warning("Timeout during the MQTT subscription process.")
                     result = 1
                     break
