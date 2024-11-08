@@ -31,6 +31,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 
+
 class Itemlist:
     def __init__(self, items=None):
         self.item_list = items if items is not None else []
@@ -74,14 +75,14 @@ class Itemlist:
         valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
 
         return len(valid_items)
-#    def get_valid_items_count_until_midnight(self, price_list):
-#        now = datetime.now(timezone.utc)
-#        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
 
-#        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
+    #    def get_valid_items_count_until_midnight(self, price_list):
+    #        now = datetime.now(timezone.utc)
+    #        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
 
-#        return len(valid_items)
+    #        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
 
+    #        return len(valid_items)
 
     def is_valid_item(self, item, now, midnight):
         end_datetime = item.get_end_datetime()
@@ -93,7 +94,8 @@ class Itemlist:
 
     def get_valid_items_count_until_next_midnight(self, price_list):
         now = datetime.now()
-        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(
+            tzinfo=timezone.utc)
 
         valid_items = [item for item in price_list if self.is_valid_item(item, now, next_midnight)]
 
@@ -205,10 +207,11 @@ class Itemlist:
                 failback_market_info = self.config.get_market_info(self.failback_market_name)
 
                 if not failback_market_info or failback_market_info == {}:
-                    self.logger.log_warning("Failback-Markt-Informationen sind leer oder ein leeres Dictionary. Abbruch.")
+                    self.logger.log_warning(
+                        "Failback-Markt-Informationen sind leer oder ein leeres Dictionary. Abbruch.")
                 else:
                     self.logger.log_info(f"Price update is done with {self.failback_market_name}...")
-                    failback_loader = GenericLoaderFactory.create_loader("spotmarket",failback_market_info)
+                    failback_loader = GenericLoaderFactory.create_loader("spotmarket", failback_market_info)
                     updated_items = Itemlist.create_item_list(failback_loader.load_data(self.config.use_second_day))
 
                     self.current_market_name = self.failback_market_name
@@ -216,4 +219,3 @@ class Itemlist:
             items = updated_items
 
         return items
-

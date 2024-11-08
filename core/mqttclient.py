@@ -34,6 +34,7 @@ from core.log import CustomLogger
 from core.utils import Utils
 from core.timeutilities import TimeUtilities
 
+
 class MqttResult:
     def __init__(self):
         self.received_topics = set()
@@ -49,6 +50,8 @@ class MqttResult:
 
 
 from core.statsmanager import StatsManager
+
+
 class PvInverterResults(MqttResult):
     def __init__(self):
         super().__init__()
@@ -97,13 +100,14 @@ class PvInverterResults(MqttResult):
         forward = forward - forward_start
         return float(forward * pi)
 
-    def get_value(self,device_id, key, default=0.0):
+    def get_value(self, device_id, key, default=0.0):
         if device_id in self.inverters and key in self.inverters[device_id]:
             value_str = self.inverters[device_id][key]
             value = json.loads(value_str)['value']
             return value if value is not None else default
         else:
             return default
+
 
 class GridMetersResults(MqttResult):
     def __init__(self):
@@ -168,12 +172,13 @@ class GridMetersResults(MqttResult):
         stats_manager_instance = StatsManager()
         return forward / hours_since_midnight
 
-    def get_value(self,device_id, key):
+    def get_value(self, device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:
             value_str = self.gridmeters[device_id][key]
             return json.loads(value_str)['value']
         else:
             return None
+
 
 class Subscribers(MqttResult):
     def __init__(self):
@@ -244,10 +249,11 @@ class Subscribers(MqttResult):
 
         for key, value in data.items():
             if isinstance(value, dict):
-                nested_topic_count = self.count_topics(value)
-                topic_count += nested_topic_count
-            elif 'topic' in value:
-                topic_count += 1
+                # Rekursiver Aufruf bei verschachtelten Dictionnaries
+                if 'topic' in value:
+                    topic_count += 1
+                # Weiter in die Tiefe des Dictionaries gehen
+                topic_count += self.count_topics(value)
 
         return topic_count
 
@@ -262,6 +268,7 @@ class Subscribers(MqttResult):
                 values_count += 1
 
         return values_count
+
 
 class MqttClient:
     def __init__(self, mqtt_config):
@@ -333,7 +340,6 @@ class MqttClient:
         self.logger.log_debug(f"Received message on topic {topic}: {payload}")
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
-
 
     def on_publish(self, client, userdata, mid):
         self.logger.log_debug(f"Message published {mid}")
@@ -501,7 +507,8 @@ class MqttClient:
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
             return True
         except ConnectionRefusedError:
-            self.logger.log_error("Error: The connection to the MQTT broker was denied. Check the broker configuration.")
+            self.logger.log_error(
+                "Error: The connection to the MQTT broker was denied. Check the broker configuration.")
         except Exception as e:
             self.logger.log_error(f"Error: {e}")
 

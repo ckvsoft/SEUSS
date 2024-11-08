@@ -61,12 +61,6 @@ class SEUSS:
         self.items = self.initialize_items()
         self.current_time = datetime.now()
 
-    #    def run_scheduler(self):
-#        # Führen Sie den Scheduler aus
-#        while not self.svs_thread_stop_flag.is_set():
-#            schedule.run_pending()
-#            time.sleep(1)
-
     def handle_config_update(self, config_data):
         self.logger.log_info("Run checks while configuration was changed")
         self.load_configuration()
@@ -79,6 +73,7 @@ class SEUSS:
 
     def run_essunit(self):
         essunit = self.initialize_essunit()
+        essunit.get_test()
         total_solar = self.process_solar_data(essunit)
         self.process_solar_forecast(total_solar)
         if self.items.get_item_count() > 0:
@@ -112,7 +107,8 @@ class SEUSS:
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                        self.logger.log_info(
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
                 interval_minutes = 15
                 if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
@@ -121,7 +117,8 @@ class SEUSS:
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                        self.logger.log_info(
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
 
                 self.perform_test_run()
                 self.handle_no_data_sleep()
@@ -174,7 +171,8 @@ class SEUSS:
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
             self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
-            self.logger.log_info(f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
+            self.logger.log_info(
+                f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
@@ -194,7 +192,7 @@ class SEUSS:
         return total_solar
 
     def process_solar_forecast(self, total_solar):
-        forecast = OpenMeteo() # Forecastsolar()
+        forecast = OpenMeteo()  # Forecastsolar()
         # self.solardata = Solardata()
         total_forecast = forecast.forecast(self.solardata)
         calculator = SolarBatteryCalculator(self.solardata)
@@ -240,7 +238,8 @@ class SEUSS:
 
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:
-            self.logger.log_info(f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
+            self.logger.log_info(
+                f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
@@ -277,7 +276,8 @@ class SEUSS:
     def handle_no_data_sleep(self):
         if 0 < self.no_data[0] < 4:
             sleeptime = random.randint(10, 60)
-            self.logger.log_info(f"There is no data available, attempt number {self.no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
+            self.logger.log_info(
+                f"There is no data available, attempt number {self.no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
             time.sleep(sleeptime)
         else:
             self.no_data[0] = 0  # Aktualisiere die verpackte Variable
@@ -287,11 +287,12 @@ class SEUSS:
         time_to_next_hour = int((next_hour - current_time).total_seconds())
         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
         if self.items:
-            self.logger.log_info(f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+            self.logger.log_info(
+                f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
         time.sleep(max(0, time_to_next_hour + 2))
 
     def graceful_exit(self, signum, frame):
-        print("\r   ") # clear ^C
+        print("\r   ")  # clear ^C
         self.logger.log_info("Program will be terminated...")
         self.seuss_web.stop()
         self.svs_thread_stop_flag.set()
@@ -310,13 +311,6 @@ class SEUSS:
         self.svs_thread = threading.Thread(target=self.run_svs)
         self.svs_thread.daemon = True
         self.svs_thread.start()
-
-#        schedule.every().hour.at(":05").do(self.run_markets)  # Jede volle Stunde + 5 Sekunden
-#        schedule.every(15).minutes.do(self.run_essunit)  # Alle 15 Minuten
-
-#        scheduler_thread = threading.Thread(target=self.run_scheduler)
-#        scheduler_thread.daemon = True
-#        scheduler_thread.start()
 
         signal.signal(signal.SIGINT, self.graceful_exit)
 

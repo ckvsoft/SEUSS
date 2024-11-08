@@ -24,8 +24,10 @@
 #
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
-from datetime import datetime,timedelta
+from datetime import datetime, timedelta
 from core.log import CustomLogger
+
+
 class MarketData:
     def __init__(self, **kwargs) -> None:
         self.getdata_start_datetime = None
@@ -56,4 +58,5 @@ class MarketData:
         if as_timestamp:
             self.getdata_start_datetime = str(int(self.getdata_start_datetime.timestamp())) + "000"
             self.getdata_end_datetime = str(int(self.getdata_end_datetime.timestamp())) + "000"
-            self.logger.log_debug(f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")
+            self.logger.log_debug(
+                f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")

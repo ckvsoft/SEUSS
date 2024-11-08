@@ -33,12 +33,13 @@ import json
 import os, sys, glob
 import zipfile
 import threading
-import  core.version as version
+import core.version as version
 from waitress import serve
 from core.config import Config
 from core.logreader import LogReader
 from core.log import CustomLogger
 from spotmarket.abstract_classes.itemlist import Itemlist
+
 
 class SEUSSWeb:
     def __init__(self):
@@ -63,8 +64,8 @@ class SEUSSWeb:
         self.config.load_config()
         self.logger.log_info(f"{self.config.config_data}")
 
-        #restart = os.path.join(self.main_script_directory, 'restart.sh')
-        #if os.path.exists('/data/rc.local'):
+        # restart = os.path.join(self.main_script_directory, 'restart.sh')
+        # if os.path.exists('/data/rc.local'):
         #    subprocess.run(['bash', restart])
 
     def serve_static(self, filename):
@@ -95,7 +96,7 @@ class SEUSSWeb:
                 # Kopiere den vorhandenen Eintrag und aktualisiere die Daten mit den neuen Daten
                 count = len(existing_entry)
                 new_entry = existing_entry[0]
-                new_entry["name"] = f"{param_name}{count +1}"
+                new_entry["name"] = f"{param_name}{count + 1}"
                 self.config.config_data[param_name].append(new_entry)
 
                 return {'status': 'success', 'config': self.config.config_data}
@@ -111,17 +112,22 @@ class SEUSSWeb:
         # Beispiel-Daten: Uhrzeit und Preis für 24 Stunden
 
         data, gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
-        green_data, green_hours = Itemlist.get_price_hour_lists(self.market_items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging))
-        red_data, red_hours = Itemlist.get_price_hour_lists(self.market_items.get_highest_prices(self.config.number_of_highest_prices_for_discharging))
+        green_data, green_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging))
+        red_data, red_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_highest_prices(self.config.number_of_highest_prices_for_discharging))
 
-        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(self.market_items.get_prices_relative_to_average(0.8))
-        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(self.market_items.get_prices_relative_to_average(1.2))
+        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_prices_relative_to_average(0.8))
+        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_prices_relative_to_average(1.2))
 
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
         chart_avg_svg = self.generate_chart_svg(data, green_avg_hours, red_avg_hours)
         legend_svg = self.generate_legend_svg()
 
-        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, chart_avg_svg=chart_avg_svg, version=version.__version__, root=self.view_path)
+        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, chart_avg_svg=chart_avg_svg,
+                        version=version.__version__, root=self.view_path)
 
     def update_chart_endpoint(self):
         # Abrufen der Slider-Werte aus der Anfrage
@@ -132,13 +138,15 @@ class SEUSSWeb:
         solar_expectation = float(request.query.get('solar'))
 
         # Berechnen Sie die Slider-Werte
-        #percentage1, percentage2 = self.calculate_slider_percentages(current_soc, solar_expectation)
-        #percentage1 = percentage1 / 100
-        #percentage2 = percentage2 / 100
+        # percentage1, percentage2 = self.calculate_slider_percentages(current_soc, solar_expectation)
+        # percentage1 = percentage1 / 100
+        # percentage2 = percentage2 / 100
 
         data, gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
-        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(self.market_items.get_prices_relative_to_average(percentage1))
-        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(self.market_items.get_prices_relative_to_average(percentage2))
+        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_prices_relative_to_average(percentage1))
+        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_prices_relative_to_average(percentage2))
 
         chart_avg_svg = self.generate_chart_svg(data, green_avg_hours, red_avg_hours)
 
@@ -152,13 +160,12 @@ class SEUSSWeb:
 
         log_content = reader.get_log_data_for_frontend(not hide_debug)
 
-
         return template('logview', log_content=log_content, hide_debug=hide_debug)
 
     def update_log(self):
         reader = LogReader()
 
-        hide_debug = False if request.query.get("hide_debug") == 'true' else True # her we need the reverse
+        hide_debug = False if request.query.get("hide_debug") == 'true' else True  # her we need the reverse
         log_content = reader.get_log_data_for_frontend(hide_debug)
 
         return log_content
@@ -223,7 +230,8 @@ class SEUSSWeb:
             config['ess_unit'][0]['unit_id'] = Config.find_venus_unique_id()
         config = Utils.decode_passwords_from_base64(config)
         json_object = json.dumps(config, indent=2)
-        return template('editor', config=config, json_config=json_object, tooltips=tooltips, names=names, root=self.view_path)
+        return template('editor', config=config, json_config=json_object, tooltips=tooltips, names=names,
+                        root=self.view_path)
 
     def check_is_online(self):
         return "OK"
@@ -440,7 +448,7 @@ class SEUSSWeb:
         sys.stderr.close()
         self.app.close()
 
-    def _is_numeric(self,value):
+    def _is_numeric(self, value):
         try:
             float(value)
             return True
@@ -451,7 +459,8 @@ class SEUSSWeb:
         result_dict = {}
 
         # Suche nach Zeilen, die mit "|" beginnen und nicht den Überschriften entsprechen
-        lines = [line.strip() for line in markdown_text.splitlines() if line.strip().startswith('|') and "Setting" not in line and "Meaning" not in line and "-------" not in line]
+        lines = [line.strip() for line in markdown_text.splitlines() if line.strip().startswith(
+            '|') and "Setting" not in line and "Meaning" not in line and "-------" not in line]
 
         for line in lines:
             # Teile die Zeile in Spalten auf

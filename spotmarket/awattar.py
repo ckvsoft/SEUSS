@@ -41,7 +41,8 @@ class AwattarItem(Item):
     def __init__(self, start_timestamp, end_timestamp, price):
         starttime = datetime.fromtimestamp(start_timestamp / 1000).astimezone(timezone.utc)
         endtime = datetime.fromtimestamp(end_timestamp / 1000).astimezone(timezone.utc)
-        super().__init__(starttime, endtime, price,  13)
+        super().__init__(starttime, endtime, price, 13)
+
 
 class Awattar(MarketData):
     def __init__(self, **kwargs) -> None:
