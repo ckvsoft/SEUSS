@@ -407,9 +407,10 @@ class MqttClient:
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
             # Ressourcen freigeben
             self.client.loop_stop()
-            self.disconnect()
+            #self.disconnect()
 
         return result
 
@@ -459,8 +460,9 @@ class MqttClient:
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
             self.client.loop_stop()
-            self.disconnect()
+            # self.disconnect()
 
         return result
 
@@ -497,14 +499,16 @@ class MqttClient:
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
             self.client.loop_stop()
-            self.disconnect()
+            # self.disconnect()
 
         return result
 
     def connect(self):
         try:
             self.logger.log_debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
+            if self.client.is_connected(): return True
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
             return True
         except ConnectionRefusedError:

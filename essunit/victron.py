@@ -86,19 +86,19 @@ class Victron(ESSUnit):
             self.set_discharge('on')
 
     def get_data(self):
-        instance = self.get_battery_instance()
-        topics_to_subscribe = [f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
-                               f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Duration",
-                               f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
-                               f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
-                               f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
-                               f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
-                               f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
-                               f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
-                               f"Battery:N/{self.unit_id}/battery/{instance}/Capacity"
-                               ]
-
         with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+            instance = self.get_battery_instance(mqtt)
+            topics_to_subscribe = [f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
+                                   f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Duration",
+                                   f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
+                                   f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
+                                   f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
+                                   f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                                   f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
+                                   f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
+                                   f"Battery:N/{self.unit_id}/battery/{instance}/Capacity"
+                                   ]
+
             rc = mqtt.subscribe_multiple(self.subsribers, topics_to_subscribe)
             if rc == 0:
                 if self.subsribers.count_topics(self.subsribers.subscribesValues) != self.subsribers.count_values(self.subsribers.subscribesValues):
@@ -132,24 +132,22 @@ class Victron(ESSUnit):
                 self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
                 return capacity
 
-    def get_battery_instance(self):
+    def get_battery_instance(self, mqtt):
         try:
-            with MqttClient(
-                    self.mqtt_config) as mqtt:  # Verbindung wird hergestellt und im Anschluss automatisch geschlossen
-                mqtt_result = MqttResult()
-                rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
-                if rc == 0:
-                    # Extrahieren des Werts
-                    batteries = self._process_result(mqtt_result.result)
+            mqtt_result = MqttResult()
+            rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
+            if rc == 0:
+                # Extrahieren des Werts
+                batteries = self._process_result(mqtt_result.result)
 
-                    # Schleife durch die Batterien und finde die aktive Batterie
-                    for battery in batteries:
-                        if battery.get('active_battery_service'):
-                            instance = battery.get('instance')
-                            return instance
+                # Schleife durch die Batterien und finde die aktive Batterie
+                for battery in batteries:
+                    if battery.get('active_battery_service'):
+                        instance = battery.get('instance')
+                        return instance
 
-                    # Falls keine aktive Batterie gefunden wurde
-                    return None
+                # Falls keine aktive Batterie gefunden wurde
+                return None
         except (TypeError, json.JSONDecodeError) as e:
             self.logger.log_error(f"Error decoding JSON: {e}")
             return None
