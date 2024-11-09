@@ -73,7 +73,7 @@ class SEUSS:
 
     def run_essunit(self):
         essunit = self.initialize_essunit()
-        essunit.get_test()
+        essunit.get_data()
         total_solar = self.process_solar_data(essunit)
         self.process_solar_forecast(total_solar)
         if self.items.get_item_count() > 0:

@@ -85,7 +85,7 @@ class Victron(ESSUnit):
             self.set_charge('off')
             self.set_discharge('on')
 
-    def get_test(self):
+    def get_data(self):
         instance = self.get_battery_instance()
         topics_to_subscribe = [f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
                                f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Duration",
