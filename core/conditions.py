@@ -369,6 +369,6 @@ class Conditions:
 
         # Ausgabe des Logs mit benötigter Kapazität und aktuellem SOC
         self.logger.log_info(
-            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f})")
+            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f} Wh)")
 
         return required_capacity
