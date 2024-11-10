@@ -116,7 +116,7 @@ class SEUSSWeb:
             self.market_items.get_highest_prices(self.config.number_of_highest_prices_for_discharging))
 
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
-        next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours)
+        next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
 
         legend_svg = self.generate_legend_svg()
 
