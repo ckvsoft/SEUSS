@@ -151,6 +151,10 @@ class Victron(ESSUnit):
         inverters = self.inverters
         return inverters
 
+    def get_version(self):
+        version = self._process_result(self.subsribers.get('Firmware', 'Version'))
+        return version
+
     def _gridmeters(self):
         with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
             base_topic = f'N/{self.unit_id}/grid'
@@ -240,7 +244,8 @@ class Victron(ESSUnit):
                                    f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
                                    f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                                    f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
-                                   f"Battery:N/{self.unit_id}/battery/{instance}/Capacity"
+                                   f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
+                                   f"Firmware:N/{self.unit_id}/platform/0/Firmware/Installed/Version"
                                    ]
 
             rc = mqtt.subscribe_multiple(self.subsribers, topics_to_subscribe)

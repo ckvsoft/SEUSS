@@ -47,6 +47,9 @@ class ESSUnit:
     def get_name(self):
         return self._name
 
+    def get_version(self):
+        pass
+
     def get_battery_current_voltage(self):
         pass
 

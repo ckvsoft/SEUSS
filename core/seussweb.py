@@ -80,7 +80,6 @@ class SEUSSWeb:
         self.app.route('/download_log', method='POST', callback=self.download_log)
         self.app.route('/update_log', method='GET', callback=self.update_log)
         self.app.route('/check_is_online', method='GET', callback=self.check_is_online)
-        self.app.route('/update_chart_endpoint', method='GET', callback=self.update_chart_endpoint)
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
 
     def add_config_entry(self):
@@ -109,48 +108,20 @@ class SEUSSWeb:
         self.market_items = items
 
     def index(self):
-        # Beispiel-Daten: Uhrzeit und Preis für 24 Stunden
 
-        data, gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
-        green_data, green_hours = Itemlist.get_price_hour_lists(
+        data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
+        green_data, green_hours, next_green_data, next_green_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging))
-        red_data, red_hours = Itemlist.get_price_hour_lists(
+        red_data, red_hours, next_red_data, next_red_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_highest_prices(self.config.number_of_highest_prices_for_discharging))
 
-        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_prices_relative_to_average(0.8))
-        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_prices_relative_to_average(1.2))
-
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
-        chart_avg_svg = self.generate_chart_svg(data, green_avg_hours, red_avg_hours)
+        next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours)
+
         legend_svg = self.generate_legend_svg()
 
-        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, chart_avg_svg=chart_avg_svg,
+        return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
                         version=version.__version__, root=self.view_path)
-
-    def update_chart_endpoint(self):
-        # Abrufen der Slider-Werte aus der Anfrage
-        percentage1 = float(request.query.get('percentage1')) / 100
-        percentage2 = float(request.query.get('percentage2')) / 100
-
-        current_soc = float(request.query.get('soc'))
-        solar_expectation = float(request.query.get('solar'))
-
-        # Berechnen Sie die Slider-Werte
-        # percentage1, percentage2 = self.calculate_slider_percentages(current_soc, solar_expectation)
-        # percentage1 = percentage1 / 100
-        # percentage2 = percentage2 / 100
-
-        data, gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
-        green_avg_data, green_avg_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_prices_relative_to_average(percentage1))
-        red_avg_data, red_avg_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_prices_relative_to_average(percentage2))
-
-        chart_avg_svg = self.generate_chart_svg(data, green_avg_hours, red_avg_hours)
-
-        return chart_avg_svg
 
     def logview(self):
         reader = LogReader()
@@ -304,7 +275,7 @@ class SEUSSWeb:
         # Zurück zur Indexseite
         return new_config
 
-    def generate_chart_svg(self, data, green_hours, red_hours):
+    def generate_chart_svg(self, data, green_hours, red_hours, tomorrow = False):
         # SVG-Code für das Balkendiagramm
         current_time = datetime.now()
         current_hour = current_time.hour
@@ -330,12 +301,20 @@ class SEUSSWeb:
             color = "gray" if current_hour > hour else "gainsboro"
             pattern = ""  # Initialisiere pattern
 
-            # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
+            if tomorrow:
+                color = "gainsboro"
 
+            # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
             if price < self.config.charging_price_limit or hour in green_hours:
                 color = "green" if current_hour > hour else "#32CD32"
             elif hour in red_hours and hour not in green_hours:
                 color = "darkred" if current_hour > hour else "red"
+
+            if tomorrow:
+                if price < self.config.charging_price_limit or hour in green_hours:
+                    color = "#32CD32"
+                elif hour in red_hours and hour not in green_hours:
+                    color = "red"
 
             # Berechne die Höhe und Ausrichtung des Balkens
             height = (abs(price) + 1) * 15
