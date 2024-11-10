@@ -90,7 +90,7 @@ class Victron(ESSUnit):
     def get_battery_current_voltage(self):
                 currentvoltage = self._process_result(self.subsribers.get('Battery', 'Voltage'))
                 currentvoltage = round(float(currentvoltage), 2)
-                self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage}V")
+                self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage} V")
                 return currentvoltage
 
     def get_battery_minimum_soc_limit(self):
