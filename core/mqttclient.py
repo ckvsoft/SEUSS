@@ -409,6 +409,7 @@ class MqttClient:
         finally:
             self.logger.log_debug("Finish subcribe ...")
             # Ressourcen freigeben
+            self.client.unsubscribe("#")
             self.client.loop_stop()
             #self.disconnect()
 
@@ -461,6 +462,7 @@ class MqttClient:
 
         finally:
             self.logger.log_debug("Finish subcribe ...")
+            self.client.unsubscribe("#")
             self.client.loop_stop()
             # self.disconnect()
 

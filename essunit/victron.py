@@ -46,8 +46,9 @@ class Victron(ESSUnit):
         self.password = kwargs.get("password", "")
         self.max_discharge_power = kwargs.get("max_discharge_power", -1)
         self.mqtt_port = 1883
-        self.forward_topics = []
         self.subsribers = Subscribers()
+        self.inverters = PvInverterResults()
+        self.gridmeters = GridMetersResults()
 
         current_directory = os.path.dirname(os.path.realpath(sys.argv[0]))
         certificate_path = os.path.join(current_directory, 'certificate')
@@ -86,8 +87,10 @@ class Victron(ESSUnit):
             self.set_discharge('on')
 
     def get_data(self):
+        self._inverters()
+        self._gridmeters()
         with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
-            instance = self.get_battery_instance(mqtt)
+            instance = self._get_battery_instance(mqtt)
             topics_to_subscribe = [f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
                                    f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Duration",
                                    f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
@@ -118,6 +121,7 @@ class Victron(ESSUnit):
 
     def get_battery_current_voltage(self):
                 currentvoltage = self._process_result(self.subsribers.get('Battery', 'Voltage'))
+                currentvoltage = round(float(currentvoltage), 2)
                 self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage}V")
                 return currentvoltage
 
@@ -131,26 +135,6 @@ class Victron(ESSUnit):
                 capacity = self._process_result(self.subsribers.get('Battery', 'Capacity'))
                 self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
                 return capacity
-
-    def get_battery_instance(self, mqtt):
-        try:
-            mqtt_result = MqttResult()
-            rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
-            if rc == 0:
-                # Extrahieren des Werts
-                batteries = self._process_result(mqtt_result.result)
-
-                # Schleife durch die Batterien und finde die aktive Batterie
-                for battery in batteries:
-                    if battery.get('active_battery_service'):
-                        instance = battery.get('instance')
-                        return instance
-
-                # Falls keine aktive Batterie gefunden wurde
-                return None
-        except (TypeError, json.JSONDecodeError) as e:
-            self.logger.log_error(f"Error decoding JSON: {e}")
-            return None
 
     def get_soc(self):
             soc = self._process_result(self.subsribers.get('Battery', 'Soc'))
@@ -192,31 +176,46 @@ class Victron(ESSUnit):
             self.logger.log_error(f"Error: {e}")
 
     def get_grid_meters(self):
-        meters = self._gridmeters(f'N/{self.unit_id}/grid')
+        meters = self.gridmeters
         return meters
 
-    def _gridmeters(self, base_topic):
-        discovery_topic = f"{base_topic}/#"
-        with MqttClient(self.mqtt_config) as mqtt:
-            gridmeters = GridMetersResults()
-            mqtt.subscribe(gridmeters, discovery_topic)
-
-            return gridmeters
-
     def get_solar_energy(self):
-        inverters = self._inverters(f'N/{self.unit_id}/pvinverter')
+        inverters = self.inverters
         return inverters
 
-    def _inverters(self, base_topic):
-        discovery_topic = f"{base_topic}/#"
-        with MqttClient(self.mqtt_config) as mqtt:
-            inverters = PvInverterResults()
-            mqtt.subscribe(inverters, discovery_topic)
+    def _gridmeters(self):
+        with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+            base_topic = f'N/{self.unit_id}/grid'
+            discovery_topic = f"{base_topic}/#"
+            mqtt.subscribe(self.gridmeters, discovery_topic)
 
-            return inverters
+    def _inverters(self):
+        with MqttClient(self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+            base_topic = f'N/{self.unit_id}/pvinverter'
+            discovery_topic = f"{base_topic}/#"
+            mqtt.subscribe(self.inverters, discovery_topic)
+
+    def _get_battery_instance(self, mqtt):
+        try:
+            mqtt_result = MqttResult()
+            rc = mqtt.subscribe(mqtt_result, f"N/{self.unit_id}/system/0/Batteries")
+            if rc == 0:
+                # Extrahieren des Werts
+                batteries = self._process_result(mqtt_result.result)
+
+                # Schleife durch die Batterien und finde die aktive Batterie
+                for battery in batteries:
+                    if battery.get('active_battery_service'):
+                        instance = battery.get('instance')
+                        return instance
+
+                # Falls keine aktive Batterie gefunden wurde
+                return None
+        except (TypeError, json.JSONDecodeError) as e:
+            self.logger.log_error(f"Error decoding JSON: {e}")
+            return None
 
     def _set_scheduler(self):
-        subsribers = Subscribers()
         duration = self._process_result(self.subsribers.get('Schedule', 'Duration'))
         soc = self._process_result(self.subsribers.get('Schedule', 'Soc'))
         if duration != 0 and soc != 0: return
