@@ -109,7 +109,8 @@ class SEUSSWeb:
 
     def index(self):
 
-        data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(self.market_items.get_current_list())
+        data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(
+            self.market_items.get_current_list())
         green_data, green_hours, next_green_data, next_green_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging))
         red_data, red_hours, next_red_data, next_red_hours = Itemlist.get_price_hour_lists(
@@ -275,7 +276,7 @@ class SEUSSWeb:
         # Zurück zur Indexseite
         return new_config
 
-    def generate_chart_svg(self, data, green_hours, red_hours, tomorrow = False):
+    def generate_chart_svg(self, data, green_hours, red_hours, tomorrow=False):
         # SVG-Code für das Balkendiagramm
         current_time = datetime.now()
         current_hour = current_time.hour

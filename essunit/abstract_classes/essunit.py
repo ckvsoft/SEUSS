@@ -28,12 +28,15 @@
 from core.config import Config
 from enum import Enum
 
+
 class EssUnitNameResolutionError(Exception):
     pass
+
 
 class ESSStatus(Enum):
     ON = 'on'
     OFF = 'off'
+
 
 class ESSUnit:
     def __init__(self, **kwargs) -> None:

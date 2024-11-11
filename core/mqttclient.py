@@ -280,7 +280,7 @@ class MqttClient:
         self.client.on_log = self.on_log
         self.client.on_disconnect = self.on_disconnect
         self.flag_connected = False
-        self.timeout = 40
+        self.timeout = 15
 
         self.mqtt_broker = mqtt_config.get('ip_adresse', "")
         self.mqtt_port = mqtt_config.get('mqtt_port', 1883)
@@ -411,7 +411,7 @@ class MqttClient:
             # Ressourcen freigeben
             self.client.unsubscribe("#")
             self.client.loop_stop()
-            #self.disconnect()
+            # self.disconnect()
 
         return result
 

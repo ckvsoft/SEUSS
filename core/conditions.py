@@ -32,10 +32,12 @@ from core.timeutilities import TimeUtilities
 from spotmarket.abstract_classes.item import Item
 from datetime import datetime, timedelta
 
+
 class ConditionResult:
     def __init__(self):
         self.execute = False
         self.condition = ""
+
 
 class Conditions:
     def __init__(self, itemlist, solardata):
@@ -71,7 +73,8 @@ class Conditions:
             self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
 
             for item in result:
-                self.logger.log_info(f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+                self.logger.log_info(
+                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
 
         result = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
         if result:
@@ -82,7 +85,8 @@ class Conditions:
                 formatted_price = str(highest_prices_count)
             self.logger.log_info(f"Today's highest {formatted_price} prices are:")
             for item in result:
-                self.logger.log_info(f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+                self.logger.log_info(
+                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
 
     @staticmethod
     def create_condition(description, condition_function):
@@ -177,8 +181,11 @@ class Conditions:
 
         discharging_abort_conditions = {}
         if self.solardata.soc is not None and self.solardata.need_soc is not None:
-            discharging_abort_conditions["Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False
-            discharging_abort_conditions["Abort discharge condition - Soc is lower or equal the minimum Soc Limit"] = lambda: self.solardata.soc <= self.solardata.battery_minimum_soc_limit
+            discharging_abort_conditions[
+                "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get(
+                'use_solar_forecast_to_abort') else False
+            discharging_abort_conditions[
+                "Abort discharge condition - Soc is lower or equal the minimum Soc Limit"] = lambda: self.solardata.soc <= self.solardata.battery_minimum_soc_limit
 
         # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
         self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)
@@ -246,7 +253,8 @@ class Conditions:
                 raise ValueError("Minimum SOC limit is missing or invalid.")
 
             # Calculate the full capacity
-            full_capacity = ( self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
+            full_capacity = (
+                                        self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
             battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
 
             # Calculate the current SOC in Wh

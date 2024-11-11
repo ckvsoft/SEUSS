@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from core.timeutilities import TimeUtilities
 from core.log import CustomLogger
 
+
 class Item:
     def __init__(self, starttime, endtime, price, potency=14):
         self.starttime = starttime
@@ -84,7 +85,7 @@ class Item:
     def get_price(self, convert=True):
         if convert:
             return self.millicent_to_cent(self.price)
-        return  self.price
+        return self.price
 
     def get_start_datetime(self, localtime=False):
         if localtime:

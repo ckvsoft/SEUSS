@@ -31,6 +31,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 
+
 class Itemlist:
     def __init__(self, items=None):
         self.item_list = items if items is not None else []
@@ -74,14 +75,14 @@ class Itemlist:
         valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
 
         return len(valid_items)
-#    def get_valid_items_count_until_midnight(self, price_list):
-#        now = datetime.now(timezone.utc)
-#        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
 
-#        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
+    #    def get_valid_items_count_until_midnight(self, price_list):
+    #        now = datetime.now(timezone.utc)
+    #        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
 
-#        return len(valid_items)
+    #        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
 
+    #        return len(valid_items)
 
     def is_valid_item(self, item, now, midnight):
         end_datetime = item.get_end_datetime()
@@ -93,7 +94,8 @@ class Itemlist:
 
     def get_valid_items_count_until_next_midnight(self, price_list):
         now = datetime.now()
-        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(
+            tzinfo=timezone.utc)
 
         valid_items = [item for item in price_list if self.is_valid_item(item, now, next_midnight)]
 
@@ -125,7 +127,6 @@ class Itemlist:
             #            price = item.get_price(convert=True)
             #            data[start_hour] = float(price)
 
-
             start_datetime = item.get_start_datetime(localtime=True)
             day = int(start_datetime.split(' ')[0].split('-')[2])  # Extrahiere tag
             start_hour = int(start_datetime.split(' ')[1].split(':')[0])  # Extrahiere die Stunde
@@ -146,16 +147,16 @@ class Itemlist:
         return today_data, today_hours, tomorrow_data, tomorrow_hours
 
     #    @staticmethod
-#    def get_price_hour_lists(item_list):
-#        sorted_items = sorted(item_list, key=lambda x: x.get_start_datetime())
-#        data = {}
-#        for item in sorted_items:
-#            start_hour = int(item.get_start_datetime(localtime=True).split(' ')[1].split(':')[0])
-#            price = item.get_price(convert=True)
-#            data[start_hour] = float(price)
+    #    def get_price_hour_lists(item_list):
+    #        sorted_items = sorted(item_list, key=lambda x: x.get_start_datetime())
+    #        data = {}
+    #        for item in sorted_items:
+    #            start_hour = int(item.get_start_datetime(localtime=True).split(' ')[1].split(':')[0])
+    #            price = item.get_price(convert=True)
+    #            data[start_hour] = float(price)
 
-#        hours_list = list(data.keys())
-#        return data, hours_list
+    #        hours_list = list(data.keys())
+    #        return data, hours_list
 
     def get_current_price(self, convert=False):
         now = datetime.utcnow().replace(tzinfo=timezone.utc)
@@ -179,7 +180,7 @@ class Itemlist:
 
         return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
 
-    def get_lowest_prices(self, count, item_list = None):
+    def get_lowest_prices(self, count, item_list=None):
         if item_list is None: item_list = self.item_list
         if isinstance(count, int):
             sorted_items = sorted(item_list, key=lambda x: x.get_price(False))
@@ -190,7 +191,7 @@ class Itemlist:
 
         return self._get_prices_relative_to_average(count, item_list)
 
-    def get_highest_prices(self, count, item_list = None):
+    def get_highest_prices(self, count, item_list=None):
         if item_list is None: item_list = self.item_list
         if isinstance(count, int):
             sorted_items = sorted(item_list, key=lambda x: x.get_price(False), reverse=True)
@@ -234,7 +235,8 @@ class Itemlist:
         items.remove_expired_items()
 
         if not items.get_current_list() or all(
-                item.is_expired() for item in items.get_current_list()) or items.get_current_price() is None or (self.config.use_second_day and len(items.get_current_list()) < 24):
+                item.is_expired() for item in items.get_current_list()) or items.get_current_price() is None or (
+                self.config.use_second_day and len(items.get_current_list()) < 24):
             self.logger.log_info(f"Price update is done with {self.primary_market_name}...")
             market_info = self.config.get_market_info(self.primary_market_name)
             loader = GenericLoaderFactory.create_loader("spotmarket", market_info)
@@ -245,10 +247,11 @@ class Itemlist:
                 failback_market_info = self.config.get_market_info(self.failback_market_name)
 
                 if not failback_market_info or failback_market_info == {}:
-                    self.logger.log_warning("Failback-Markt-Informationen sind leer oder ein leeres Dictionary. Abbruch.")
+                    self.logger.log_warning(
+                        "Failback-Markt-Informationen sind leer oder ein leeres Dictionary. Abbruch.")
                 else:
                     self.logger.log_info(f"Price update is done with {self.failback_market_name}...")
-                    failback_loader = GenericLoaderFactory.create_loader("spotmarket",failback_market_info)
+                    failback_loader = GenericLoaderFactory.create_loader("spotmarket", failback_market_info)
                     updated_items = Itemlist.create_item_list(failback_loader.load_data(self.config.use_second_day))
 
                     self.current_market_name = self.failback_market_name
@@ -256,4 +259,3 @@ class Itemlist:
             items = updated_items
 
         return items
-

@@ -32,6 +32,7 @@ import json
 from design_patterns.singleton import Singleton
 from design_patterns.observer.config_observer import ConfigObserver
 
+
 class Info:
     def __init__(self, required_fields, **kwargs):
         if not required_fields.issubset(kwargs):

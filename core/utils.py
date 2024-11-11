@@ -31,6 +31,7 @@ from typing import Dict, List
 import json
 import random
 
+
 class Utils:
     @staticmethod
     def encode_to_base64(input_string: str) -> str:
@@ -62,7 +63,8 @@ class Utils:
             if isinstance(value, dict):
                 config[key] = Utils.encode_passwords_in_base64(value)
             elif isinstance(value, list):
-                config[key] = [Utils.encode_passwords_in_base64(item) if isinstance(item, dict) else item for item in value]
+                config[key] = [Utils.encode_passwords_in_base64(item) if isinstance(item, dict) else item for item in
+                               value]
             elif key == 'password' and isinstance(value, str) and value:
                 encoded_password = Utils.encode_to_base64(value)
                 config[key] = encoded_password
@@ -75,7 +77,8 @@ class Utils:
             if isinstance(value, dict):
                 config[key] = Utils.decode_passwords_from_base64(value)
             elif isinstance(value, list):
-                config[key] = [Utils.decode_passwords_from_base64(item) if isinstance(item, dict) else item for item in value]
+                config[key] = [Utils.decode_passwords_from_base64(item) if isinstance(item, dict) else item for item in
+                               value]
             elif key == 'password' and isinstance(value, str) and value:
                 decoded_password = Utils.decode_from_base64(value)
                 config[key] = decoded_password
@@ -94,4 +97,3 @@ class Utils:
     def generate_random_hex(length):
         random_hex = ''.join(random.choices('0123456789abcdef', k=length))
         return random_hex
-

@@ -33,6 +33,7 @@ from requests.exceptions import RequestException
 from core.config import Config
 from core.log import CustomLogger
 
+
 class Forecastsolar:
     def __init__(self, **kwargs) -> None:
         self.config = Config()
@@ -45,8 +46,10 @@ class Forecastsolar:
         max_retries = 3  # Adjust the number of retries as needed
 
         for panel in self.panels:
-            damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel['damping_morning'] <= 1 else 0
-            damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel['damping_evening'] <= 1 else 0
+            damping_morning = panel['damping_morning'] if isinstance(panel['damping_morning'], float) and 0 <= panel[
+                'damping_morning'] <= 1 else 0
+            damping_evening = panel['damping_evening'] if isinstance(panel['damping_evening'], float) and 0 <= panel[
+                'damping_evening'] <= 1 else 0
             url = f"https://api.forecast.solar/estimate/{panel['locLat']}/{panel['locLong']}/{panel['angle']}/{panel['direction']}/{panel['totPower']}?damping={damping_morning},{damping_evening}"
 
             solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
@@ -78,7 +81,8 @@ class Forecastsolar:
             tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
             watts_current_hour = data['result']['watts'].get(f"{current_date} {current_datetime.hour}:00:00", None)
-            watt_hours_current_hour = data['result']['watt_hours'].get(f"{current_date} {current_datetime.hour}:00:00", None)
+            watt_hours_current_hour = data['result']['watt_hours'].get(f"{current_date} {current_datetime.hour}:00:00",
+                                                                       None)
             watt_hours_current_day = data['result']['watt_hours_day'].get(current_date, None)
             watt_hours_tomorrow_day = data['result']['watt_hours_day'].get(tomorrow_date, None)
 
@@ -131,7 +135,8 @@ class Forecastsolar:
                 self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
 
             if watt_hours_tomorrow_day is not None:
-                self.logger.log_info(f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
+                self.logger.log_info(
+                    f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
 
             # Log the results
             self.logger.log_info(f"Sunrise today: {sunrise_today}")

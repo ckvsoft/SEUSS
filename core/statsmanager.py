@@ -31,6 +31,7 @@ import os, sys
 
 from design_patterns.singleton import Singleton
 
+
 class StatsManager(Singleton):
     max_entries = 24 * 3
     download_times = []
@@ -124,7 +125,7 @@ class StatsManager(Singleton):
         return round(value, 2), now
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
+    def update_percent_status_data(cls, group, key, new_value, max_count=1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -141,7 +142,7 @@ class StatsManager(Singleton):
             if isinstance(cls.data[group][key], list):
                 value, count = cls.data[group][key]
                 if count >= max_count:
-                    e_value =value * count
+                    e_value = value * count
                     e_value = (e_value - value)
                     count -= 1
                     value = e_value / count

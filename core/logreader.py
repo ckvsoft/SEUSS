@@ -1,6 +1,7 @@
 from core.config import Config
 from core.utils import Utils
 
+
 class LogReader:
     def __init__(self):
         self.config = Config()
@@ -37,7 +38,7 @@ class LogReader:
     def get_last_lines(self):
         return self.lines
 
-    def get_log_data_for_frontend(self, show_debug = True):
+    def get_log_data_for_frontend(self, show_debug=True):
         # Hole die letzten Zeilen aus der Liste
         last_lines = self.get_last_lines()
 

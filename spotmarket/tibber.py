@@ -25,7 +25,7 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-#tibber.py
+# tibber.py
 import json
 from datetime import datetime, timedelta, timezone
 

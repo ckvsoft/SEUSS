@@ -35,6 +35,7 @@ from logzero import logger
 from core.config import Config
 from design_patterns.singleton import Singleton
 
+
 class CustomLogger(Singleton):
     RESET = "\x1b[0m"
     BRIGHT = "\x1b[1m"
@@ -45,16 +46,16 @@ class CustomLogger(Singleton):
 
     def __init__(self):
         super().__init__()
+
     def _init(self):
         if not hasattr(self, 'initialized'):
-
             self.config = Config()
             self.config.observer.add_observer("CustomLogger", self)
             self.log_level = self.config.log_level
 
             self.handle_config_update(self.config.config_data)
             # Setze den Log-Level für die Konsole
-            #if not self.colored_console:
+            # if not self.colored_console:
             #    logzero.loglevel(logzero.WARNING)
 
             self.initialized = True
