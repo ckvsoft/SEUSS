@@ -32,6 +32,8 @@ import os, sys, subprocess
 
 config = Config()
 logger = CustomLogger()
+
+
 def excepthook_handler(exc_type, exc_value, exc_traceback):
     logger.log_error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
     main_script_path = os.path.abspath(sys.argv[0])
@@ -40,11 +42,13 @@ def excepthook_handler(exc_type, exc_value, exc_traceback):
     if os.path.exists('/data/rc.local'):
         subprocess.run(['bash', restart])
 
+
 def main():
     sys.excepthook = excepthook_handler
 
     seuss_instance = SEUSS()
     seuss_instance.start()
+
 
 if __name__ == "__main__":
     main()

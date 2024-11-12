@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from core.timeutilities import TimeUtilities
 from core.log import CustomLogger
 
+
 class Item:
     def __init__(self, starttime, endtime, price, potency=14):
         self.starttime = starttime
@@ -64,20 +65,27 @@ class Item:
             print(f"Fehler beim Umrechnen des Preises: {price}")
             return None
 
-    def is_expired(self):
+    def is_expired(self, check_time=False):
         now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        now = TimeUtilities.convert_utc_to_local(now, False)#.astimezone(timezone.utc)
-        item = TimeUtilities.convert_utc_to_local(self.starttime, False)
-        # yesterday = now - timedelta(days=1)
-        expired = item.date() < now.date()
-        self.logger.log_debug(f"Item expired: {expired}, now.date: {now.date()} item.date: {item.date()}")
+        now_local = TimeUtilities.convert_utc_to_local(now, False)
+        item_local = TimeUtilities.convert_utc_to_local(self.starttime, False)
+
+        if check_time:
+            # Vergleiche sowohl Datum als auch Uhrzeit
+            expired = item_local < now_local
+            self.logger.log_debug(f"Item expired: {expired}, now: {now_local}, item: {item_local}")
+
+        else:
+            # Vergleiche nur das Datum
+            expired = item_local.date() < now_local.date()
+            self.logger.log_debug(f"Item expired: {expired}, now: {now_local.date()}, item: {item_local.date()}")
 
         return expired
 
     def get_price(self, convert=True):
         if convert:
             return self.millicent_to_cent(self.price)
-        return  self.price
+        return self.price
 
     def get_start_datetime(self, localtime=False):
         if localtime:

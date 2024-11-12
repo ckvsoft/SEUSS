@@ -29,6 +29,7 @@
 
 from design_patterns.observer.observer import Observer
 
+
 class ConfigObserver(Observer):
     def __init__(self):
         super().__init__()

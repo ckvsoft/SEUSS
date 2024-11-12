@@ -52,6 +52,7 @@ from core.config import Config
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
 
+
 class OpenMeteo:
     def __init__(self, **kwargs) -> None:
         self.config = Config()
@@ -69,7 +70,6 @@ class OpenMeteo:
             max_retries = 3  # Adjust the number of retries as needed
 
             total_watts_current_hour = 0
-            total_watts_current_hour_real = 0
             total_watt_hours_current_day = 0
             total_watt_hours_tomorrow_day = 0
             total_area = 0.0
@@ -86,8 +86,9 @@ class OpenMeteo:
             tomorrow_datetime = current_datetime + timedelta(days=1)
             tomorrow_date = tomorrow_datetime.strftime('%Y-%m-%d')
 
+            solardata.update_current_hour_forcast(0)
             for panel in self.panels:
-                url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=global_tilted_irradiance,shortwave_radiation,cloud_cover,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
+                url = f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}&minutely_15=sunshine_duration,global_tilted_irradiance&hourly=global_tilted_irradiance,shortwave_radiation,temperature_2m,snow_depth&daily=sunrise,sunset,daylight_duration,sunshine_duration,snowfall_sum,shortwave_radiation_sum,showers_sum&timezone={self.config.time_zone}&forecast_days=2&forecast_minutely_15=96&tilt={panel['angle']}&azimuth={panel['direction']}"
                 self.damping = (panel.get('damping_morning', 0.0), panel.get('damping_evening', 0.0))
 
                 solardata.update_power_peak(panel['totPower'] + solardata.power_peak)
@@ -128,50 +129,41 @@ class OpenMeteo:
                 sunshine_duration_current_day = data['daily'].get('sunshine_duration', [])[index_today]
                 sunshine_duration_tomorrow_day = data['daily'].get('sunshine_duration', [])[index_tomorrow]
 
+                efficiency = panel.get('efficiency', 20) / 100
+                twp = round(panel['totPower'] * 1000.0, 2)
+
                 # shortwave_radiation_today = data['daily'].get('shortwave_radiation_sum', [])[index_today]
                 self.start_hour = datetime.strptime(sunrise_tomorrow_day, "%Y-%m-%dT%H:%M").hour
                 self.end_hour = datetime.strptime(sunset_tomorrow_day, "%Y-%m-%dT%H:%M").hour + 1
-                shortwave_radiation_tomorrow = self.calculate_shortwave_radiation(hourly_data, 24, 47)
+                shortwave_radiation_tomorrow = self.calculate_shortwave_radiation(hourly_data, 24, 47,
+                                                                                  panel['total_area'], efficiency, twp)
                 # shortwave_radiation_tomorrow = data['daily'].get('shortwave_radiation_sum', [])[index_tomorrow]
                 self.start_hour = datetime.strptime(sunrise_current_day, "%Y-%m-%dT%H:%M").hour
                 self.end_hour = datetime.strptime(sunset_current_day, "%Y-%m-%dT%H:%M").hour + 1
-                shortwave_radiation_today = self.calculate_shortwave_radiation(hourly_data, 0, 23)
+                shortwave_radiation_today = self.calculate_shortwave_radiation(hourly_data, 0, 23, panel['total_area'],
+                                                                               efficiency, twp)
 
-                # total_watt_hours_today = (shortwave_radiation_today / 3.6) * 1000
-                # total_watt_hours_tomorrow = (shortwave_radiation_tomorrow / 3.6) * 1000
+                total_watt_hours_current_day += round(shortwave_radiation_today, 2)
+                total_watt_hours_tomorrow_day += round(shortwave_radiation_tomorrow, 2)
 
-                efficiency = panel.get('efficiency', 20) / 100
-
-                total_watt_hours_current_day += round((shortwave_radiation_today * total_area) * efficiency, 2)
-                total_watt_hours_tomorrow_day += round((shortwave_radiation_tomorrow * total_area) * efficiency, 2)
-
-                total_current_hour = round((self.calculate_shortwave_radiation(hourly_data, 0, index) * total_area) * efficiency, 2)
-                total_current_hour_real = round(self.calculate_shortwave_radiation(hourly_data, 0, index - 1), 2)
-
-                # watts_current_hour = hourly_data.get('shortwave_radiation', [])[index]
-                # total_watt_current_hour = round((watts_current_hour * total_area) * efficiency, 2)
+                total_current_hour = round(
+                    self.calculate_shortwave_radiation(hourly_data, 0, index, panel['total_area'], efficiency, twp), 2)
+                new_datetime = current_datetime - timedelta(hours=1)
+                current_forcast = hourly_data.get('global_tilted_irradiance', [])[new_datetime.hour]
+                solardata.update_current_hour_forcast(solardata.current_hour_forcast + current_forcast)
 
                 # Akkumulierung der Gesamtwerte
                 total_watts_current_hour += total_current_hour if total_current_hour is not None else 0
-                total_watts_current_hour_real += total_current_hour_real if total_current_hour_real is not None else 0
 
             # Update der Gesamtwerte für Solardaten
-            efficiency_inverter = 95 / 100 # Durchschnitt der am Markt erhältlichen PV Inverter
+            efficiency_inverter = 88 / 100  # Durchschnitt der am Markt erhältlichen PV Inverter
             solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
-            solardata.update_total_current_hour_real(total_watts_current_hour_real)
             total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
             total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
 
-            efficiency_seuss_list = StatsManager.get_data('solar', 'efficiency')
-            if efficiency_seuss_list is not None:
-                total_seuss_current_day = round(((total_watt_hours_current_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
-                total_seuss_tomorrow_day = round(((total_watt_hours_tomorrow_day * efficiency_inverter) / 100) * efficiency_seuss_list[0], 2)
-                solardata.update_total_seuss_current_day(total_seuss_current_day)
-                solardata.update_total_seuss_tomorrow_day(total_seuss_tomorrow_day)
-
             solardata.update_total_current_day(total_current_day)
             solardata.update_total_tomorrow_day(total_tomorrow_day)
-            solardata.update_sunset_current_day (sunset_current_day)
+            solardata.update_sunset_current_day(sunset_current_day)
             solardata.update_sunrise_current_day(sunrise_current_day)
             solardata.update_sunset_tomorrow_day(sunset_tomorrow_day)
             solardata.update_sunrise_tomorrow_day(sunrise_tomorrow_day)
@@ -180,16 +172,30 @@ class OpenMeteo:
 
             # Log der Gesamtwerte
             self.logger.log_info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
-            self.logger.log_debug(f"Total Solar for the current hour real: {solardata.total_current_hour_real} Wh")
             self.logger.log_info(
-                f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh, seuss estimated: {solardata.total_seuss_current_day} Wh")
+                f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh")
             self.logger.log_info(
-                f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh, seuss estimated: {solardata.total_seuss_tomorrow_day} Wh")
+                f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh")
 
             return solardata.total_current_hour
 
         except TypeError:
             return None
+
+    def calculate_shortwave_radiation(self, hourly_data, from_hour, to_hour, total_area, efficiency, twp):
+        total = 0
+        current_hour = 0
+        for i in range(from_hour, to_hour + 1):
+            watts_current_hour = hourly_data.get('global_tilted_irradiance', [])[i]
+
+            if watts_current_hour is not None:
+                effective_power = watts_current_hour * self.calculate_exponential_damping(current_hour)
+                power = min((effective_power * total_area) * efficiency, twp)
+                total += power
+
+            current_hour += 1
+
+        return total
 
     def calculate_exponential_damping(self, hour):
         damping = self.damping[0]
@@ -214,30 +220,9 @@ class OpenMeteo:
             else:
                 # exponential_damping = damping + (1 - damping) * (hour / self.noon_hour)
                 if hour < self.start_hour: return 0
-                exponential_damping = damping + (1 - damping) * ((hour - self.start_hour) / (self.noon_hour - self.start_hour))
+                exponential_damping = damping + (1 - damping) * (
+                        (hour - self.start_hour) / (self.noon_hour - self.start_hour))
 
-            self.logger.log_debug(f"exponential_damping: hour {hour}, damping {damping}, exponential damping {exponential_damping}")
+            self.logger.log_debug(
+                f"exponential_damping: hour {hour}, damping {damping}, exponential damping {exponential_damping}")
             return exponential_damping
-
-    def calculate_shortwave_radiation(self, hourly_data, from_hour, to_hour):
-        total = 0
-        current_hour = 0
-        for i in range(from_hour, to_hour + 1):
-            cloud_cover = hourly_data.get('cloud_cover', [])[i]
-            # watts_current_hour = self.calculate_cloud_cover(hourly_data.get('shortwave_radiation', [])[i], cloud_cover)
-            watts_current_hour = self.calculate_cloud_cover(hourly_data.get('global_tilted_irradiance', [])[i], cloud_cover)
-
-            if watts_current_hour is not None:
-                total += watts_current_hour * self.calculate_exponential_damping(current_hour)
-
-            current_hour += 1
-
-        return total
-
-    def calculate_cloud_cover(self, shortwave_radiation, cloud_cover):
-        reduktion_faktor = 1 - ((cloud_cover / 100) * 0.2)
-
-        calculated = shortwave_radiation * reduktion_faktor
-
-        return calculated
-

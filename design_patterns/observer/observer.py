@@ -46,7 +46,6 @@ class Observer:
         if name in self._observers:
             del self._observers[name]
 
-
     def notify_observers(self, config_data):
         pass
 

@@ -25,7 +25,8 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-from datetime import datetime, time
+from datetime import datetime
+
 
 class Solardata:
     def __init__(self):
@@ -36,18 +37,15 @@ class Solardata:
         self.sun_time_today_minutes = None
         self.sun_time_tomorrow_minutes = None
         self.total_current_hour = None
-        self.total_current_hour_real = None
         self.total_current_day = None
         self.total_tomorrow_day = None
-        self.total_seuss_current_day = None
-        self.total_seuss_tomorrow_day = None
         self.power_peak = 0.0
         self.need_soc = 0
         self.soc = 0
         self.battery_capacity = 0
         self.battery_minimum_soc_limit = 5
         self.battery_current_voltage = None
-        self.abort_solar = True
+        self.current_hour_forcast = 0
 
     def outside_sun_hours(self):
         current_datetime = datetime.now()
@@ -93,20 +91,11 @@ class Solardata:
     def update_total_current_hour(self, total_current_hour):
         self.total_current_hour = total_current_hour
 
-    def update_total_current_hour_real(self, total_current_hour):
-        self.total_current_hour_real = total_current_hour
-
     def update_total_current_day(self, total_current_day):
         self.total_current_day = total_current_day
 
     def update_total_tomorrow_day(self, total_tomorrow_day):
         self.total_tomorrow_day = total_tomorrow_day
-
-    def update_total_seuss_current_day(self, total_current_day):
-        self.total_seuss_current_day = total_current_day
-
-    def update_total_seuss_tomorrow_day(self, total_tomorrow_day):
-        self.total_seuss_tomorrow_day = total_tomorrow_day
 
     def update_power_peak(self, peak):
         self.power_peak = peak
@@ -126,5 +115,5 @@ class Solardata:
     def update_battery_current_voltage(self, voltage):
         self.battery_current_voltage = voltage
 
-    def update_abort_solar(self, abort):
-        self.abort_solar = abort
+    def update_current_hour_forcast(self, value):
+        self.current_hour_forcast = value

@@ -34,8 +34,10 @@ from core.log import CustomLogger
 from core.utils import Utils
 from core.timeutilities import TimeUtilities
 
+
 class MqttResult:
     def __init__(self):
+        self.received_topics = set()
         self.results = {}
         self.result = None
 
@@ -43,7 +45,13 @@ class MqttResult:
         self.result = value
         self.results[topic] = value
 
+    def has_received_topic(self, topic):
+        return topic in self.received_topics  # `received_values` ist eine Liste oder ein Set von Topics, die bereits eine Antwort erhalten haben
+
+
 from core.statsmanager import StatsManager
+
+
 class PvInverterResults(MqttResult):
     def __init__(self):
         super().__init__()
@@ -92,12 +100,14 @@ class PvInverterResults(MqttResult):
         forward = forward - forward_start
         return float(forward * pi)
 
-    def get_value(self,device_id, key):
+    def get_value(self, device_id, key, default=0.0):
         if device_id in self.inverters and key in self.inverters[device_id]:
             value_str = self.inverters[device_id][key]
-            return json.loads(value_str)['value']
+            value = json.loads(value_str)['value']
+            return value if value is not None else default
         else:
-            return None
+            return default
+
 
 class GridMetersResults(MqttResult):
     def __init__(self):
@@ -162,12 +172,13 @@ class GridMetersResults(MqttResult):
         stats_manager_instance = StatsManager()
         return forward / hours_since_midnight
 
-    def get_value(self,device_id, key):
+    def get_value(self, device_id, key):
         if device_id in self.gridmeters and key in self.gridmeters[device_id]:
             value_str = self.gridmeters[device_id][key]
             return json.loads(value_str)['value']
         else:
             return None
+
 
 class Subscribers(MqttResult):
     def __init__(self):
@@ -238,10 +249,11 @@ class Subscribers(MqttResult):
 
         for key, value in data.items():
             if isinstance(value, dict):
-                nested_topic_count = self.count_topics(value)
-                topic_count += nested_topic_count
-            elif key == 'topic':
-                topic_count += 1
+                # Rekursiver Aufruf bei verschachtelten Dictionnaries
+                if 'topic' in value:
+                    topic_count += 1
+                # Weiter in die Tiefe des Dictionaries gehen
+                topic_count += self.count_topics(value)
 
         return topic_count
 
@@ -252,7 +264,7 @@ class Subscribers(MqttResult):
             if isinstance(value, dict):
                 nested_values_count = self.count_values(value)
                 values_count += nested_values_count
-            elif key == 'value':
+            elif 'value' in value:
                 values_count += 1
 
         return values_count
@@ -268,7 +280,7 @@ class MqttClient:
         self.client.on_log = self.on_log
         self.client.on_disconnect = self.on_disconnect
         self.flag_connected = False
-        self.timeout = 30
+        self.timeout = 15
 
         self.mqtt_broker = mqtt_config.get('ip_adresse', "")
         self.mqtt_port = mqtt_config.get('mqtt_port', 1883)
@@ -324,10 +336,10 @@ class MqttClient:
     def on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = msg.payload.decode('utf-8')
+        self.subscribers_instance.received_topics.add(topic)
         self.logger.log_debug(f"Received message on topic {topic}: {payload}")
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
-
 
     def on_publish(self, client, userdata, mid):
         self.logger.log_debug(f"Message published {mid}")
@@ -344,43 +356,62 @@ class MqttClient:
         self.subscribers_instance.flag_connected = False
 
         try:
+            # MQTT-Broker-Verbindung und Authentifizierung einrichten
             if self.user:
                 self.logger.log_debug(f"user: {self.user}, password: {self.password}")
                 plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
+                self.logger.log_error("Failed to connect to the MQTT broker.")
                 return 1
 
             self.client.loop_start()
 
+            # Abonnements für die angegebenen Themen einrichten
             for query_topic in query_topics:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
-                self.logger.log_debug(f"subscribe: {actual_topic}")
-                self.client.subscribe(f"{actual_topic}")
-                self.client.publish(f"R/{self.unit_id}/keepalive", "")
+                self.logger.log_debug(f"Subscribing to: {actual_topic}")
+                self.client.subscribe(actual_topic)
+
+            self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
             start_time = time.time()
 
-            while (
-                    subscribers_instance.count_topics(subscribers_instance.subscribesValues)
-                    > subscribers_instance.count_values(subscribers_instance.subscribesValues)
+            result = 0
+            # Warte auf das Empfangen aller Themen
+            while not all(
+                    'value' in subtopic_data and subtopic_data['value']
+                    for topic, subtopics in subscribers_instance.subscribesValues.items()
+                    for subtopic, subtopic_data in subtopics.items()
             ):
                 if time.time() - start_time > self.timeout:
-                    raise TimeoutError
+                    # Timeout erreicht, fehlende oder ungültige Werte protokollieren
+                    missing_topics = [
+                        f"{topic}/{subtopic}" for topic, subtopics in subscribers_instance.subscribesValues.items()
+                        for subtopic, subtopic_data in subtopics.items()
+                        if 'value' not in subtopic_data or not subtopic_data['value']
+                    ]
+                    self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
+                    count = len(missing_topics)
+                    self.logger.log_debug(f"Missing or Invalid Topics ({count}): {missing_topics}")
+                    self.logger.log_warning("Timeout during the MQTT subscription process.")
+                    result = 1
+                    break
 
                 time.sleep(1)
 
-            result = 0
-
-        except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT subscription process.")
-            self.logger.log_debug(f"Timeout MQTT Topics: {query_topics}.")
+        except Exception as e:
+            # Fehlerbehandlung
+            self.logger.log_error(f"Exception during subscription: {str(e)}")
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
+            # Ressourcen freigeben
+            self.client.unsubscribe("#")
             self.client.loop_stop()
-            self.disconnect()
+            # self.disconnect()
 
         return result
 
@@ -425,13 +456,15 @@ class MqttClient:
             result = 0
 
         except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT subscription process.")
+            self.logger.log_warning("Timeout during the MQTT publish process.")
             self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
+            self.client.unsubscribe("#")
             self.client.loop_stop()
-            self.disconnect()
+            # self.disconnect()
 
         return result
 
@@ -468,18 +501,21 @@ class MqttClient:
             result = 1
 
         finally:
+            self.logger.log_debug("Finish subcribe ...")
             self.client.loop_stop()
-            self.disconnect()
+            # self.disconnect()
 
         return result
 
     def connect(self):
         try:
             self.logger.log_debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
+            if self.client.is_connected(): return True
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
             return True
         except ConnectionRefusedError:
-            self.logger.log_error("Error: The connection to the MQTT broker was denied. Check the broker configuration.")
+            self.logger.log_error(
+                "Error: The connection to the MQTT broker was denied. Check the broker configuration.")
         except Exception as e:
             self.logger.log_error(f"Error: {e}")
 

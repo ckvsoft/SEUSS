@@ -29,6 +29,7 @@
 from importlib import import_module
 from core.log import CustomLogger
 
+
 class GenericLoaderFactory:
     @staticmethod
     def create_loader(loader_type, info):

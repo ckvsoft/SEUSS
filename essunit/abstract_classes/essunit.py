@@ -28,12 +28,15 @@
 from core.config import Config
 from enum import Enum
 
+
 class EssUnitNameResolutionError(Exception):
     pass
+
 
 class ESSStatus(Enum):
     ON = 'on'
     OFF = 'off'
+
 
 class ESSUnit:
     def __init__(self, **kwargs) -> None:
@@ -44,19 +47,35 @@ class ESSUnit:
     def handle_config_update(self, config_data):
         pass
 
-    def set_charge(self, state):
+    def get_name(self):
+        return self._name
+
+    def get_version(self):
         pass
 
-    def set_discharge(self, state):
+    def get_battery_current_voltage(self):
         pass
 
-    def get_max_discharge_power(self):
-        # Grundlegende Logik zum Abrufen des maximalen Entladestroms
+    def get_battery_minimum_soc_limit(self):
+        pass
+
+    def get_battery_capacity(self):
         pass
 
     def get_soc(self):
-        # Grundlegende Logik zum Abrufen des SoC
         pass
 
-    def get_name(self):
-        return self._name
+    def get_scheduler_soc(self):
+        pass
+
+    def set_discharge(self, status):
+        pass
+
+    def set_charge(self, status):
+        pass
+
+    def get_grid_meters(self):
+        pass
+
+    def get_solar_energy(self):
+        pass

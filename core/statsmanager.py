@@ -31,6 +31,7 @@ import os, sys
 
 from design_patterns.singleton import Singleton
 
+
 class StatsManager(Singleton):
     max_entries = 24 * 3
     download_times = []
@@ -101,7 +102,30 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value, max_count = 1000):
+    def insert_peek_data(cls, key, value):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if 'peek' not in cls.data:
+            cls.data['peek'] = {}
+
+        if key in cls.data['peek']:
+            existing_value = cls.data['peek'][key]['value']
+            if existing_value < value:
+                cls.data['peek'][key] = {'value': value, 'timestamp': now}
+            else:
+                return round(existing_value, 2), cls.data['peek'][key]['timestamp']
+        else:
+            cls.data['peek'][key] = {'value': value, 'timestamp': now}
+
+        cls.save_data()
+
+        return round(value, 2), now
+
+    @classmethod
+    def update_percent_status_data(cls, group, key, new_value, max_count=1000):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -118,7 +142,7 @@ class StatsManager(Singleton):
             if isinstance(cls.data[group][key], list):
                 value, count = cls.data[group][key]
                 if count >= max_count:
-                    e_value =value * count
+                    e_value = value * count
                     e_value = (e_value - value)
                     count -= 1
                     value = e_value / count
@@ -134,6 +158,12 @@ class StatsManager(Singleton):
         cls.save_data()
 
         return round(value, 2)
+
+    @classmethod
+    def calculate_factor(cls, value1, value2):
+        if value1 == 0:
+            return None
+        return value2 / value1
 
     @classmethod
     def cleanup_old_entries(cls, group_to_cleanup):
