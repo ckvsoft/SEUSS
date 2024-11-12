@@ -167,17 +167,18 @@ For those who prefer to work in a config file, there is config.json
 
 ## PV Panels
 
-| Setting           | Meaning                                                                                   |
-|:------------------|:------------------------------------------------------------------------------------------|
-| `locLat`          | Latitude                                                                                  |
-| `locLong`         | Longitude                                                                                 |
-| `angle`           | Angle of your panels 0 (horizontal) … 90 (vertical)                                       |
-| `direction`       | Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)   |
-| `totPower`        | installed modules power in kilo watt                                                      |
-| `total_area`      | Total area of the panels in square meters                                                 |
-| `damping_morning` | With this parameter you can adjust the result in the morning. Value float 0..1, default 0 |
-| `damping_evening` | With this parameter you can adjust the result in the evening. Value float 0..1, default 0 |
-| `enabled`         | To use this entry it must be `enabled`. Otherwise `disabled`                              |
+| Setting           | Meaning                                                                                       |
+|:------------------|:----------------------------------------------------------------------------------------------|
+| `locLat`          | Latitude                                                                                      |
+| `locLong`         | Longitude                                                                                     |
+| `angle`           | Angle of your panels 0 (horizontal) … 90 (vertical)                                           |
+| `direction`       | Plane azimuth, -180 … 180 (-180 = north, -90 = east, 0 = south, 90 = west, 180 = north)       |
+| `totPower`        | installed modules power in kilo watt                                                          |
+| `total_area`      | Total area of the panels in square meters                                                     |
+| `efficiency`      | Adjusts the efficiency rate of the installed PV panels for accurate performance forecasting.  |
+| `damping_morning` | With this parameter you can adjust the result in the morning. Value float 0..1, default 0     |
+| `damping_evening` | With this parameter you can adjust the result in the evening. Value float 0..1, default 0     |
+| `enabled`         | To use this entry it must be `enabled`. Otherwise `disabled`                                  |
 
 ***
 
