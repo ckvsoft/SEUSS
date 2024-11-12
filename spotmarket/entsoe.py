@@ -78,7 +78,8 @@ class Entsoe(MarketData):
             return []
 
     def _make_url(self) -> str:
-        start_date_str = self.getdata_start_datetime.strftime('%Y%m%d%H00')
+        start_date = self.getdata_start_datetime - timedelta(hours=1)
+        start_date_str = start_date.strftime('%Y%m%d%H00')
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
         url = f"https://web-api.tp.entsoe.eu/api?securityToken={self.api_token}&documentType=A44&in_Domain={self.in_domain}&out_Domain={self.out_domain}&periodStart={start_date_str}&periodEnd={end_date_str}"
