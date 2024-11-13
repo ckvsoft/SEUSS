@@ -157,9 +157,19 @@ class OpenMeteo:
 
             # Update der Gesamtwerte für Solardaten
             efficiency_inverter = 88 / 100  # Durchschnitt der am Markt erhältlichen PV Inverter
-            solardata.update_total_current_hour(round(total_watts_current_hour * efficiency_inverter, 2))
-            total_current_day = round(total_watt_hours_current_day * efficiency_inverter, 2)
-            total_tomorrow_day = round(total_watt_hours_tomorrow_day * efficiency_inverter, 2)
+            forcast_total_watts_current_hour = round(total_watts_current_hour * efficiency_inverter, 2)
+
+            if forcast_total_watts_current_hour == 0.0:
+                # Falls die Vorhersage der aktuellen Stunde 0 ist, setzen wir den Anpassungsfaktor auf 1, um Fehler zu vermeiden
+                adjustment_factor = 1
+            else:
+                # Berechne den Anpassungsfaktor basierend auf der tatsächlichen Stunde und der Vorhersage
+                adjustment_factor = solardata.current_hour_solar_yield / forcast_total_watts_current_hour
+
+            total_watts_current_hour = (total_watts_current_hour * efficiency_inverter) * adjustment_factor
+            solardata.update_total_current_hour(round(total_watts_current_hour, 2))
+            total_current_day = round((total_watt_hours_current_day * efficiency_inverter) * adjustment_factor, 2)
+            total_tomorrow_day = round((total_watt_hours_tomorrow_day * efficiency_inverter) * adjustment_factor, 2)
 
             solardata.update_total_current_day(total_current_day)
             solardata.update_total_tomorrow_day(total_tomorrow_day)

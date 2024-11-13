@@ -190,6 +190,7 @@ class SEUSS:
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
         self.logger.log_info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
+        self.solardata.update_current_hour_solar_yield(round(total_solar, 2))
         return total_solar
 
     def process_solar_forecast(self, total_solar):
