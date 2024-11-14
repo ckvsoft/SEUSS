@@ -286,7 +286,7 @@ class SEUSSWeb:
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
-        average_price = self.market_items.get_average_price()
+        average_price = self.market_items.get_average_price(True)
         avg_height = (abs(average_price) + 1) * 15
         svg += f"""
         <line x1="0" y1="{330 - avg_height}" x2="{width * 24}" y2="{330 - avg_height}" stroke="magenta" stroke-width="2"/>
