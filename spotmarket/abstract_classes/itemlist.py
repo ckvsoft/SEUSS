@@ -211,13 +211,30 @@ class Itemlist:
         if percentage >= 1.0:
             # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
             threshold_price = average_price * (1 + (percentage - 1))
-            relevant_items = [item for item in item_list if item.get_price(False) >= threshold_price]
+            relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
         else:
             # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
             threshold_price = average_price * percentage
             relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
 
         return relevant_items
+
+#    def _get_prices_relative_to_average(self, percentage, item_list):
+#        average_price = self.get_average_price()
+
+#        if not isinstance(percentage, float):
+#            percentage = 1.0
+
+#        if percentage >= 1.0:
+#            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
+#            threshold_price = average_price * (1 + (percentage - 1))
+#            relevant_items = [item for item in item_list if item.get_price(False) >= threshold_price]
+#        else:
+#            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
+#            threshold_price = average_price * percentage
+#            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
+
+#        return relevant_items
 
     def remove_expired_items(self):
         self.item_list = [item for item in self.item_list if not item.is_expired()]
