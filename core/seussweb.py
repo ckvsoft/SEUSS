@@ -287,10 +287,13 @@ class SEUSSWeb:
         """
 
         average_price = self.market_items.get_average_price(True)
-        avg_height = (abs(average_price) + 1) * 15
+        avg_height = (average_price + 1) * 15  # Umrechnung in Höhe (Skalierung)
+
+        y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
-        <line x1="0" y1="{330 - avg_height}" x2="{width * 24}" y2="{330 - avg_height}" stroke="magenta" stroke-width="2"/>
+        <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
+
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
         svg += f"""
         <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
