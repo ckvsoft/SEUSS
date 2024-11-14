@@ -204,6 +204,7 @@ class Itemlist:
 
     def _get_prices_relative_to_average(self, percentage, item_list):
         average_price = self.get_average_price()
+        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
 
         if not isinstance(percentage, float):
             percentage = 1.0
@@ -211,15 +212,18 @@ class Itemlist:
         if percentage >= 1.0:
             # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
             threshold_price = average_price * (1 + (percentage - 1))
+            self.logger.log_debug(f"Threshold Price (Over Average): {threshold_price}")  # Debug-Ausgabe
             relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
         else:
             # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
             threshold_price = average_price * percentage
+            self.logger.log_debug(f"Threshold Price (Under Average): {threshold_price}")  # Debug-Ausgabe
             relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
 
+        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")  # Debug-Ausgabe
         return relevant_items
 
-#    def _get_prices_relative_to_average(self, percentage, item_list):
+    #    def _get_prices_relative_to_average(self, percentage, item_list):
 #        average_price = self.get_average_price()
 
 #        if not isinstance(percentage, float):
