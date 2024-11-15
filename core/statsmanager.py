@@ -102,6 +102,21 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
+    def set_status_data(cls, group, key, value):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+
+        date_key = f"date_{key}"
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        if group not in StatsManager.data:
+            cls.data[group] = {}
+
+        cls.data[group][date_key] = today
+        cls.data[group][key] = value
+        cls.save_data()
+
+    @classmethod
     def insert_peek_data(cls, key, value):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return

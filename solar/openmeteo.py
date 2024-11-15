@@ -167,7 +167,7 @@ class OpenMeteo:
                 adjustment_factor = solardata.current_hour_solar_yield / forcast_total_watts_current_hour
 
             if adjustment_factor != 0.0:
-                StatsManager.insert_new_status_data("solar", "adjustment_factor", adjustment_factor)
+                StatsManager.set_status_data("solar", "adjustment_factor", adjustment_factor)
             else:
                 adjustment_factor = StatsManager.get_data("solar", "adjustment_factor") or 0.0
             total_watts_current_hour = (total_watts_current_hour * efficiency_inverter) * adjustment_factor
