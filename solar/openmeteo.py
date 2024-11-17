@@ -181,7 +181,7 @@ class OpenMeteo:
             total_watts_current_hour = (total_watts_current_hour * efficiency_inverter) * adjustment_factor
             solardata.update_total_current_hour(round(total_watts_current_hour, 2))
 
-            adjustment_factor = min(1.5, (0.7 * previous_adjustment_factor) + (0.3 * adjustment_factor))
+            adjustment_factor = min(1.5, (0.5 * previous_adjustment_factor) + (0.5 * adjustment_factor))
 
             total_current_day = round((total_watt_hours_current_day * efficiency_inverter) * adjustment_factor, 2)
             total_tomorrow_day = round((total_watt_hours_tomorrow_day * efficiency_inverter) * adjustment_factor, 2)
