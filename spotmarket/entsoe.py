@@ -83,6 +83,7 @@ class Entsoe(MarketData):
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
         url = f"https://web-api.tp.entsoe.eu/api?securityToken={self.api_token}&documentType=A44&in_Domain={self.in_domain}&out_Domain={self.out_domain}&periodStart={start_date_str}&periodEnd={end_date_str}"
+        self.logger.log_debug(f"entsoe url: {url}")
         return url
 
     def _load_data_from_xml(self, xml_data: str):
