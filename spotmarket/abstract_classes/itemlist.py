@@ -169,7 +169,7 @@ class Itemlist:
             if start_datetime < now < end_datetime:
                 return item.get_price(convert)
 
-        self.logger.log_error("Kein passendes Item gefunden.")
+        self.logger.log_error("get_current_price -> Item not found.")
         return None
 
     def get_average_price(self, convert=False):
