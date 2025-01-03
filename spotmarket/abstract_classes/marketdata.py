@@ -46,7 +46,7 @@ class MarketData:
             yesterday = (now - timedelta(days=1))
             tomorrow = (now + timedelta(days=1))
             self.getdata_start_datetime = yesterday.replace(hour=23, minute=0, second=0, microsecond=0)
-            self.getdata_end_datetime = tomorrow.replace(hour=23, minute=59, second=59, microsecond=0)
+            self.getdata_end_datetime = tomorrow.replace(hour=23, minute=0, second=0, microsecond=0)
         else:
             self.getdata_start_datetime = now.replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow = (now + timedelta(days=1))
