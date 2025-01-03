@@ -98,7 +98,7 @@ class Entsoe(MarketData):
         in_reason = False
 
         start_datetime = ""
-        pos = 0
+        current_pos = 0
         last_pos = None  # Letzte verarbeitete Position
         last_price = None  # Preis der letzten Position
         period_count = 0  # Zähler für Perioden
@@ -153,7 +153,7 @@ class Entsoe(MarketData):
                 price = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
                 if price:
                     current_price = price.group(1)
-                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=pos)
+                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=current_pos)
                     dt_end = dt_start + timedelta(hours=1)
                     entsoe_item = EntsoeItem(dt_start, dt_end, current_price)
                     items.append(entsoe_item)
