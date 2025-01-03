@@ -35,7 +35,7 @@ from requests.exceptions import ConnectionError
 
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
-
+from core.statsmanager import StatsManager
 
 class EntsoeItem(Item):
     def __init__(self, start_datetime, end_datetime, price):
@@ -86,6 +86,7 @@ class Entsoe(MarketData):
         return url
 
     def _load_data_from_xml(self, xml_data: str):
+        statsmanager = StatsManager()
         error_code = 0
         error_message = ""
         items = []
@@ -98,40 +99,63 @@ class Entsoe(MarketData):
 
         start_datetime = ""
         pos = 0
+        last_pos = None  # Letzte verarbeitete Position
+        last_price = None  # Preis der letzten Position
+        period_count = 0  # Zähler für Perioden
 
         for line in lines:
             if "<Period>" in line:
+                if period_count >= 2:  # Maximal zwei Perioden verarbeiten
+                    break
                 capture_period = True
+                valid_period = False  # Zurücksetzen für den neuen Block
+                last_pos = 0  # Zurücksetzen bei neuer Periode
+                last_price = str(statsmanager.get_data('market', 'price'))
             elif "</Period>" in line:
+                if capture_period and valid_period:  # Nur gültige Perioden zählen
+                    # Am Ende der Periode fehlende Positionen auffüllen
+                    if last_pos < 23:
+                        for missing_pos in range(last_pos + 1, 24):
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
+                            dt_end = dt_start + timedelta(hours=1)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            items.append(entsoe_item)
+                    period_count += 1  # Zähler inkrementieren
+                    if period_count == 1:
+                        statsmanager.set_status_data('market', 'price', float(last_price))
+                        if not self.use_second_day:
+                            break  # Nach der ersten Periode abbrechen, wenn zweite Periode nicht erlaubt ist
                 capture_period = False
-                valid_period = False
+                valid_period = False  # Periode beendet, zurücksetzen
             elif capture_period and "<timeInterval>" in line:
                 capture_time = True
             elif capture_period and "</timeInterval>" in line:
                 capture_time = False
             elif capture_time and "<start>" in line:
                 start_datetime = re.search(r'<start>(.*?)<\/start>', line).group(1)
-                # start_datetime = TimeUtilities.convert_utc_to_local(start_datetime)
             elif capture_period and "<resolution>PT60M</resolution>" in line:
                 valid_period = True
             elif valid_period and "<position>" in line:
                 position = re.search(r'<position>(.*?)<\/position>', line)
                 if position:
-                    pos = int(position.group(1))
-                    pos -= 1
+                    current_pos = int(position.group(1)) - 1
+                    # Lücken zwischen letzter und aktueller Position auffüllen
+                    if current_pos > last_pos + 1:
+                        for missing_pos in range(last_pos + 1, current_pos):
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
+                            dt_end = dt_start + timedelta(hours=1)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            items.append(entsoe_item)
+                    last_pos = current_pos
             elif valid_period and "<price.amount>" in line:
                 price = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
                 if price:
+                    current_price = price.group(1)
                     dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=pos)
-                    # dt_start = start_datetime + timedelta(hours=pos)
                     dt_end = dt_start + timedelta(hours=1)
-                    entsoe_item = EntsoeItem(dt_start, dt_end,
-                                             price.group(1))
+                    entsoe_item = EntsoeItem(dt_start, dt_end, current_price)
                     items.append(entsoe_item)
-                    if pos == 23 and not self.use_second_day:
-                        break
-            elif valid_period and "</Period>" in line:
-                break
+                    last_price = current_price  # Preis der aktuellen Position speichern
 
             elif "<Reason>" in line:
                 in_reason = True
@@ -145,7 +169,7 @@ class Entsoe(MarketData):
 
         if error_code == 999:
             self.logger.log_warning(f"E: Entsoe data retrieval error found in the XML data: {error_message}")
-        elif items is None:
+        elif not items:
             self.logger.log_warning("E: No prices found in the XML data.")
 
         return items
