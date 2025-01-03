@@ -78,7 +78,7 @@ class Entsoe(MarketData):
             return []
 
     def _make_url(self) -> str:
-        start_date = self.getdata_start_datetime - timedelta(hours=1)
+        start_date = self.getdata_start_datetime # - timedelta(hours=1)
         start_date_str = start_date.strftime('%Y%m%d%H00')
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
