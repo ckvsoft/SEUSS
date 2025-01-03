@@ -116,6 +116,7 @@ class Entsoe(MarketData):
                     # Am Ende der Periode fehlende Positionen auffüllen
                     if last_pos < 23:
                         for missing_pos in range(last_pos + 1, 24):
+                            self.logger.log_warning(f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
@@ -142,6 +143,7 @@ class Entsoe(MarketData):
                     # Lücken zwischen letzter und aktueller Position auffüllen
                     if current_pos > last_pos + 1:
                         for missing_pos in range(last_pos + 1, current_pos):
+                            self.logger.log_warning(f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
