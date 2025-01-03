@@ -87,6 +87,7 @@ class Entsoe(MarketData):
         return url
 
     def _load_data_from_xml(self, xml_data: str):
+        self.logger.log_debug(f"raw xml: {xml_data}")
         statsmanager = StatsManager()
         error_code = 0
         error_message = ""
