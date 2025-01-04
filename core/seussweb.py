@@ -299,7 +299,7 @@ class SEUSSWeb:
         <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
         svg += f"""
-        <text x="25" y="{y_avg_line + 20}" text-anchor="middle" font-size="10" fill="magenta"> {average_price} </text>
+        <text x="0" y="{y_avg_line - 20}" text-anchor="middle" font-size="10" fill="magenta"> {average_price} </text>
         """
 
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
