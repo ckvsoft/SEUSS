@@ -48,6 +48,7 @@ class Conditions:
         self.available_surplus = 0.0
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
+        self.charging_price_hard_cap = Item.convert_to_millicents(self.config.charging_price_hard_cap)
         self.available_operation_modes = ["charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
         self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
@@ -202,6 +203,10 @@ class Conditions:
         available_soc_wh -= min_soc_wh
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
+            # Abbruchbedingung für charging_price_hard_cap hinzufügen
+            "Abort charge condition - Price exceeds hard cap": lambda: (
+                        self.current_price > self.charging_price_hard_cap),
+
             # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
             # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             f"Abort charge condition - Required capacity ({required_capacity / 1000:.2f} kWh) is lower than available SOC ({available_soc_wh / 1000:.2f} kWh)": lambda: (
