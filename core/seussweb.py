@@ -292,7 +292,7 @@ class SEUSSWeb:
         if tomorrow and average_price_tomorow is not None:
             avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
             average_price = average_price_tomorow
-        elif average_price_today is not None:
+        elif not tomorrow and average_price_today is not None:
             avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
             average_price = average_price_today
 
