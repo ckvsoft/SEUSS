@@ -31,7 +31,6 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 
-
 class Itemlist:
     def __init__(self, items=None):
         self.item_list = items if items is not None else []
@@ -180,6 +179,35 @@ class Itemlist:
 
         return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
 
+    def get_average_price_by_date(self, convert=False):
+        now = datetime.now()  # Aktuelle Zeit
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
+        tomorrow_start = today_start + timedelta(days=1)
+        tomorrow_end = tomorrow_start + timedelta(days=1) - timedelta(seconds=1)
+
+        # Filter Items
+        today_items = [
+            item for item in self.item_list
+            if (item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start)
+        ]
+        tomorrow_items = [
+            item for item in self.item_list
+            if
+            (item.get_start_datetime() <= tomorrow_end and (item.get_end_datetime() or tomorrow_end) >= tomorrow_start)
+        ]
+
+        def calculate_average(items):
+            if not items:
+                return None
+            total_prices = sum(float(item.get_price(convert)) for item in items)
+            return round(total_prices / len(items), 4)
+
+        average_today = calculate_average(today_items)
+        average_tomorrow = calculate_average(tomorrow_items)
+
+        return average_today, average_tomorrow
+
     def get_lowest_prices(self, count, item_list=None):
         if item_list is None: item_list = self.item_list
         if isinstance(count, int):
@@ -203,25 +231,77 @@ class Itemlist:
         return self._get_prices_relative_to_average(count, item_list)
 
     def _get_prices_relative_to_average(self, percentage, item_list):
-        average_price = self.get_average_price()
-        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
+        # Durchschnittspreis für heute und morgen abrufen
+        average_today, average_tomorrow = self.get_average_price_by_date()
+        self.logger.log_debug(f"Average Price Today: {average_today}, Average Price Tomorrow: {average_tomorrow}")
 
         if not isinstance(percentage, float):
             percentage = 1.0
 
-        if percentage >= 1.0:
-            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
-            threshold_price = average_price * (1 + (percentage - 1))
-            self.logger.log_debug(f"Threshold Price (Over Average): {threshold_price}")  # Debug-Ausgabe
-            relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
-        else:
-            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
-            threshold_price = average_price * percentage
-            self.logger.log_debug(f"Threshold Price (Under Average): {threshold_price}")  # Debug-Ausgabe
-            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
+        # Hilfsfunktion zur Berechnung des Schwellenwerts
+        def calculate_threshold(average_price, percentage):
+            if percentage >= 1.0:
+                return average_price * (1 + (percentage - 1))
+            else:
+                return average_price * percentage
 
-        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")  # Debug-Ausgabe
+        relevant_items = []
+
+        # Aktuelles Datum berechnen
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
+        tomorrow_start = today_start + timedelta(days=1)
+        tomorrow_end = tomorrow_start + timedelta(days=1) - timedelta(seconds=1)
+
+        # Über alle Items iterieren
+        for item in item_list:
+            start = item.get_start_datetime()
+            end = item.get_end_datetime() or (start + timedelta(days=1))
+
+            # Items für heute prüfen
+            if start <= today_end and end >= today_start:
+                threshold_price = calculate_threshold(average_today, percentage)
+                item_price = float(item.get_price(False))
+                # Wenn der Preis dem Schwellenwert entspricht, hinzufügen
+                if (percentage >= 1.0 and item_price > threshold_price) or \
+                        (percentage < 1.0 and item_price < threshold_price):
+                    relevant_items.append(item)
+
+            # Items für morgen prüfen
+            elif start <= tomorrow_end and end >= tomorrow_start:
+                threshold_price = calculate_threshold(average_tomorrow, percentage)
+                item_price = float(item.get_price(False))
+                # Wenn der Preis dem Schwellenwert entspricht, hinzufügen
+                if (percentage >= 1.0 and item_price > threshold_price) or \
+                        (percentage < 1.0 and item_price < threshold_price):
+                    relevant_items.append(item)
+
+        # Debug-Ausgabe für relevante Items
+        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")
+
         return relevant_items
+
+#    def _get_prices_relative_to_average(self, percentage, item_list):
+#        average_price = self.get_average_price()
+#        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
+#
+#       if not isinstance(percentage, float):
+#            percentage = 1.0
+#
+#        if percentage >= 1.0:
+#            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
+#            threshold_price = average_price * (1 + (percentage - 1))
+#            self.logger.log_debug(f"Threshold Price (Over Average): {threshold_price}")  # Debug-Ausgabe
+#            relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
+#        else:
+#            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
+#            threshold_price = average_price * percentage
+#            self.logger.log_debug(f"Threshold Price (Under Average): {threshold_price}")  # Debug-Ausgabe
+#            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
+#
+#        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")  # Debug-Ausgabe
+#        return relevant_items
 
     #    def _get_prices_relative_to_average(self, percentage, item_list):
 #        average_price = self.get_average_price()
