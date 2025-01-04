@@ -320,13 +320,15 @@ class SEUSSWeb:
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
             if price < self.config.charging_price_limit or hour in green_hours:
-                color = "green" if current_hour > hour else "#32CD32"
+                if price < self.config.charging_price_hard_cap:
+                    color = "green" if current_hour > hour else "#32CD32"
             elif hour in red_hours and hour not in green_hours:
                 color = "darkred" if current_hour > hour else "red"
 
             if tomorrow:
                 if price < self.config.charging_price_limit or hour in green_hours:
-                    color = "#32CD32"
+                    if price < self.config.charging_price_hard_cap:
+                        color = "#32CD32"
                 elif hour in red_hours and hour not in green_hours:
                     color = "red"
 
@@ -349,6 +351,11 @@ class SEUSSWeb:
             <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
             """
 
+        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * 15
+        svg += f"""
+        <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
+        """
+
         # Schließe die Gruppe und SVG-Code
         svg += """
         </svg>
@@ -359,7 +366,7 @@ class SEUSSWeb:
     def generate_legend_svg(self):
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="155" height="135" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="180" height="165" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
@@ -394,6 +401,13 @@ class SEUSSWeb:
         """
         legend_svg += """
         <text x="40" y="115" font-size="12">Charging Price Limit</text>
+        """
+
+        legend_svg += """
+        <rect x="10" y="135" width="20" height="4" fill="blue" stroke="#000" stroke-width="1"/>
+        """
+        legend_svg += """
+        <text x="40" y="145" font-size="12">Charging Price Hard Cap</text>
         """
 
         # Schließe die SVG-Code
