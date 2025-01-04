@@ -296,10 +296,10 @@ class SEUSSWeb:
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
-        <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
+        <line x1="60" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
         svg += f"""
-        <text x="25" y="{y_avg_line - 20}" text-anchor="middle" font-size="10" fill="magenta">{average_price}</text>
+        <text x="20" y="{y_avg_line + 2}" text-anchor="middle" font-size="10" fill="magenta">{average_price}</text>
         """
 
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
