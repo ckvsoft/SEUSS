@@ -180,7 +180,7 @@ class Itemlist:
         return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
 
     def get_average_price_by_date(self, convert=False):
-        now = datetime.now()  # Aktuelle Zeit
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
         tomorrow_start = today_start + timedelta(days=1)
@@ -259,17 +259,8 @@ class Itemlist:
             start = item.get_start_datetime()  # Erwartet UTC
             end = item.get_end_datetime() or (start + timedelta(days=1))
 
-            # Wenn start und end keine Zeitzone haben (naiv), dann in UTC umwandeln
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            if end and end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-
-            # Sicherstellen, dass `today_start` und `today_end` auch UTC sind
-            if today_start.tzinfo is None:
-                today_start = today_start.replace(tzinfo=timezone.utc)
-            if today_end.tzinfo is None:
-                today_end = today_end.replace(tzinfo=timezone.utc)
+            today_start = today_start.replace(tzinfo=timezone.utc)
+            today_end = today_end.replace(tzinfo=timezone.utc)
 
             # Items für heute prüfen
             if start <= today_end and end >= today_start:
