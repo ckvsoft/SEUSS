@@ -285,7 +285,8 @@ class Itemlist:
         # Prüft, ob das Item heute ist
         today_start = datetime.utcnow().replace(tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999)
-        return item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start
+        return item.get_start_datetime() < today_end
+#        return item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start
 
     def _get_prices_relative_to_average(self, percentage, item_list):
         # Durchschnittspreis für heute und morgen abrufen
