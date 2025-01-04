@@ -70,11 +70,26 @@ class Conditions:
                 formatted_price = f"{lowest_prices_count * 100}%"
             else:
                 formatted_price = str(lowest_prices_count)
-            self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
 
-            for item in result:
-                self.logger.log_info(
-                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+            # Trenne die Items in "heute" und "morgen"
+            today_items = [item for item in result if self.items.is_today(item)]
+            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+
+            # Logge die Items für heute
+            if today_items:
+                self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
+                for item in today_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
+
+            # Logge die Items für morgen, falls vorhanden
+            if tomorrow_items:
+                self.logger.log_info(f"Tomorrow's lowest {formatted_price} prices are:")
+                for item in tomorrow_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
 
         result = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
         if result:
@@ -83,10 +98,26 @@ class Conditions:
                 formatted_price = f"{highest_prices_count * 100}%"
             else:
                 formatted_price = str(highest_prices_count)
-            self.logger.log_info(f"Today's highest {formatted_price} prices are:")
-            for item in result:
-                self.logger.log_info(
-                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+
+            # Trenne die Items in "heute" und "morgen"
+            today_items = [item for item in result if self.items.is_today(item)]
+            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+
+            # Logge die Items für heute
+            if today_items:
+                self.logger.log_info(f"Today's highest {formatted_price} prices are:")
+                for item in today_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
+
+            # Logge die Items für morgen, falls vorhanden
+            if tomorrow_items:
+                self.logger.log_info(f"Tomorrow's highest {formatted_price} prices are:")
+                for item in tomorrow_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
 
     @staticmethod
     def create_condition(description, condition_function):

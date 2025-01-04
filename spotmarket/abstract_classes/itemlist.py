@@ -208,27 +208,84 @@ class Itemlist:
 
         return average_today, average_tomorrow
 
-    def get_lowest_prices(self, count, item_list=None):
-        if item_list is None: item_list = self.item_list
-        if isinstance(count, int):
-            sorted_items = sorted(item_list, key=lambda x: x.get_price(False))
-            sorted_items = sorted_items[:count]
-            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
+#    def get_lowest_prices(self, count, item_list=None):
+#        if item_list is None: item_list = self.item_list
+#        if isinstance(count, int):
+#            sorted_items = sorted(item_list, key=lambda x: x.get_price(False))
+#            sorted_items = sorted_items[:count]
+#            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
+#
+#            return sorted_items
+#
+#        return self._get_prices_relative_to_average(count, item_list)
 
-            return sorted_items
+#    def get_highest_prices(self, count, item_list=None):
+#        if item_list is None: item_list = self.item_list
+#        if isinstance(count, int):
+#            sorted_items = sorted(item_list, key=lambda x: x.get_price(False), reverse=True)
+#            sorted_items = sorted_items[:count]
+#            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
+#
+#            return sorted_items
+#
+#        return self._get_prices_relative_to_average(count, item_list)
+
+    def get_lowest_prices(self, count, item_list=None):
+        if item_list is None:
+            item_list = self.item_list
+
+        if isinstance(count, int):
+            # Heute herausfiltern
+            today_items = [item for item in item_list if self.is_today(item)]
+            # Morgen herausfiltern
+            tomorrow_items = [item for item in item_list if not self.is_today(item)]
+
+            # Die Anzahl von 'count' Items für heute
+            today_sorted = sorted(today_items, key=lambda x: x.get_price(False))[:count]
+            # Die Anzahl von 'count' Items für morgen (falls vorhanden)
+            tomorrow_sorted = sorted(tomorrow_items, key=lambda x: x.get_price(False))[:count]
+
+            # Heute und morgen zusammenführen
+            total_items = today_sorted + tomorrow_sorted
+
+            # Sortiere alle Items nach dem Startzeitpunkt
+            total_items = sorted(total_items, key=lambda x: x.get_start_datetime())
+
+            return total_items
 
         return self._get_prices_relative_to_average(count, item_list)
 
     def get_highest_prices(self, count, item_list=None):
-        if item_list is None: item_list = self.item_list
-        if isinstance(count, int):
-            sorted_items = sorted(item_list, key=lambda x: x.get_price(False), reverse=True)
-            sorted_items = sorted_items[:count]
-            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
+        if item_list is None:
+            item_list = self.item_list
 
-            return sorted_items
+        if isinstance(count, int):
+            # Heute herausfiltern
+            today_items = [item for item in item_list if self.is_today(item)]
+            # Morgen herausfiltern
+            tomorrow_items = [item for item in item_list if not self.is_today(item)]
+
+            # Die Anzahl von 'count' Items für heute (höchste Preise)
+            today_sorted = sorted(today_items, key=lambda x: x.get_price(False), reverse=True)[:count]
+            # Die Anzahl von 'count' Items für morgen (höchste Preise)
+            tomorrow_sorted = sorted(tomorrow_items, key=lambda x: x.get_price(False), reverse=True)[:count]
+
+            # Heute und morgen zusammenführen
+            total_items = today_sorted + tomorrow_sorted
+
+            # Sortiere alle Items nach dem Startzeitpunkt
+            total_items = sorted(total_items, key=lambda x: x.get_start_datetime())
+
+            return total_items
 
         return self._get_prices_relative_to_average(count, item_list)
+
+    # Hilfsmethode für heute
+    def is_today(self, item):
+        # Prüft, ob das Item heute ist
+        today_start = datetime.utcnow().replace(tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start
 
     def _get_prices_relative_to_average(self, percentage, item_list):
         # Durchschnittspreis für heute und morgen abrufen
