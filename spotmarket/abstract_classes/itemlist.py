@@ -230,6 +230,8 @@ class Itemlist:
 
         return self._get_prices_relative_to_average(count, item_list)
 
+    from datetime import datetime, timedelta, timezone
+
     def _get_prices_relative_to_average(self, percentage, item_list):
         # Durchschnittspreis für heute und morgen abrufen
         average_today, average_tomorrow = self.get_average_price_by_date()
@@ -247,8 +249,8 @@ class Itemlist:
 
         relevant_items = []
 
-        # Aktuelles Datum berechnen
-        now = datetime.now()
+        # Aktuelles Datum berechnen (mit UTC-Zeitzone)
+        now = datetime.now(timezone.utc)  # UTC-Zeitpunkt
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
         tomorrow_start = today_start + timedelta(days=1)
@@ -256,8 +258,14 @@ class Itemlist:
 
         # Über alle Items iterieren
         for item in item_list:
-            start = item.get_start_datetime()
+            start = item.get_start_datetime()  # Erwartet UTC
             end = item.get_end_datetime() or (start + timedelta(days=1))
+
+            # Wenn start und end keine Zeitzone haben (naiv), dann in UTC umwandeln
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if end and end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
 
             # Items für heute prüfen
             if start <= today_end and end >= today_start:
@@ -282,7 +290,7 @@ class Itemlist:
 
         return relevant_items
 
-#    def _get_prices_relative_to_average(self, percentage, item_list):
+    #    def _get_prices_relative_to_average(self, percentage, item_list):
 #        average_price = self.get_average_price()
 #        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
 #
