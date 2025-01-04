@@ -286,8 +286,11 @@ class SEUSSWeb:
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
-        average_price = self.market_items.get_average_price(True)
-        avg_height = (average_price + 1) * 15  # Umrechnung in Höhe (Skalierung)
+        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+        if tomorrow is True:
+            avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
+        else:
+            avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
