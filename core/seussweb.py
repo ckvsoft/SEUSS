@@ -287,14 +287,19 @@ class SEUSSWeb:
         """
 
         average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
-        if tomorrow is True:
+        if tomorrow:
             avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
+            average_price = average_price_tomorow
         else:
             avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
+            average_price = average_price_today
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
         <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
+        """
+        svg += f"""
+        <text x="15" y="{y_avg_line}" text-anchor="middle" font-size="10" fill="magenta"> {average_price} </text>
         """
 
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
