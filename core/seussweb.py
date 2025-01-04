@@ -287,10 +287,12 @@ class SEUSSWeb:
         """
 
         average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
-        if tomorrow:
+        avg_height = 15
+        average_price = 0.0
+        if tomorrow and average_price_tomorow is not None:
             avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
             average_price = average_price_tomorow
-        else:
+        elif average_price_today is not None:
             avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
             average_price = average_price_today
 
