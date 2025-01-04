@@ -235,10 +235,12 @@ class Itemlist:
             item_list = self.item_list
 
         if isinstance(count, int):
-            # Heute herausfiltern
-            today_items = [item for item in item_list if self.is_today(item)]
-            # Morgen herausfiltern
-            tomorrow_items = [item for item in item_list if not self.is_today(item)]
+            today_items, tomorrow_items = [], []
+            for item in item_list:
+                if self.is_today(item):
+                    today_items.append(item)
+                else:
+                    tomorrow_items.append(item)
 
             # Die Anzahl von 'count' Items für heute
             today_sorted = sorted(today_items, key=lambda x: x.get_price(False))[:count]
@@ -260,10 +262,12 @@ class Itemlist:
             item_list = self.item_list
 
         if isinstance(count, int):
-            # Heute herausfiltern
-            today_items = [item for item in item_list if self.is_today(item)]
-            # Morgen herausfiltern
-            tomorrow_items = [item for item in item_list if not self.is_today(item)]
+            today_items, tomorrow_items = [], []
+            for item in item_list:
+                if self.is_today(item):
+                    today_items.append(item)
+                else:
+                    tomorrow_items.append(item)
 
             # Die Anzahl von 'count' Items für heute (höchste Preise)
             today_sorted = sorted(today_items, key=lambda x: x.get_price(False), reverse=True)[:count]
@@ -286,7 +290,6 @@ class Itemlist:
         today_start = datetime.utcnow().replace(tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999)
         return item.get_start_datetime() < today_end
-#        return item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start
 
     def _get_prices_relative_to_average(self, percentage, item_list):
         # Durchschnittspreis für heute und morgen abrufen
