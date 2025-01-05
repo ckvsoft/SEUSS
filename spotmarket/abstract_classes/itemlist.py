@@ -345,7 +345,7 @@ class Itemlist:
     def log_items(self):
         for item in self.get_current_list():
             self.logger.log_debug(
-                f"Starttime: {item.get_start_datetime(True)}, Endzeit: {item.get_end_datetime(True)}, "
+                f"Starttime: {item.get_start_datetime(True)}, Endtime: {item.get_end_datetime(True)}, "
                 f"Price: {item.price} Millicents pro kWh, "
                 f"Price: {item.millicent_to_cent(item.price)} Cent pro kWh."
             )
