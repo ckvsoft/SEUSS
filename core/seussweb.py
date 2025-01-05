@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -286,11 +286,21 @@ class SEUSSWeb:
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
-        average_price = sum(data.values()) / len(data) if data else 0
-        avg_height = (abs(average_price) + 1) * 15
+        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+        avg_height = 15
+        average_price = 0.0
+        if tomorrow and average_price_tomorow is not None:
+            avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
+            average_price = average_price_tomorow
+        elif not tomorrow and average_price_today is not None:
+            avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
+            average_price = average_price_today
+
+        y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
-        <line x1="0" y1="{330 - avg_height}" x2="{width * 24}" y2="{330 - avg_height}" stroke="magenta" stroke-width="2"/>
+        <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
+
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
         svg += f"""
         <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
@@ -307,13 +317,15 @@ class SEUSSWeb:
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
             if price < self.config.charging_price_limit or hour in green_hours:
-                color = "green" if current_hour > hour else "#32CD32"
+                if price < self.config.charging_price_hard_cap:
+                    color = "green" if current_hour > hour else "#32CD32"
             elif hour in red_hours and hour not in green_hours:
                 color = "darkred" if current_hour > hour else "red"
 
             if tomorrow:
                 if price < self.config.charging_price_limit or hour in green_hours:
-                    color = "#32CD32"
+                    if price < self.config.charging_price_hard_cap:
+                        color = "#32CD32"
                 elif hour in red_hours and hour not in green_hours:
                     color = "red"
 
@@ -336,6 +348,11 @@ class SEUSSWeb:
             <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
             """
 
+        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * 15
+        svg += f"""
+        <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
+        """
+
         # Schließe die Gruppe und SVG-Code
         svg += """
         </svg>
@@ -344,9 +361,11 @@ class SEUSSWeb:
         return svg
 
     def generate_legend_svg(self):
+        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="155" height="135" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="240" height="195" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
@@ -372,15 +391,29 @@ class SEUSSWeb:
         legend_svg += """
         <rect x="10" y="75" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
         """
-        legend_svg += """
-        <text x="40" y="85" font-size="12">Average</text>
+        legend_svg += f"""
+        <text x="40" y="85" font-size="12">Average Today ({average_price_today})</text>
         """
 
         legend_svg += """
-        <rect x="10" y="105" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
+        <rect x="10" y="105" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
         """
+        legend_svg += f"""
+        <text x="40" y="115" font-size="12">Average Tomorrow ({average_price_tomorow})</text>
+        """
+
         legend_svg += """
-        <text x="40" y="115" font-size="12">Charging Price Limit</text>
+        <rect x="10" y="135" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
+        """
+        legend_svg += f"""
+        <text x="40" y="145" font-size="12">Charging Price Limit ({self.config.charging_price_limit})</text>
+        """
+
+        legend_svg += """
+        <rect x="10" y="165" width="20" height="4" fill="blue" stroke="#000" stroke-width="1"/>
+        """
+        legend_svg += f"""
+        <text x="40" y="175" font-size="12">Charging Price Hard Cap ({self.config.charging_price_hard_cap})</text>
         """
 
         # Schließe die SVG-Code

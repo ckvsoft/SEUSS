@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -48,6 +48,7 @@ class Conditions:
         self.available_surplus = 0.0
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
+        self.charging_price_hard_cap = Item.convert_to_millicents(self.config.charging_price_hard_cap)
         self.available_operation_modes = ["charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
         self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
@@ -61,32 +62,66 @@ class Conditions:
 
     def info(self):
         self.logger.log_info(f"Current price: {self.items.get_current_price(True)} Cent/kWh")
-        self.logger.log_info(f"Average price: {self.items.get_average_price(True)} Cent/kWh")
+        average_price_today, average_price_tomorrow = self.items.get_average_price_by_date(True)
+        self.logger.log_info(f"Average price Today: {average_price_today} Cent/kWh")
+        if average_price_tomorrow:
+            self.logger.log_info(f"Average price Tomorrow: {average_price_tomorrow} Cent/kWh")
 
         result = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
         if result:
             lowest_prices_count = self.config.number_of_lowest_prices_for_charging
             if isinstance(lowest_prices_count, float):
-                formatted_price = f"{lowest_prices_count * 100}%"
+                formatted_price = f"{int(round(lowest_prices_count * 100, 0))}%"
             else:
                 formatted_price = str(lowest_prices_count)
-            self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
 
-            for item in result:
-                self.logger.log_info(
-                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+            # Trenne die Items in "heute" und "morgen"
+            today_items = [item for item in result if self.items.is_today(item)]
+            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+
+            # Logge die Items für heute
+            if today_items:
+                self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
+                for item in today_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
+
+            # Logge die Items für morgen, falls vorhanden
+            if tomorrow_items:
+                self.logger.log_info(f"Tomorrow's lowest {formatted_price} prices are:")
+                for item in tomorrow_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
 
         result = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
         if result:
             highest_prices_count = self.config.number_of_highest_prices_for_discharging
             if isinstance(highest_prices_count, float):
-                formatted_price = f"{highest_prices_count * 100}%"
+                formatted_price = f"{int(round(highest_prices_count * 100, 0))}%"
             else:
                 formatted_price = str(highest_prices_count)
-            self.logger.log_info(f"Today's highest {formatted_price} prices are:")
-            for item in result:
-                self.logger.log_info(
-                    f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
+
+            # Trenne die Items in "heute" und "morgen"
+            today_items = [item for item in result if self.items.is_today(item)]
+            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+
+            # Logge die Items für heute
+            if today_items:
+                self.logger.log_info(f"Today's highest {formatted_price} prices are:")
+                for item in today_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
+
+            # Logge die Items für morgen, falls vorhanden
+            if tomorrow_items:
+                self.logger.log_info(f"Tomorrow's highest {formatted_price} prices are:")
+                for item in tomorrow_items:
+                    self.logger.log_info(
+                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
+                    )
 
     @staticmethod
     def create_condition(description, condition_function):
@@ -171,6 +206,10 @@ class Conditions:
         available_soc_wh -= min_soc_wh
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
+            # Abbruchbedingung für charging_price_hard_cap hinzufügen
+            "Abort charge condition - Price exceeds hard cap": lambda: (
+                    self.current_price > self.charging_price_hard_cap),
+
             # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
             # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             f"Abort charge condition - Required capacity ({required_capacity / 1000:.2f} kWh) is lower than available SOC ({available_soc_wh / 1000:.2f} kWh)": lambda: (
@@ -254,7 +293,7 @@ class Conditions:
 
             # Calculate the full capacity
             full_capacity = (
-                                        self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
+                                    self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
             battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
 
             # Calculate the current SOC in Wh

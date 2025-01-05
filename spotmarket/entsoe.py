@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,7 @@ from requests.exceptions import ConnectionError
 
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
+from core.statsmanager import StatsManager
 
 
 class EntsoeItem(Item):
@@ -78,13 +79,17 @@ class Entsoe(MarketData):
             return []
 
     def _make_url(self) -> str:
-        start_date_str = self.getdata_start_datetime.strftime('%Y%m%d%H00')
+        start_date = self.getdata_start_datetime  # - timedelta(hours=1)
+        start_date_str = start_date.strftime('%Y%m%d%H00')
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
         url = f"https://web-api.tp.entsoe.eu/api?securityToken={self.api_token}&documentType=A44&in_Domain={self.in_domain}&out_Domain={self.out_domain}&periodStart={start_date_str}&periodEnd={end_date_str}"
+        self.logger.log_debug(f"entsoe url: {url}")
         return url
 
     def _load_data_from_xml(self, xml_data: str):
+        # self.logger.log_debug(f"raw xml: {xml_data}")
+        statsmanager = StatsManager()
         error_code = 0
         error_message = ""
         items = []
@@ -96,41 +101,70 @@ class Entsoe(MarketData):
         in_reason = False
 
         start_datetime = ""
-        pos = 0
+        current_pos = 0
+        last_pos = None  # Letzte verarbeitete Position
+        last_price = None  # Preis der letzten Position
+        period_count = 0  # Zähler für Perioden
 
         for line in lines:
             if "<Period>" in line:
+                if period_count >= 2:  # Maximal zwei Perioden verarbeiten
+                    break
                 capture_period = True
+                valid_period = False  # Zurücksetzen für den neuen Block
+                last_pos = 0  # Zurücksetzen bei neuer Periode
+                last_price = str(statsmanager.get_data('market', 'price'))
             elif "</Period>" in line:
+                if capture_period and valid_period:  # Nur gültige Perioden zählen
+                    # Am Ende der Periode fehlende Positionen auffüllen
+                    if last_pos < 23:
+                        for missing_pos in range(last_pos + 1, 24):
+                            self.logger.log_warning(
+                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                hours=missing_pos)
+                            dt_end = dt_start + timedelta(hours=1)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            items.append(entsoe_item)
+                    period_count += 1  # Zähler inkrementieren
+                    if period_count == 1:
+                        statsmanager.set_status_data('market', 'price', float(last_price))
+                        if not self.use_second_day:
+                            break  # Nach der ersten Periode abbrechen, wenn zweite Periode nicht erlaubt ist
                 capture_period = False
-                valid_period = False
+                valid_period = False  # Periode beendet, zurücksetzen
             elif capture_period and "<timeInterval>" in line:
                 capture_time = True
             elif capture_period and "</timeInterval>" in line:
                 capture_time = False
             elif capture_time and "<start>" in line:
                 start_datetime = re.search(r'<start>(.*?)<\/start>', line).group(1)
-                # start_datetime = TimeUtilities.convert_utc_to_local(start_datetime)
             elif capture_period and "<resolution>PT60M</resolution>" in line:
                 valid_period = True
             elif valid_period and "<position>" in line:
                 position = re.search(r'<position>(.*?)<\/position>', line)
                 if position:
-                    pos = int(position.group(1))
-                    pos -= 1
+                    current_pos = int(position.group(1)) - 1
+                    # Lücken zwischen letzter und aktueller Position auffüllen
+                    if current_pos > last_pos + 1:
+                        for missing_pos in range(last_pos + 1, current_pos):
+                            self.logger.log_warning(
+                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                hours=missing_pos)
+                            dt_end = dt_start + timedelta(hours=1)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            items.append(entsoe_item)
+                    last_pos = current_pos
             elif valid_period and "<price.amount>" in line:
                 price = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
                 if price:
-                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=pos)
-                    # dt_start = start_datetime + timedelta(hours=pos)
+                    current_price = price.group(1)
+                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=current_pos)
                     dt_end = dt_start + timedelta(hours=1)
-                    entsoe_item = EntsoeItem(dt_start, dt_end,
-                                             price.group(1))
+                    entsoe_item = EntsoeItem(dt_start, dt_end, current_price)
                     items.append(entsoe_item)
-                    if pos == 23 and not self.use_second_day:
-                        break
-            elif valid_period and "</Period>" in line:
-                break
+                    last_price = current_price  # Preis der aktuellen Position speichern
 
             elif "<Reason>" in line:
                 in_reason = True
@@ -144,7 +178,7 @@ class Entsoe(MarketData):
 
         if error_code == 999:
             self.logger.log_warning(f"E: Entsoe data retrieval error found in the XML data: {error_message}")
-        elif items is None:
+        elif not items:
             self.logger.log_warning("E: No prices found in the XML data.")
 
         return items

@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -98,7 +98,7 @@ class SolarBatteryCalculator:
             full_battery_capacity_wh = self.calculate_full_capacity() * full_voltage
 
             available_battery_capacity = ((
-                                                      full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
+                                                  full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
 
             self.logger.log_info(
                 f"Current Battery state: {self.solardata.battery_capacity} Ah, maximum: {round(full_battery_capacity_wh, 2)} Wh")

@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -56,7 +56,8 @@ class Config(Singleton):
                 "use_second_day": False,
                 "number_of_lowest_prices_for_charging": 0,
                 "number_of_highest_prices_for_discharging": 0,
-                "charging_price_limit": -999
+                "charging_price_limit": -999,
+                "charging_price_hard_cap": 999
             }
         ],
         "pv_panels": [
@@ -156,6 +157,7 @@ class Config(Singleton):
             self.number_of_lowest_prices_for_charging = 0
             self.number_of_highest_prices_for_discharging = 0
             self.charging_price_limit = -999
+            self.charging_price_hard_cap = float('inf')
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
             self.load_config()

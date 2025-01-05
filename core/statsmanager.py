@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -100,6 +100,21 @@ class StatsManager(Singleton):
             cls.data[group][date_key] = today
             cls.data[group][key] = value
             cls.save_data()
+
+    @classmethod
+    def set_status_data(cls, group, key, value):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+
+        date_key = f"date_{key}"
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        if group not in StatsManager.data:
+            cls.data[group] = {}
+
+        cls.data[group][date_key] = today
+        cls.data[group][key] = value
+        cls.save_data()
 
     @classmethod
     def insert_peek_data(cls, key, value):

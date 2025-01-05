@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -46,6 +46,7 @@ class Solardata:
         self.battery_minimum_soc_limit = 5
         self.battery_current_voltage = None
         self.current_hour_forcast = 0
+        self.current_hour_solar_yield = 0.0
 
     def outside_sun_hours(self):
         current_datetime = datetime.now()
@@ -117,3 +118,6 @@ class Solardata:
 
     def update_current_hour_forcast(self, value):
         self.current_hour_forcast = value
+
+    def update_current_hour_solar_yield(self, value):
+        self.current_hour_solar_yield = value
