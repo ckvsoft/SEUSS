@@ -298,10 +298,7 @@ class SEUSSWeb:
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
-        <line x1="45" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
-        """
-        svg += f"""
-        <text x="20" y="{y_avg_line + 2}" text-anchor="middle" font-size="10" fill="magenta">{average_price}</text>
+        <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
 
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
@@ -364,9 +361,11 @@ class SEUSSWeb:
         return svg
 
     def generate_legend_svg(self):
+        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="180" height="165" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="240" height="195" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
@@ -392,22 +391,29 @@ class SEUSSWeb:
         legend_svg += """
         <rect x="10" y="75" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
         """
-        legend_svg += """
-        <text x="40" y="85" font-size="12">Average</text>
+        legend_svg += f"""
+        <text x="40" y="85" font-size="12">Average Today ({average_price_today})</text>
         """
 
         legend_svg += """
-        <rect x="10" y="105" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
+        <rect x="10" y="105" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
         """
-        legend_svg += """
-        <text x="40" y="115" font-size="12">Charging Price Limit</text>
+        legend_svg += f"""
+        <text x="40" y="115" font-size="12">Average Tomorrow ({average_price_tomorow})</text>
         """
 
         legend_svg += """
-        <rect x="10" y="135" width="20" height="4" fill="blue" stroke="#000" stroke-width="1"/>
+        <rect x="10" y="135" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
         """
+        legend_svg += f"""
+        <text x="40" y="145" font-size="12">Charging Price Limit ({self.config.charging_price_limit})</text>
+        """
+
         legend_svg += """
-        <text x="40" y="145" font-size="12">Charging Price Hard Cap</text>
+        <rect x="10" y="165" width="20" height="4" fill="blue" stroke="#000" stroke-width="1"/>
+        """
+        legend_svg += f"""
+        <text x="40" y="175" font-size="12">Charging Price Hard Cap ({self.config.charging_price_hard_cap})</text>
         """
 
         # Schließe die SVG-Code
