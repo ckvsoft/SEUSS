@@ -368,7 +368,7 @@ class Itemlist:
 
                 if not failback_market_info or failback_market_info == {}:
                     self.logger.log_warning(
-                        "Failback-Markt-Informationen sind leer oder ein leeres Dictionary. Abbruch.")
+                        "Failback market information is empty or an empty dictionary. Aborting.")
                 else:
                     self.logger.log_info(f"Price update is done with {self.failback_market_name}...")
                     failback_loader = GenericLoaderFactory.create_loader("spotmarket", failback_market_info)
