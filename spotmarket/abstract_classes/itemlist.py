@@ -363,7 +363,7 @@ class Itemlist:
             updated_items = Itemlist.create_item_list(loader.load_data(self.config.use_second_day))
 
             if not updated_items.get_current_list():
-                self.logger.log_warning(f"Update mit {self.primary_market_name} nicht möglich")
+                self.logger.log_warning(f"Update with {self.primary_market_name} not possible")
                 failback_market_info = self.config.get_market_info(self.failback_market_name)
 
                 if not failback_market_info or failback_market_info == {}:
