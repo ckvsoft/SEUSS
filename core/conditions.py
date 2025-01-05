@@ -236,6 +236,7 @@ class Conditions:
             return
 
         conditions_to_evaluate = self.conditions_by_operation_mode.get(operation_mode, {})
+        condition_matched = False  # Variable, um den Status zu verfolgen
 
         for condition_key, condition_function in conditions_to_evaluate.items():
             result = False
@@ -250,8 +251,14 @@ class Conditions:
             if result and not condition_result.condition:
                 condition_result.execute = True
                 condition_result.condition = condition_key
+                condition_matched = True  # Bedingung erfolgreich ausgewertet
                 if self.config.log_level != "DEBUG":
                     break
+
+        # Überspringe die Abbruchbedingungen, wenn keine Bedingung erfolgreich war
+        if not condition_matched:
+            self.logger.log_debug("No conditions matched. Skipping abort conditions.")
+            return
 
         # Execute abort conditions (set execute to False)
         abort_conditions = self.abort_conditions_by_operation_mode.get(operation_mode + "_abort", {})
