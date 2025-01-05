@@ -98,7 +98,7 @@ class SolarBatteryCalculator:
             full_battery_capacity_wh = self.calculate_full_capacity() * full_voltage
 
             available_battery_capacity = ((
-                                                      full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
+                                                  full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
 
             self.logger.log_info(
                 f"Current Battery state: {self.solardata.battery_capacity} Ah, maximum: {round(full_battery_capacity_wh, 2)} Wh")

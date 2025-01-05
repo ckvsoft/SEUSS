@@ -37,6 +37,7 @@ from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
 from core.statsmanager import StatsManager
 
+
 class EntsoeItem(Item):
     def __init__(self, start_datetime, end_datetime, price):
         start_time = start_datetime.replace(tzinfo=timezone.utc)  # .astimezone(timezone.utc)
@@ -78,7 +79,7 @@ class Entsoe(MarketData):
             return []
 
     def _make_url(self) -> str:
-        start_date = self.getdata_start_datetime # - timedelta(hours=1)
+        start_date = self.getdata_start_datetime  # - timedelta(hours=1)
         start_date_str = start_date.strftime('%Y%m%d%H00')
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
@@ -118,8 +119,10 @@ class Entsoe(MarketData):
                     # Am Ende der Periode fehlende Positionen auffüllen
                     if last_pos < 23:
                         for missing_pos in range(last_pos + 1, 24):
-                            self.logger.log_warning(f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
-                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
+                            self.logger.log_warning(
+                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
                             items.append(entsoe_item)
@@ -145,8 +148,10 @@ class Entsoe(MarketData):
                     # Lücken zwischen letzter und aktueller Position auffüllen
                     if current_pos > last_pos + 1:
                         for missing_pos in range(last_pos + 1, current_pos):
-                            self.logger.log_warning(f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
-                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=missing_pos)
+                            self.logger.log_warning(
+                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
                             items.append(entsoe_item)

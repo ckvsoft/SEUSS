@@ -31,6 +31,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 
+
 class Itemlist:
     def __init__(self, items=None):
         self.item_list = items if items is not None else []
@@ -75,14 +76,6 @@ class Itemlist:
 
         return len(valid_items)
 
-    #    def get_valid_items_count_until_midnight(self, price_list):
-    #        now = datetime.now(timezone.utc)
-    #        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
-
-    #        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
-
-    #        return len(valid_items)
-
     def is_valid_item(self, item, now, midnight):
         end_datetime = item.get_end_datetime()
 
@@ -122,10 +115,6 @@ class Itemlist:
 
         # Durchlaufe alle Items und teile sie in heute und morgen basierend auf der Stunde
         for item in sorted_items:
-            #            start_hour = int(item.get_start_datetime(localtime=True).split(' ')[1].split(':')[0])
-            #            price = item.get_price(convert=True)
-            #            data[start_hour] = float(price)
-
             start_datetime = item.get_start_datetime(localtime=True)
             day = int(start_datetime.split(' ')[0].split('-')[2])  # Extrahiere tag
             start_hour = int(start_datetime.split(' ')[1].split(':')[0])  # Extrahiere die Stunde
@@ -145,18 +134,6 @@ class Itemlist:
 
         return today_data, today_hours, tomorrow_data, tomorrow_hours
 
-    #    @staticmethod
-    #    def get_price_hour_lists(item_list):
-    #        sorted_items = sorted(item_list, key=lambda x: x.get_start_datetime())
-    #        data = {}
-    #        for item in sorted_items:
-    #            start_hour = int(item.get_start_datetime(localtime=True).split(' ')[1].split(':')[0])
-    #            price = item.get_price(convert=True)
-    #            data[start_hour] = float(price)
-
-    #        hours_list = list(data.keys())
-    #        return data, hours_list
-
     def get_current_price(self, convert=False):
         now = datetime.utcnow().replace(tzinfo=timezone.utc)
 
@@ -171,13 +148,13 @@ class Itemlist:
         self.logger.log_error("get_current_price -> Item not found.")
         return None
 
-    def get_average_price(self, convert=False):
-        total_prices = sum(float(item.get_price(convert)) for item in self.item_list)
-        count = len(self.item_list)
-        if count == 0:
-            return 0.0
-
-        return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
+#    def get_average_price(self, convert=False):
+#        total_prices = sum(float(item.get_price(convert)) for item in self.item_list)
+#        count = len(self.item_list)
+#        if count == 0:
+#            return 0.0
+#
+#        return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
 
     def get_average_price_by_date(self, convert=False):
         now = datetime.utcnow().replace(tzinfo=timezone.utc)
@@ -207,28 +184,6 @@ class Itemlist:
         average_tomorrow = calculate_average(tomorrow_items)
 
         return average_today, average_tomorrow
-
-#    def get_lowest_prices(self, count, item_list=None):
-#        if item_list is None: item_list = self.item_list
-#        if isinstance(count, int):
-#            sorted_items = sorted(item_list, key=lambda x: x.get_price(False))
-#            sorted_items = sorted_items[:count]
-#            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
-#
-#            return sorted_items
-#
-#        return self._get_prices_relative_to_average(count, item_list)
-
-#    def get_highest_prices(self, count, item_list=None):
-#        if item_list is None: item_list = self.item_list
-#        if isinstance(count, int):
-#            sorted_items = sorted(item_list, key=lambda x: x.get_price(False), reverse=True)
-#            sorted_items = sorted_items[:count]
-#            sorted_items = sorted(sorted_items, key=lambda x: x.get_start_datetime())
-#
-#            return sorted_items
-#
-#        return self._get_prices_relative_to_average(count, item_list)
 
     def get_lowest_prices(self, count, item_list=None):
         if item_list is None:
@@ -300,11 +255,11 @@ class Itemlist:
             percentage = 1.0
 
         # Hilfsfunktion zur Berechnung des Schwellenwerts
-        def calculate_threshold(average_price, percentage):
-            if percentage >= 1.0:
-                return average_price * (1 + (percentage - 1))
+        def calculate_threshold(average_price, _percentage):
+            if _percentage >= 1.0:
+                return average_price * (1 + (_percentage - 1))
             else:
-                return average_price * percentage
+                return average_price * _percentage
 
         relevant_items = []
 
@@ -347,42 +302,42 @@ class Itemlist:
         return relevant_items
 
     #    def _get_prices_relative_to_average(self, percentage, item_list):
-#        average_price = self.get_average_price()
-#        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
-#
-#       if not isinstance(percentage, float):
-#            percentage = 1.0
-#
-#        if percentage >= 1.0:
-#            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
-#            threshold_price = average_price * (1 + (percentage - 1))
-#            self.logger.log_debug(f"Threshold Price (Over Average): {threshold_price}")  # Debug-Ausgabe
-#            relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
-#        else:
-#            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
-#            threshold_price = average_price * percentage
-#            self.logger.log_debug(f"Threshold Price (Under Average): {threshold_price}")  # Debug-Ausgabe
-#            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
-#
-#        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")  # Debug-Ausgabe
-#        return relevant_items
+    #        average_price = self.get_average_price()
+    #        self.logger.log_debug(f"Average Price: {average_price}")  # Debug-Ausgabe
+    #
+    #       if not isinstance(percentage, float):
+    #            percentage = 1.0
+    #
+    #        if percentage >= 1.0:
+    #            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
+    #            threshold_price = average_price * (1 + (percentage - 1))
+    #            self.logger.log_debug(f"Threshold Price (Over Average): {threshold_price}")  # Debug-Ausgabe
+    #            relevant_items = [item for item in item_list if item.get_price(False) > threshold_price]
+    #        else:
+    #            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
+    #            threshold_price = average_price * percentage
+    #            self.logger.log_debug(f"Threshold Price (Under Average): {threshold_price}")  # Debug-Ausgabe
+    #            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
+    #
+    #        self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")  # Debug-Ausgabe
+    #        return relevant_items
 
     #    def _get_prices_relative_to_average(self, percentage, item_list):
-#        average_price = self.get_average_price()
+    #        average_price = self.get_average_price()
 
-#        if not isinstance(percentage, float):
-#            percentage = 1.0
+    #        if not isinstance(percentage, float):
+    #            percentage = 1.0
 
-#        if percentage >= 1.0:
-#            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
-#            threshold_price = average_price * (1 + (percentage - 1))
-#            relevant_items = [item for item in item_list if item.get_price(False) >= threshold_price]
-#        else:
-#            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
-#            threshold_price = average_price * percentage
-#            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
+    #        if percentage >= 1.0:
+    #            # Prozentwert größer als 1 bedeutet, dass es über dem Durchschnitt liegt
+    #            threshold_price = average_price * (1 + (percentage - 1))
+    #            relevant_items = [item for item in item_list if item.get_price(False) >= threshold_price]
+    #        else:
+    #            # Prozentwert kleiner als 1 bedeutet, dass es unter dem Durchschnitt liegt
+    #            threshold_price = average_price * percentage
+    #            relevant_items = [item for item in item_list if item.get_price(False) < threshold_price]
 
-#        return relevant_items
+    #        return relevant_items
 
     def remove_expired_items(self):
         self.item_list = [item for item in self.item_list if not item.is_expired()]

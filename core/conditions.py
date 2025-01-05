@@ -62,7 +62,10 @@ class Conditions:
 
     def info(self):
         self.logger.log_info(f"Current price: {self.items.get_current_price(True)} Cent/kWh")
-        self.logger.log_info(f"Average price: {self.items.get_average_price(True)} Cent/kWh")
+        average_price_today, average_price_tomorrow = self.items.get_average_price_by_date(True)
+        self.logger.log_info(f"Average price Today: {average_price_today} Cent/kWh")
+        if average_price_tomorrow:
+            self.logger.log_info(f"Average price Tomorrow: {average_price_tomorrow} Cent/kWh")
 
         result = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
         if result:
@@ -205,7 +208,7 @@ class Conditions:
         charging_abort_conditions = {
             # Abbruchbedingung für charging_price_hard_cap hinzufügen
             "Abort charge condition - Price exceeds hard cap": lambda: (
-                        self.current_price > self.charging_price_hard_cap),
+                    self.current_price > self.charging_price_hard_cap),
 
             # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
             # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
@@ -290,7 +293,7 @@ class Conditions:
 
             # Calculate the full capacity
             full_capacity = (
-                                        self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
+                                    self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
             battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
 
             # Calculate the current SOC in Wh

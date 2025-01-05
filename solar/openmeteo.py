@@ -175,8 +175,10 @@ class OpenMeteo:
 
             self.logger.log_debug(f"Solar adjustment_factor: {adjustment_factor}")
             self.logger.log_debug(f"Solar raw current_hour data: {total_watts_current_hour} Wh")
-            self.logger.log_debug(f"Solar raw current_day data: {(total_watt_hours_current_day * efficiency_inverter)} Wh")
-            self.logger.log_debug(f"Solar raw tomorrow_day data: {(total_watt_hours_tomorrow_day * efficiency_inverter)} Wh")
+            self.logger.log_debug(
+                f"Solar raw current_day data: {(total_watt_hours_current_day * efficiency_inverter)} Wh")
+            self.logger.log_debug(
+                f"Solar raw tomorrow_day data: {(total_watt_hours_tomorrow_day * efficiency_inverter)} Wh")
 
             total_watts_current_hour = (total_watts_current_hour * efficiency_inverter) * adjustment_factor
             solardata.update_total_current_hour(round(total_watts_current_hour, 2))
