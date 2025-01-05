@@ -71,7 +71,7 @@ class Conditions:
         if result:
             lowest_prices_count = self.config.number_of_lowest_prices_for_charging
             if isinstance(lowest_prices_count, float):
-                formatted_price = f"{lowest_prices_count * 100}%"
+                formatted_price = f"{round(lowest_prices_count * 100, 0)}%"
             else:
                 formatted_price = str(lowest_prices_count)
 
@@ -99,7 +99,7 @@ class Conditions:
         if result:
             highest_prices_count = self.config.number_of_highest_prices_for_discharging
             if isinstance(highest_prices_count, float):
-                formatted_price = f"{highest_prices_count * 100}%"
+                formatted_price = f"{round(highest_prices_count * 100, 0)}%"
             else:
                 formatted_price = str(highest_prices_count)
 
