@@ -79,3 +79,7 @@ class ESSUnit:
 
     def get_solar_energy(self):
         pass
+
+    def get_converter_efficiency(self):
+        pass
+

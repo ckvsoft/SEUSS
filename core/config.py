@@ -158,6 +158,7 @@ class Config(Singleton):
             self.number_of_highest_prices_for_discharging = 0
             self.charging_price_limit = -999
             self.charging_price_hard_cap = float('inf')
+            self.converter_efficiency = 1.0
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
             self.load_config()

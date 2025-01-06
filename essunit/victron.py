@@ -51,6 +51,8 @@ class Victron(ESSUnit):
         self.inverters = PvInverterResults()
         self.gridmeters = GridMetersResults()
 
+        self.config.converter_efficiency = self.get_converter_efficiency()
+
         current_directory = os.path.dirname(os.path.realpath(sys.argv[0]))
         certificate_path = os.path.join(current_directory, 'certificate')
         self.certificate = os.path.join(certificate_path, "venus-ca.crt")
@@ -274,3 +276,5 @@ class Victron(ESSUnit):
 #                self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(self.subsribers.get('Schedule', 'Duration'))}")
 #                self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
 #                self.logger.log_info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
+    def get_converter_efficiency(self):
+        return 0.87

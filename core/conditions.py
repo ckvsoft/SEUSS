@@ -30,7 +30,7 @@ from core.statsmanager import StatsManager
 from core.log import CustomLogger
 from core.timeutilities import TimeUtilities
 from spotmarket.abstract_classes.item import Item
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class ConditionResult:
@@ -183,13 +183,13 @@ class Conditions:
         # }
 
         future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
-        current_soc_Wh, min_soc_Wh, required_capacity = self._calculate_available_surplus(future_high_prices)
+        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(future_high_prices)
 
         additional_conditions = {
-            f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh surplus (SOC: {self.solardata.soc or 0:.2f}% ({current_soc_Wh / 1000:.2f} kWh), Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity / 1000:.2f} kWh)": lambda: self._calculate_discharge_conditions(
+            f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh surplus (SOC: {self.solardata.soc or 0:.2f}% ({current_soc_wh / 1000:.2f} kWh), Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity / 1000:.2f} kWh)": lambda: self._calculate_discharge_conditions(
                 future_high_prices)
 
-            #            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}% [{current_soc_Wh:.2f} Wh]) and forecasted high prices ({len(future_high_prices)} [{required_capacity:.2f} Wh]). Available surplus: {self.available_surplus:.2f} Wh": lambda: self._calculate_discharge_conditions(
+            #            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}% [{current_soc_wh:.2f} Wh]) and forecasted high prices ({len(future_high_prices)} [{required_capacity:.2f} Wh]). Available surplus: {self.available_surplus:.2f} Wh": lambda: self._calculate_discharge_conditions(
             #                future_high_prices)
         }
         self.conditions_by_operation_mode["discharging"].update(additional_conditions)
@@ -204,18 +204,22 @@ class Conditions:
         required_capacity = self._calculate_required_capacity_for_period()
         available_soc_wh, _, min_soc_wh = self._calculate_current_soc_wh()
         available_soc_wh -= min_soc_wh
+        additional_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
+
         # Abbruchbedingungen für das Laden
         charging_abort_conditions = {
-            # Abbruchbedingung für charging_price_hard_cap hinzufügen
             "Abort charge condition - Price exceeds hard cap": lambda: (
-                    self.current_price > self.charging_price_hard_cap),
+                    self.current_price > self.charging_price_hard_cap
+            ),
 
-            # "Abort charge condition - Soc is greater than the required charging Soc": lambda: (self.solardata.soc is not None and self.solardata.scheduler_soc is not None and self.solardata.soc > self.solardata.scheduler_soc),
-            # "Abort charge condition - Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc if self.config.config_data.get('use_solar_forecast_to_abort') else False,
             f"Abort charge condition - Required capacity ({required_capacity / 1000:.2f} kWh) is lower than available SOC ({available_soc_wh / 1000:.2f} kWh)": lambda: (
                     required_capacity < available_soc_wh
+                    and any(
+                item.price < self.current_price
+                and item.starttime > datetime.utcnow().replace(tzinfo=timezone.utc)
+                for item in additional_prices
+            )
             ) if self.config.config_data.get('use_solar_forecast_to_abort') else False,
-            # Weitere Abbruchbedingungen hinzufügen, falls vorhanden
         }
 
         discharging_abort_conditions = {}
@@ -298,10 +302,12 @@ class Conditions:
             if self.solardata.battery_minimum_soc_limit is None or self.solardata.battery_minimum_soc_limit < 0:
                 raise ValueError("Minimum SOC limit is missing or invalid.")
 
+            efficiency = self.config.converter_efficiency
+
             # Calculate the full capacity
             full_capacity = (
-                                    self.solardata.battery_capacity / self.solardata.soc) * 100 if self.solardata.soc > 0 else 0.0
-            battery_capacity_wh = full_capacity * 54.20  # Battery capacity in Wh
+                                    self.solardata.battery_capacity / self.solardata.soc) * 100 * efficiency if self.solardata.soc > 0 else 0.0
+            battery_capacity_wh = full_capacity * 54.20 * efficiency # Battery capacity in Wh
 
             # Calculate the current SOC in Wh
             current_soc_wh = ((self.solardata.soc or 0) / 100) * battery_capacity_wh
