@@ -224,9 +224,24 @@ class Conditions:
 
         discharging_abort_conditions = {}
         if self.solardata.soc is not None and self.solardata.need_soc is not None:
+            additional_prices = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
+            current_price = self.items.get_current_price()
+            now = TimeUtilities.get_now()
+            tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Filtere die Items, um nur solche zu bekommen, die heute starten (>= now und < morgen)
+            valid_items = [
+                item for item in additional_prices
+                if now <= item.get_start_datetime() < tomorrow_start
+            ]
+
+            # Wenn current_price nicht in der Liste der höchsten Preise ist, wird die Bedingung überprüft
             discharging_abort_conditions[
-                "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc if self.config.config_data.get(
-                'use_solar_forecast_to_abort') else False
+                "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: (
+                    self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc
+                    and all(current_price != item.get_price() for item in valid_items)
+            ) if self.config.config_data.get('use_solar_forecast_to_abort') else False
+
             discharging_abort_conditions[
                 "Abort discharge condition - Soc is lower or equal the minimum Soc Limit"] = lambda: self.solardata.soc <= self.solardata.battery_minimum_soc_limit
 
