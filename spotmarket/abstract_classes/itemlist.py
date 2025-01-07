@@ -232,6 +232,26 @@ class Itemlist:
 
         return self._get_prices_relative_to_average(count, item_list)
 
+    def get_future_high_prices_until_next_low(self, additional_prices, additional_prices_low = None):
+        # Finde die nächste Startzeit eines niedrigen Preises, der noch nicht abgelaufen ist
+        next_low_start = None
+
+        for low_item in self.item_list:
+            if not low_item.is_expired(True) and (next_low_start is None or low_item.get_start_datetime() < next_low_start):
+                next_low_start = low_item.get_start_datetime()
+
+        # Wenn kein zukünftiger niedriger Preis gefunden wurde, alle hohen Preise verwenden
+        if next_low_start is None:
+            return [item for item in additional_prices if not item.is_expired(True)]
+
+        # Sammle alle hohen Preise vor dem nächsten niedrigen Preis
+        future_high_prices = [
+            item for item in additional_prices
+            if not item.is_expired(True) and item.get_start_datetime() < next_low_start
+        ]
+
+        return future_high_prices
+
     # Hilfsmethode für heute
 #    def is_today(self, item):
 #        # Prüft, ob das Item heute ist

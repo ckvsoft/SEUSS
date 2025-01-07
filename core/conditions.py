@@ -183,7 +183,9 @@ class Conditions:
         #     # Füge weitere Bedingungen hier hinzu
         # }
 
-        future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
+#        future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
+#        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(future_high_prices)
+        future_high_prices = self.items.get_future_high_prices_until_next_low(additional_prices)
         current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(future_high_prices)
 
         additional_conditions = {
