@@ -477,6 +477,8 @@ class Conditions:
             minute = now.minute
             if minute == 0:
                 minute = 60  # Wenn genau zu Beginn der Stunde, setze Minute auf 60
+                statsmanager.set_status_data('Energy', "initial_charge_state_wh", self.essunit.get_battery_current_wh())
+
             current_loaded_wh = (self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minute
             hourly_loaded_wh = current_loaded_wh * 60
             self.logger.log_debug(f"Current loaded Wh per minute: {current_loaded_wh:.2f} Wh")
