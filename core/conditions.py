@@ -481,8 +481,9 @@ class Conditions:
             self.logger.log_debug(f"Projected loaded Wh per hour: {hourly_loaded_wh:.2f} Wh")
 
         # Schritt 3: Berechne, wie viel Kapazität benötigt wird
-        installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2 * self.essunit.get_converter_efficiency()
-        required_capacity_wh = max(0, installed_capacity_wh - self.essunit.get_battery_current_wh())
+        max_soc = self.essunit.get_scheduler_soc() / 100
+        installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
+        required_capacity_wh = max(0, (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh())
         self.logger.log_debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
 
         # Schritt 4: Prüfe auf aufeinanderfolgende Stunden und berechne mögliche Kapazität
