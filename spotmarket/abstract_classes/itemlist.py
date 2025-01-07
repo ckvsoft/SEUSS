@@ -30,6 +30,7 @@ from core.log import CustomLogger
 from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
+from core.timeutilities import TimeUtilities
 
 class Itemlist:
     def __init__(self, items=None):
@@ -240,14 +241,14 @@ class Itemlist:
 
     def is_today_or_tomorrow(self, item):
         # Berechne das Start- und Enddatum für heute
-        today_start = datetime.utcnow().replace(tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = TimeUtilities.get_now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start.replace(hour=23, minute=59, second=59)
 
         # Berechne das Startdatum für morgen
         tomorrow_start = today_start + timedelta(days=1)
 
         # Holen des Startdatums des Items
-        item_start = item.get_start_datetime()
+        item_start = TimeUtilities.convert_utc_to_local(item.get_start_datetime(), False)
 
         # Prüfe, ob das Item heute, morgen oder in der Zukunft liegt
         if today_start <= item_start <= today_end:
