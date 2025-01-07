@@ -469,13 +469,13 @@ class Conditions:
 
         # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
         statsmanager = StatsManager()
-        energy_loaded = statsmanager.get_data('Energy', "loaded_wh") or 0.0
+        initial_charge_state_wh = statsmanager.get_data('Energy', "initial_charge_state_wh") or 0.0  # Umbenannt
         hourly_loaded_wh = 0.0
-        if energy_loaded > 0.0:
+        if initial_charge_state_wh > 0.0:
             minute = now.minute
             if minute == 0:
                 minute = 60  # Wenn genau zu Beginn der Stunde, setze Minute auf 60
-            current_loaded_wh = (self.essunit.get_battery_current_wh() - energy_loaded) / minute
+            current_loaded_wh = (self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minute
             hourly_loaded_wh = current_loaded_wh * 60
             self.logger.log_debug(f"Current loaded Wh per minute: {current_loaded_wh:.2f} Wh")
             self.logger.log_debug(f"Projected loaded Wh per hour: {hourly_loaded_wh:.2f} Wh")
@@ -517,6 +517,3 @@ class Conditions:
 
         self.logger.log_debug("Do not abort charging: Not enough consecutive hours.")
         return False
-
-
-
