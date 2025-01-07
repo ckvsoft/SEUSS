@@ -77,8 +77,8 @@ class Conditions:
                 formatted_price = str(lowest_prices_count)
 
             # Trenne die Items in "heute" und "morgen"
-            today_items = [item for item in result if self.items.is_today(item)]
-            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+            today_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'today']
+            tomorrow_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'tomorrow']
 
             # Logge die Items für heute
             if today_items:
@@ -105,8 +105,8 @@ class Conditions:
                 formatted_price = str(highest_prices_count)
 
             # Trenne die Items in "heute" und "morgen"
-            today_items = [item for item in result if self.items.is_today(item)]
-            tomorrow_items = [item for item in result if not self.items.is_today(item)]
+            today_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'today']
+            tomorrow_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'tomorrow']
 
             # Logge die Items für heute
             if today_items:

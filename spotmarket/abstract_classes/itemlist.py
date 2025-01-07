@@ -31,7 +31,6 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 
-
 class Itemlist:
     def __init__(self, items=None):
         self.item_list = items if items is not None else []
@@ -157,22 +156,13 @@ class Itemlist:
 #        return round(total_prices / len(self.item_list), 4) if self.item_list else 0.0
 
     def get_average_price_by_date(self, convert=False):
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
-        tomorrow_start = today_start + timedelta(days=1)
-        tomorrow_end = tomorrow_start + timedelta(days=1) - timedelta(seconds=1)
-
-        # Filter Items
-        today_items = [
-            item for item in self.item_list
-            if (item.get_start_datetime() <= today_end and (item.get_end_datetime() or today_end) >= today_start)
-        ]
-        tomorrow_items = [
-            item for item in self.item_list
-            if
-            (item.get_start_datetime() <= tomorrow_end and (item.get_end_datetime() or tomorrow_end) >= tomorrow_start)
-        ]
+        today_items, tomorrow_items = [], []
+        for item in self.item_list:
+            result = self.is_today_or_tomorrow(item)
+            if result is 'today':
+                today_items.append(item)
+            elif result is 'tomorrow':
+                tomorrow_items.append(item)
 
         def calculate_average(items):
             if not items:
@@ -192,9 +182,10 @@ class Itemlist:
         if isinstance(count, int):
             today_items, tomorrow_items = [], []
             for item in item_list:
-                if self.is_today(item):
+                result = self.is_today_or_tomorrow(item)
+                if result == 'today':
                     today_items.append(item)
-                else:
+                elif result == 'tomorrow':
                     tomorrow_items.append(item)
 
             # Die Anzahl von 'count' Items für heute
@@ -219,9 +210,10 @@ class Itemlist:
         if isinstance(count, int):
             today_items, tomorrow_items = [], []
             for item in item_list:
-                if self.is_today(item):
+                result = self.is_today_or_tomorrow(item)
+                if result == 'today':
                     today_items.append(item)
-                else:
+                elif result == 'tomorrow':
                     tomorrow_items.append(item)
 
             # Die Anzahl von 'count' Items für heute (höchste Preise)
@@ -240,11 +232,30 @@ class Itemlist:
         return self._get_prices_relative_to_average(count, item_list)
 
     # Hilfsmethode für heute
-    def is_today(self, item):
-        # Prüft, ob das Item heute ist
+#    def is_today(self, item):
+#        # Prüft, ob das Item heute ist
+#        today_start = TimeUtilities.get_now().replace(hour=0, minute=0, second=0, microsecond=0)
+#        today_end = today_start.replace(hour=23, minute=59, second=59)
+#        return item.get_start_datetime() < today_end
+
+    def is_today_or_tomorrow(self, item):
+        # Berechne das Start- und Enddatum für heute
         today_start = datetime.utcnow().replace(tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start.replace(hour=23, minute=59, second=59, microsecond=999999)
-        return item.get_start_datetime() < today_end
+        today_end = today_start.replace(hour=23, minute=59, second=59)
+
+        # Berechne das Startdatum für morgen
+        tomorrow_start = today_start + timedelta(days=1)
+
+        # Holen des Startdatums des Items
+        item_start = item.get_start_datetime()
+
+        # Prüfe, ob das Item heute, morgen oder in der Zukunft liegt
+        if today_start <= item_start <= today_end:
+            return 'today'  # Das Item ist heute
+        elif tomorrow_start <= item_start:
+            return 'tomorrow'  # Das Item ist morgen
+        else:
+            return None  # In allen anderen Fällen (z.B. gestern oder ungültig)
 
     def _get_prices_relative_to_average(self, percentage, item_list):
         # Durchschnittspreis für heute und morgen abrufen
@@ -263,38 +274,21 @@ class Itemlist:
 
         relevant_items = []
 
-        # Aktuelles Datum berechnen (mit UTC-Zeitzone)
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1) - timedelta(seconds=1)
-        tomorrow_start = today_start + timedelta(days=1)
-        tomorrow_end = tomorrow_start + timedelta(days=1) - timedelta(seconds=1)
-
         # Über alle Items iterieren
         for item in item_list:
-            start = item.get_start_datetime()  # Erwartet UTC
-            end = item.get_end_datetime() or (start + timedelta(days=1))
-
-            today_start = today_start.replace(tzinfo=timezone.utc)
-            today_end = today_end.replace(tzinfo=timezone.utc)
-
-            # Items für heute prüfen
-            if start <= today_end and end >= today_start:
+            result = self.is_today_or_tomorrow(item)
+            if result == 'today':
                 threshold_price = calculate_threshold(average_today, percentage)
-                item_price = float(item.get_price(False))
-                # Wenn der Preis dem Schwellenwert entspricht, hinzufügen
-                if (percentage >= 1.0 and item_price > threshold_price) or \
-                        (percentage < 1.0 and item_price < threshold_price):
-                    relevant_items.append(item)
-
-            # Items für morgen prüfen
-            elif start <= tomorrow_end and end >= tomorrow_start:
+            elif result == 'tomorrow':
                 threshold_price = calculate_threshold(average_tomorrow, percentage)
-                item_price = float(item.get_price(False))
-                # Wenn der Preis dem Schwellenwert entspricht, hinzufügen
-                if (percentage >= 1.0 and item_price > threshold_price) or \
-                        (percentage < 1.0 and item_price < threshold_price):
-                    relevant_items.append(item)
+            else:
+                continue  # Wenn das Item weder heute noch morgen ist, überspringen
+
+            item_price = float(item.get_price(False))
+            # Wenn der Preis dem Schwellenwert entspricht, hinzufügen
+            if (percentage >= 1.0 and item_price > threshold_price) or \
+                    (percentage < 1.0 and item_price < threshold_price):
+                relevant_items.append(item)
 
         # Debug-Ausgabe für relevante Items
         self.logger.log_debug(f"Relevant Items: {len(relevant_items)}")
