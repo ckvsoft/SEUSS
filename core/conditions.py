@@ -243,7 +243,7 @@ class Conditions:
             # Wenn current_price nicht in der Liste der höchsten Preise ist, wird die Bedingung überprüft
             discharging_abort_conditions[
                 "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: (
-                    self.solardata.outside_sun_hours() and self.solardata.soc < self.solardata.need_soc
+                    self.solardata.outside_sun_hours() and self.solardata.soc< self.solardata.need_soc
                     and all(current_price != item.get_price() for item in valid_items)
             ) if self.config.config_data.get('use_solar_forecast_to_abort') else False
 

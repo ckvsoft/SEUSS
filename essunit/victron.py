@@ -105,8 +105,10 @@ class Victron(ESSUnit):
     def get_battery_current_wh(self):
         soc = self.get_soc()
         full_capacity = (self.get_battery_capacity() / soc) * 100 * self.get_converter_efficiency() if soc > 0 else 0.0
-        battery_capacity_wh = full_capacity * 54.20 * self.get_converter_efficiency()
-        return ((soc or 0) / 100) * battery_capacity_wh
+        battery_capacity_wh = full_capacity * 55.20 * self.get_converter_efficiency()
+        battery_current_wh = ((soc or 0) / 100) * battery_capacity_wh
+        self.logger.log_debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
+        return battery_current_wh
 
     def get_battery_minimum_soc_limit(self):
         minimumsoclimit = self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))
