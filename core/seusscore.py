@@ -260,6 +260,7 @@ class SEUSS:
             essunit.set_discharge("on")
         elif condition_discharging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_discharging_result.condition}, discharging is turned off.")
+            essunit.set_discharge("off")
         elif essunit is not None:
             self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
