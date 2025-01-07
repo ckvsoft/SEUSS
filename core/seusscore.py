@@ -227,7 +227,7 @@ class SEUSS:
         if not only_observation:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
-            conditions_instance = Conditions(self.items, self.solardata)
+            conditions_instance = Conditions(self.items, self.solardata, essunit)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
@@ -243,12 +243,15 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
+            StatsManager().set_status_data('Energy', "loaded_wh", essunit.get_battery_current_wh())
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
+            StatsManager().set_status_data('Energy', "loaded_wh", 0.0)
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
+            StatsManager().set_status_data('Energy', "loaded_wh", 0.0)
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:

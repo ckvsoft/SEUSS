@@ -56,10 +56,16 @@ class ESSUnit:
     def get_battery_current_voltage(self):
         pass
 
+    def get_battery_current_wh(self):
+        pass
+
     def get_battery_minimum_soc_limit(self):
         pass
 
     def get_battery_capacity(self):
+        pass
+
+    def get_battery_installed_capacity(self):
         pass
 
     def get_soc(self):

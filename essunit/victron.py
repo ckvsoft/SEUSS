@@ -102,6 +102,12 @@ class Victron(ESSUnit):
             currentvoltage = 0.0  # Setze einen Standardwert
             return currentvoltage
 
+    def get_battery_current_wh(self):
+        soc = self.get_soc()
+        full_capacity = (self.get_battery_capacity() / soc) * 100 * self.get_converter_efficiency() if soc > 0 else 0.0
+        battery_capacity_wh = full_capacity * 54.20 * self.get_converter_efficiency()
+        return ((soc or 0) / 100) * battery_capacity_wh
+
     def get_battery_minimum_soc_limit(self):
         minimumsoclimit = self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))
         self.logger.log_debug(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}%")
@@ -111,6 +117,11 @@ class Victron(ESSUnit):
         capacity = self._process_result(self.subsribers.get('Battery', 'Capacity'))
         self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
         return capacity
+
+    def get_battery_installed_capacity(self):
+        installed_capacity = self._process_result(self.subsribers.get('Battery', 'InstalledCapacity'))
+        self.logger.log_debug(f"{self._name} Batterie installed capacity: {installed_capacity} Ah")
+        return installed_capacity
 
     def get_soc(self):
         soc = self._process_result(self.subsribers.get('Battery', 'Soc'))
@@ -257,6 +268,7 @@ class Victron(ESSUnit):
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
+                f"Battery:N/{self.unit_id}/battery/{instance}/InstalledCapacity",
                 f"Firmware:N/{self.unit_id}/platform/0/Firmware/Installed/Version"
             ]
 
@@ -277,4 +289,4 @@ class Victron(ESSUnit):
 #                self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
 #                self.logger.log_info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
     def get_converter_efficiency(self):
-        return 0.87
+        return 0.84
