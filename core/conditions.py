@@ -472,6 +472,7 @@ class Conditions:
         # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
         statsmanager = StatsManager()
         initial_charge_state_wh = statsmanager.get_data('Energy', "initial_charge_state_wh") or 0.0  # Umbenannt
+        self.logger.log_debug(f"Initial charge state wh: {initial_charge_state_wh:.2f} Wh")
         hourly_loaded_wh = 0.0
         if initial_charge_state_wh > 0.0:
             minute = now.minute
