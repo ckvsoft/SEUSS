@@ -236,7 +236,7 @@ class Itemlist:
         # Finde die nächste Startzeit eines niedrigen Preises, der noch nicht abgelaufen ist
         next_low_start = None
 
-        for low_item in self.item_list:
+        for low_item in self.get_lowest_prices(self.config.number_of_lowest_prices_for_charging):
             if not low_item.is_expired(True) and (next_low_start is None or low_item.get_start_datetime() < next_low_start):
                 next_low_start = low_item.get_start_datetime()
 
