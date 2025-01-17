@@ -368,10 +368,12 @@ class Itemlist:
     def perform_update(self, items):
         self.current_market_name = self.primary_market_name
         items.remove_expired_items()
+        backup_items = items
 
-        if not items.get_current_list() or all(
-                item.is_expired() for item in items.get_current_list()) or items.get_current_price() is None or (
-                self.config.use_second_day and len(items.get_current_list()) < 25):
+        if (not items.get_current_list()
+                or items.get_current_price() is None
+                or (self.config.use_second_day and len(items.get_current_list()) < 25)):
+
             self.logger.log_info(f"Price update is done with {self.primary_market_name}...")
             market_info = self.config.get_market_info(self.primary_market_name)
             loader = GenericLoaderFactory.create_loader("spotmarket", market_info)
@@ -392,5 +394,7 @@ class Itemlist:
                     self.current_market_name = self.failback_market_name
 
             items = updated_items
+            if not items.get_current_list() and backup_items.get_current_list():
+                items = backup_items
 
         return items
