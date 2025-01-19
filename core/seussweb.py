@@ -281,27 +281,25 @@ class SEUSSWeb:
         current_time = datetime.now()
         current_hour = current_time.hour
         width = 35
+        factor = 12
 
         svg = f"""
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
-        avg_height = 15
-        average_price = 0.0
+        avg_height = 12
         if tomorrow and average_price_tomorow is not None:
-            avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
-            average_price = average_price_tomorow
+            avg_height = (average_price_tomorow + 1) * factor  # Umrechnung in Höhe (Skalierung)
         elif not tomorrow and average_price_today is not None:
-            avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
-            average_price = average_price_today
+            avg_height = (average_price_today + 1) * factor  # Umrechnung in Höhe (Skalierung)
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
         <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
 
-        charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
+        charge_limit_height = (abs(self.config.charging_price_limit) + 1) * factor
         svg += f"""
         <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
         """
@@ -330,7 +328,7 @@ class SEUSSWeb:
                     color = "red"
 
             # Berechne die Höhe und Ausrichtung des Balkens
-            height = (abs(price) + 1) * 15
+            height = (abs(price) + 1) * factor
             y = 330 - height if price >= 0 else 330
 
             # Füge Balken hinzu
@@ -343,12 +341,24 @@ class SEUSSWeb:
             <text x="{hour * width + 15}" y="345" text-anchor="middle" font-size="10">{hour}</text>
             """
 
-            # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
-            svg += f"""
-            <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
-            """
+            # Überprüfen, ob der Balken höher als der Diagrammrahmen ist (330 Pixel)
+            if height > 330:
+                # Preis wird innerhalb des Balkens angezeigt (Kontrastfarbe)
+                price_color = "white" if (color != "gray" and color != "gainsboro") else "black"  # Kontrastfarbe wählen
+                svg += f"""
+                <text x="{hour * width + 15}" y="15" text-anchor="middle" font-size="10" fill="{price_color}">{price}</text>
+                """
+            else:
+                # Standardposition für den Preis oberhalb des Balkens
+                svg += f"""
+                <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
+                """
+#            # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
+#            svg += f"""
+#            <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
+#            """
 
-        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * 15
+        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * factor
         svg += f"""
         <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
         """
