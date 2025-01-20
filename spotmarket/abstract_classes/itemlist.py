@@ -82,6 +82,14 @@ class Itemlist:
         if end_datetime is None:
             return False
 
+        try:
+            item_price = float(item.get_price())
+            if item_price > self.config.charging_price_hard_cap:
+                return False
+        except (TypeError, ValueError):
+            self.logger.log_error("is_valid_item: item_price > float(self.config.charging_price_hard_cap).")
+            return False
+
         return now < end_datetime.replace(tzinfo=timezone.utc) < midnight
 
     def get_valid_items_count_until_next_midnight(self, price_list):
