@@ -165,18 +165,23 @@ class SEUSS:
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
+        total_forward_hourly = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
             productname = gridmeters.get_value(key_outer, 'ProductName')
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
+            total_forward_hourly += forward_hourly
             self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
             self.logger.log_info(
                 f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+
+        statsmanager = StatsManager()
+        statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')

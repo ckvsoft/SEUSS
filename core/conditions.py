@@ -303,8 +303,7 @@ class Conditions:
 
     def _calculate_required_capacity(self, upcoming_hours):
         average_consumption = 0.0
-#        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
-        average_consumption_list = StatsManager.get_data('gridmeters', 'average')
+        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
         if average_consumption_list is not None:
             average_consumption = round(average_consumption_list[0], 2)
 
