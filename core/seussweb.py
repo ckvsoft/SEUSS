@@ -283,6 +283,10 @@ class SEUSSWeb:
         width = 35
         factor = 12
 
+        # Wenn keine Preise vorhanden sind, initialisiere mit 24 Preisen von 0.00
+        if not data:
+            data = {hour: None for hour in range(24)}
+
         svg = f"""
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
@@ -314,22 +318,26 @@ class SEUSSWeb:
                 color = "gainsboro"
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
-            if price < self.config.charging_price_limit or hour in green_hours:
-                if price < self.config.charging_price_hard_cap:
-                    color = "green" if current_hour > hour else "#32CD32"
-            elif hour in red_hours and hour not in green_hours:
-                color = "darkred" if current_hour > hour else "red"
-
-            if tomorrow:
+            if price is not None:
                 if price < self.config.charging_price_limit or hour in green_hours:
                     if price < self.config.charging_price_hard_cap:
-                        color = "#32CD32"
+                        color = "green" if current_hour > hour else "#32CD32"
                 elif hour in red_hours and hour not in green_hours:
-                    color = "red"
+                    color = "darkred" if current_hour > hour else "red"
 
-            # Berechne die Höhe und Ausrichtung des Balkens
-            height = (abs(price) + 1) * factor
-            y = 330 - height if price >= 0 else 330
+                if tomorrow:
+                    if price < self.config.charging_price_limit or hour in green_hours:
+                        if price < self.config.charging_price_hard_cap:
+                            color = "#32CD32"
+                    elif hour in red_hours and hour not in green_hours:
+                        color = "red"
+
+                # Berechne die Höhe und Ausrichtung des Balkens
+                height = (abs(price) + 1) * factor
+                y = 330 - height if price >= 0 else 330
+            else:
+                height = factor
+                y = 330 - height
 
             # Füge Balken hinzu
             svg += f"""
@@ -340,6 +348,9 @@ class SEUSSWeb:
             svg += f"""
             <text x="{hour * width + 15}" y="345" text-anchor="middle" font-size="10">{hour}</text>
             """
+
+            if price is None:
+                price = ""
 
             # Überprüfen, ob der Balken höher als der Diagrammrahmen ist (330 Pixel)
             if height > 330:
