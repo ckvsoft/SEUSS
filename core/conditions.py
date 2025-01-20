@@ -306,7 +306,7 @@ class Conditions:
 #        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
         average_consumption_list = StatsManager.get_data('gridmeters', 'average')
         if average_consumption_list is not None:
-            average_consumption = round(average_consumption_list[0] / 24, 2)
+            average_consumption = round(average_consumption_list[0], 2)
 
         # Calculate the required capacity based on the number of upcoming high-price periods
         required_capacity = upcoming_hours * average_consumption * 1.10  # Add 10% buffer - Multiply by average hourly consumption
