@@ -83,10 +83,18 @@ class Conditions:
             # Logge die Items für heute
             if today_items:
                 self.logger.log_info(f"Today's lowest {formatted_price} prices are:")
+                hard_cap = self.config.charging_price_hard_cap
                 for item in today_items:
-                    self.logger.log_info(
-                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
-                    )
+                    price = item.get_price(True)
+                    start_time = item.get_start_datetime(True)
+                    if float(price) > hard_cap:
+                        self.logger.log_info(
+                            f"..... Time: {start_time}, Price: {price} Cent/kWh ... exceeds hard cap limit of {hard_cap:.4f} Cent/kWh"
+                        )
+                    else:
+                        self.logger.log_info(
+                            f"..... Time: {start_time}, Price: {price} Cent/kWh"
+                        )
 
             # Logge die Items für morgen, falls vorhanden
             if tomorrow_items:
@@ -322,7 +330,7 @@ class Conditions:
             if self.solardata.battery_minimum_soc_limit is None or self.solardata.battery_minimum_soc_limit < 0:
                 raise ValueError("Minimum SOC limit is missing or invalid.")
 
-            efficiency = self.config.converter_efficiency
+            efficiency = self.config.converter_efficiency[0]
 
             # Calculate the full capacity
             full_capacity = (

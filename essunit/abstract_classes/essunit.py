@@ -27,16 +27,14 @@
 
 from core.config import Config
 from enum import Enum
-
+from typing import Tuple, Union
 
 class EssUnitNameResolutionError(Exception):
     pass
 
-
 class ESSStatus(Enum):
     ON = 'on'
     OFF = 'off'
-
 
 class ESSUnit:
     def __init__(self, **kwargs) -> None:
@@ -86,6 +84,8 @@ class ESSUnit:
     def get_solar_energy(self):
         pass
 
-    def get_converter_efficiency(self):
+    def get_converter_efficiency(self) -> Tuple[float, float]:
         pass
 
+    def get_consumption_data_endpoints(self):
+        pass

@@ -168,16 +168,19 @@ class Itemlist:
         today_items, tomorrow_items = [], []
         for item in self.item_list:
             result = self.is_today_or_tomorrow(item)
-            if result is 'today':
+            if result == 'today':
                 today_items.append(item)
-            elif result is 'tomorrow':
+            elif result == 'tomorrow':
                 tomorrow_items.append(item)
 
         def calculate_average(items):
             if not items:
                 return None
             total_prices = sum(float(item.get_price(convert)) for item in items)
-            return round(total_prices / len(items), 4)
+            if convert:
+                return round(total_prices / len(items), 4)  # Durchschnitt mit Nachkommastellen
+
+            return int(total_prices // len(items))  # Ganzzahldivision für Durchschnitt
 
         average_today = calculate_average(today_items)
         average_tomorrow = calculate_average(tomorrow_items)

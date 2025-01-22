@@ -29,6 +29,7 @@ import json
 import os
 import socket
 import sys
+from typing import Tuple
 
 from core.log import CustomLogger
 from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
@@ -290,5 +291,13 @@ class Victron(ESSUnit):
 #                self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(self.subsribers.get('Schedule', 'Duration'))}")
 #                self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
 #                self.logger.log_info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
-    def get_converter_efficiency(self):
-        return 0.84
+    def get_converter_efficiency(self) -> Tuple[float, float]:
+        return 0.84, 0.90
+
+    def get_consumption_data_endpoints(self):
+        return {
+            "P_AC_consumption_L1": f"N/{self.unit_id}/system/0/Ac/Consumption/L1/Power",
+            "P_AC_consumption_L2": f"N/{self.unit_id}/system/0/Ac/Consumption/L2/Power",
+            "P_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Consumption/L3/Power",
+            "number_of_phases": f"N/{self.unit_id}/system/0/Ac/Consumption/NumberOfPhases"
+        }
