@@ -119,8 +119,7 @@ class Entsoe(MarketData):
                     # Am Ende der Periode fehlende Positionen auffüllen
                     if last_pos < 23:
                         for missing_pos in range(last_pos + 1, 24):
-                            self.logger.log_warning(
-                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            self.logger.log_warning(f"Missing position {missing_pos} in the XML, using the last price ({last_price}).")
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
@@ -148,8 +147,7 @@ class Entsoe(MarketData):
                     # Lücken zwischen letzter und aktueller Position auffüllen
                     if current_pos > last_pos + 1:
                         for missing_pos in range(last_pos + 1, current_pos):
-                            self.logger.log_warning(
-                                f"W: Fehlende Position {missing_pos} in der XML, benutze letzten Preis.")
+                            self.logger.log_warning(f"Missing position {missing_pos} in the XML, using the last price ({last_price}).")
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
@@ -177,8 +175,8 @@ class Entsoe(MarketData):
                 in_reason = False
 
         if error_code == 999:
-            self.logger.log_warning(f"E: Entsoe data retrieval error found in the XML data: {error_message}")
+            self.logger.log_warning(f"Entsoe data retrieval error found in the XML data: {error_message}")
         elif not items:
-            self.logger.log_warning("E: No prices found in the XML data.")
+            self.logger.log_warning("No prices found in the XML data.")
 
         return items
