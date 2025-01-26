@@ -47,7 +47,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 from spotmarket.abstract_classes.itemlist import Itemlist
 from core.seussweb import SEUSSWeb
 from core.timeutilities import TimeUtilities
-
+from powerconsumption.powerconsumptionmanager import PowerConsumptionManager
 
 class SEUSS:
     def __init__(self):
@@ -55,6 +55,7 @@ class SEUSS:
         self.logger = CustomLogger()
         self.svs_thread = None
         self.seuss_web = SEUSSWeb()
+        self.power_consumtion_manager = PowerConsumptionManager()
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
@@ -83,6 +84,9 @@ class SEUSS:
             self.handle_no_data(essunit)
 
         if essunit is not None:
+            unit_config = essunit.get_config()
+            self.power_consumtion_manager.update_instance(unit_config)
+
             next_minute = (self.current_time.minute // 15 + 1) * 15
             if next_minute >= 60:
                 next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
@@ -92,6 +96,7 @@ class SEUSS:
             self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
             return
 
+        self.power_consumtion_manager.stop_instance()
         self.logger.log_info("No enabled essunit found.")
 
     def run_svs(self):

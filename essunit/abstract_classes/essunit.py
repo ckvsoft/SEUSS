@@ -87,5 +87,5 @@ class ESSUnit:
     def get_converter_efficiency(self) -> Tuple[float, float]:
         pass
 
-    def get_consumption_data_endpoints(self):
-        pass
+    def get_config(self):
+        raise NotImplementedError("This method must be implemented in the derived class.")
