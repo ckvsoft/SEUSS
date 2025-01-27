@@ -200,7 +200,7 @@ class SEUSS:
             consumption = manager_instance.get_daily_wh()
             total_forward_hourly = (total_forward_hourly + value) / 2
             self.logger.log_info(
-                f"Consumption today: {round(consumption, 2)} Wh, forecast today: {total_forward_hourly * 24:.4f} average hour: {round(total_forward_hourly, 2)} Wh")
+                f"Consumption today: {round(consumption, 2):.2f} Wh, forecast today: {total_forward_hourly * 24:.2f} Wh average hour: {round(total_forward_hourly, 2):.2f} Wh")
 
             statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 

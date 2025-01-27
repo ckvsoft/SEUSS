@@ -138,6 +138,7 @@ class PowerConsumptionBase:
         print(f"Hourly average for hour {self.current_hour}: {avg_wh:.4f} Wh")
         print(f"Hourly average : {value:.4f} Wh")
         self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value)
+        self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh)
 
         # Speichert die Daten
         self.save_data()
