@@ -327,6 +327,7 @@ class SEUSS:
         print("\r   ")  # clear ^C
         self.logger.log_info("Program will be terminated...")
         self.seuss_web.stop()
+        self.power_consumption_manager.stop_instance()
         self.svs_thread_stop_flag.set()
 
         sys.exit(0)
