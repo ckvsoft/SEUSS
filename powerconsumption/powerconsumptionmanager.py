@@ -65,3 +65,6 @@ class PowerConsumptionManager:
 
         # Save the new configuration
         self.current_config = new_config
+
+    def get_instance(self):
+        return self.current_instance

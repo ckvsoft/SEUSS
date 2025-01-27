@@ -43,11 +43,10 @@ class PowerConsumptionBase:
         self.last_value = None  # Last power value in watts
         self.last_time = None   # Last timestamp (seconds since epoch)
 
-        self.hourly_kwh = 0          # Consumption for the current hour in kWh
-        self.hourly_count = 0        # Number of measurements in the current hour
+        self.hourly_wh = 0          # Consumption for the current hour in kWh
         self.hourly_start_time = None  # Start time of the current hour
 
-        self.daily_kwh = 0           # Daily consumption in kWh
+        self.daily_wh = 0           # Daily consumption in kWh
         self.current_hour = None     # Current hour
         self.current_day = None      # Current day
 
@@ -60,6 +59,7 @@ class PowerConsumptionBase:
         self.load_data()
 
         self.thread = None
+        self.average = (0,0)
 
     def start(self):
         if self.thread is None:
@@ -82,32 +82,34 @@ class PowerConsumptionBase:
         raise NotImplementedError("This method must be implemented in the derived class.")
 
     def load_data(self):
-        """Loads saved data from a JSON file."""
+        """Lädt gespeicherte Daten aus einer JSON-Datei."""
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, "r") as file:
                     data = json.load(file)
-                    self.hourly_kwh = data.get("hourly_kwh", 0)
-                    self.daily_kwh = data.get("daily_kwh", 0)
+                    self.hourly_wh = data.get("hourly_wh", 0)
+                    self.daily_wh = data.get("daily_wh", 0)
                     self.hourly_start_time = data.get("hourly_start_time", time.time())
                     self.last_value = data.get("last_value", 0)
                     self.last_time = data.get("last_time", time.time())
                     self.current_hour = data.get("current_hour", time.localtime(time.time()).tm_hour)
                     self.current_day = data.get("current_day", time.localtime(time.time()).tm_yday)
+                    self.average = data.get("average", (0,0))
             except json.JSONDecodeError:
                 self.logger.log_error("Corrupted JSON file detected. Resetting data.")
                 self.reset_data()
 
     def save_data(self):
-        """Saves the current status to a JSON file."""
+        """Speichert den aktuellen Status in einer JSON-Datei."""
         data = {
-            "hourly_kwh": self.hourly_kwh,
-            "daily_kwh": self.daily_kwh,
+            "hourly_wh": self.hourly_wh,
+            "daily_wh": self.daily_wh,
             "hourly_start_time": self.hourly_start_time,
             "last_value": self.last_value,
             "last_time": self.last_time,
             "current_hour": self.current_hour,
-            "current_day": self.current_day
+            "current_day": self.current_day,
+            "average": self.average
         }
         backup_file = f"{self.data_file}.backup"
         try:
@@ -121,48 +123,42 @@ class PowerConsumptionBase:
                 os.replace(backup_file, self.data_file)  # Wiederherstellung aus Backup
 
     def save_hour(self):
-        """Saves the average of the current hour and calls save_data."""
-        elapsed_time = (self.last_time - self.hourly_start_time) / 3600  # Elapsed time in hours
+        """Speichert den Durchschnitt des aktuellen Stundenverbrauchs."""
+        elapsed_time = (self.last_time - self.hourly_start_time) / 3600  # Zeit in Stunden
+        value, count = self.average
+        value *= count
         if elapsed_time > 0:
-            avg_kwh = self.hourly_kwh / elapsed_time
+            avg_wh = self.hourly_wh / elapsed_time
+            value += avg_wh
+            count += 1
+            value /= count
+            self.average = (value, count)
         else:
-            avg_kwh = 0
-        print(f"Hourly average for hour {self.current_hour}: {avg_kwh:.4f} kWh")
-        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", avg_kwh * 1000)
+            avg_wh = 0
+        print(f"Hourly average for hour {self.current_hour}: {avg_wh:.4f} Wh")
+        print(f"Hourly average : {value:.4f} Wh")
+        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value)
 
-        # Save the data
+        # Speichert die Daten
         self.save_data()
 
     def save_day(self):
-        """Saves the daily consumption and calls save_data."""
-        print(f"Daily consumption: {self.daily_kwh:.4f} kWh")
+        """Speichert den täglichen Verbrauch und ruft save_data auf."""
+        print(f"Daily consumption: {self.daily_wh:.4f} Wh")
         elapsed_time_in_hours = (time.time() - self.hourly_start_time) / 3600
         if elapsed_time_in_hours > 0:
-            daily_forecast = (self.daily_kwh / elapsed_time_in_hours) * 24
-            self.statsmanager.update_percent_status_data("powerconsumption", "daily_kwh_average", daily_forecast)
-            print(f"Projected daily consumption: {daily_forecast:.4f} kWh")
+            daily_forecast = (self.daily_wh / elapsed_time_in_hours) * 24
+            self.statsmanager.update_percent_status_data("powerconsumption", "daily_wh_average", daily_forecast)
+            print(f"Projected daily consumption: {daily_forecast:.4f} Wh")
         else:
             print("No projected data available.")
 
-        # Save the data
+        # Speichert die Daten
         self.save_data()
 
-    def get_hourly_average(self):
-        """Calculates the projected hourly average."""
-        elapsed_time_in_hours = (self.last_time - self.hourly_start_time) / 3600  # Elapsed time in hours
-        if elapsed_time_in_hours > 0:
-            # Project the hourly average based on the time already passed
-            projected_kwh = self.hourly_kwh / elapsed_time_in_hours
-            return projected_kwh
-        return 0
-
-    def get_daily_kwh(self):
-        """Returns the current daily consumption."""
-        return self.daily_kwh
-
     def update(self, power, timestamp):
-        """Updates the consumption based on new power and time."""
-        # Set the start point if it's the first measurement
+        """Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit."""
+        # Setze den Startwert, wenn es die erste Messung ist
         if self.last_time is None:
             self.last_value = power
             self.last_time = timestamp
@@ -171,42 +167,39 @@ class PowerConsumptionBase:
             self.hourly_start_time = timestamp
             return
 
-        # Calculate the time interval in hours
-        time_diff = (timestamp - self.last_time) / 3600  # Time difference in hours
+        # Berechne das Zeitintervall in Stunden
+        time_diff = (timestamp - self.last_time) / 3600  # Zeitdifferenz in Stunden
 
-        # Calculate the kWh consumption in this period
-        kwh = (self.last_value * time_diff) / 1000  # Consumption in kWh
-        self.hourly_kwh += kwh  # Add to the current hourly consumption
-        self.daily_kwh += kwh   # Update daily consumption
-        self.hourly_count += 1  # Count the measurement
+        # Berechne den kWh-Verbrauch für diesen Zeitraum
+        wh = (self.last_value * time_diff)
+        self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
+        self.daily_wh += wh   # Update des täglichen Verbrauchs
 
-        # Determine current hour and day
-        current_minute = time.localtime(timestamp).tm_min
+        # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
         current_day = time.localtime(timestamp).tm_yday
 
-        # Check if a new day has started
+        # Überprüfe, ob ein neuer Tag begonnen hat
         if current_day != self.current_day:
-            self.save_day()  # Save daily consumption
+            self.save_day()  # Speichere den täglichen Verbrauch
             self.current_day = current_day
-            self.daily_kwh = 0  # Reset consumption for the new day
+            self.daily_wh = 0  # Setze den täglichen Verbrauch zurück
 
-        # Check if a new hour has started
+        # Überprüfe, ob eine neue Stunde begonnen hat
         if current_hour != self.current_hour:
-            self.save_hour()  # Save average for the last hour
+            self.save_hour()  # Speichere den Durchschnitt für die letzte Stunde
             self.current_hour = current_hour
-            self.hourly_kwh = 0  # Reset consumption for the new hour
-            self.hourly_count = 0
+            self.hourly_wh = 0  # Setze den stündlichen Verbrauch zurück
             self.hourly_start_time = timestamp
 
-        if current_minute != self.last_minute and current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]:
-            self.last_minute = current_minute
+        # Speichern der Daten alle 5 Minuten
+        current_minute = time.localtime(timestamp).tm_min
+        if current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]:
             self.save_data()
 
-        # Update the last values
+        # Aktualisieren der letzten Werte
         self.last_value = power
         self.last_time = timestamp
-
 
     def check_for_data(self):
         missing_data = []
@@ -228,10 +221,23 @@ class PowerConsumptionBase:
 
         return True
 
+    def get_hourly_average(self):
+        """Calculates the projected hourly average."""
+        elapsed_time_in_hours = (self.last_time - self.hourly_start_time) / 3600  # Elapsed time in hours
+        if elapsed_time_in_hours > 0:
+            # Project the hourly average based on the time already passed
+            projected_wh = self.hourly_wh / elapsed_time_in_hours
+            return projected_wh
+        return 0
+
+    def get_daily_wh(self):
+        """Returns the current daily consumption in Wh."""
+        return self.daily_wh
+
     def reset_data(self):
         """Reset all tracked data to default values."""
-        self.hourly_kwh = 0
-        self.daily_kwh = 0
+        self.hourly_wh = 0
+        self.daily_wh = 0
         self.hourly_start_time = time.time()
         self.last_value = 0
         self.last_time = time.time()

@@ -55,7 +55,7 @@ class SEUSS:
         self.logger = CustomLogger()
         self.svs_thread = None
         self.seuss_web = SEUSSWeb()
-        self.power_consumtion_manager = PowerConsumptionManager()
+        self.power_consumption_manager = PowerConsumptionManager()
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
@@ -74,18 +74,18 @@ class SEUSS:
 
     def run_essunit(self):
         essunit = self.initialize_essunit()
-        # if essunit is not None:
-        #    essunit.get_data()
-        total_solar = self.process_solar_data(essunit)
-        self.process_solar_forecast(total_solar)
-        if self.items.get_item_count() > 0:
-            self.evaluate_conditions_and_control_charging_discharging(essunit)
-        else:
-            self.handle_no_data(essunit)
-
         if essunit is not None:
             unit_config = essunit.get_config()
-            self.power_consumtion_manager.update_instance(unit_config)
+            self.power_consumption_manager.update_instance(unit_config)
+
+            # if essunit is not None:
+            #    essunit.get_data()
+            total_solar = self.process_solar_data(essunit)
+            self.process_solar_forecast(total_solar)
+            if self.items.get_item_count() > 0:
+                self.evaluate_conditions_and_control_charging_discharging(essunit)
+            else:
+                self.handle_no_data(essunit)
 
             next_minute = (self.current_time.minute // 15 + 1) * 15
             if next_minute >= 60:
@@ -96,7 +96,7 @@ class SEUSS:
             self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
             return
 
-        self.power_consumtion_manager.stop_instance()
+        self.power_consumption_manager.stop_instance()
         self.logger.log_info("No enabled essunit found.")
 
     def run_svs(self):
@@ -184,7 +184,6 @@ class SEUSS:
             productname = gridmeters.get_value(key_outer, 'ProductName')
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
-            total_forward_hourly += forward_hourly
             self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
             self.logger.log_info(
                 f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
@@ -193,7 +192,17 @@ class SEUSS:
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
         statsmanager = StatsManager()
-        statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
+        total_forward_hourly_list = statsmanager.get_data("powerconsumption","hourly_watt_average")
+        total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
+        manager_instance = (self.power_consumption_manager.get_instance())
+        if manager_instance:
+            value = manager_instance.get_hourly_average()
+            consumption = manager_instance.get_daily_wh()
+            total_forward_hourly = (total_forward_hourly + value) / 2
+            self.logger.log_info(
+                f"Consumption today: {round(consumption, 2)} Wh, forecast today: {total_forward_hourly * 24:.4f} average hour: {round(total_forward_hourly, 2)} Wh")
+
+            statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')

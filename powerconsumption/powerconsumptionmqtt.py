@@ -122,19 +122,30 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         """Sends periodic keep-alive messages to the broker."""
         while self.keep_alive_running:
             time.sleep(self.interval_duration)  # Wait for the interval
-            if self.client.is_connected():
-                self.current_power = self.current_power or 0
-                print(f"Current power: {self.current_power:.2f} W")
-                print(f"Hourly average: {self.get_hourly_average():.4f} kWh")
-                print(f"Daily consumption: {self.get_daily_kwh():.4f} kWh")
-                try:
-                    self.client.publish(self.keep_alive_topic, payload="1", qos=1)
-                except Exception as e:
-                    self.logger.log_error(f"Error sending the keep-alive message: {e}")
-            else:
-                self.logger.log_debug("No connection to MQTT server. Attempting to reconnect.")
-                self.client = None
-                self.update_config(self.mqtt_config)
+            if self.client:
+                if self.client.is_connected():
+                    self.current_power = self.current_power or 0
+                    print(f"Current power: {self.current_power:.2f} W")
+                    print(f"Hourly average: {self.get_hourly_average():.4f} Wh")
+                    print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
+                    print(f"Daily forcast: {self.get_hourly_average() * 24:.4f} Wh")
+                    average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
+                    if average_list:
+                        value, count = average_list
+                        value *= count
+                        count += 1
+                        value = (value + self.get_hourly_average()) / count
+                        print(f"Average Stats: {value:.4f} Wh")
+                        print(f"Forcast Day Stats: {value * 24:.4f} Wh")
+
+                    try:
+                        self.client.publish(self.keep_alive_topic, payload="1", qos=1)
+                    except Exception as e:
+                        self.logger.log_error(f"Error sending the keep-alive message: {e}")
+                else:
+                    self.logger.log_debug("No connection to MQTT server. Attempting to reconnect.")
+                    self.client = None
+                    self.update_config(self.mqtt_config)
 
     def stop(self):
         self.keep_alive_running = False
