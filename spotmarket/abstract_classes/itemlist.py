@@ -63,7 +63,7 @@ class Itemlist:
     def get_item_count(self):
         return len(self.item_list)
 
-    def get_valid_items_count_until_midnight(self, price_list):
+    def get_valid_items_count_until_midnight(self, price_list, check_hardcap):
         # Aktuelle Zeit in UTC
         local_now = datetime.now()
 
@@ -72,32 +72,33 @@ class Itemlist:
         now = local_now.astimezone(timezone.utc)
         midnight = local_midnight.astimezone(timezone.utc)
 
-        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight)]
+        valid_items = [item for item in price_list if self.is_valid_item(item, now, midnight, check_hardcap)]
 
         return len(valid_items)
 
-    def is_valid_item(self, item, now, midnight):
+    def is_valid_item(self, item, now, midnight, check_hardcap=False):
         end_datetime = item.get_end_datetime()
 
         if end_datetime is None:
             return False
 
-        try:
-            item_price = float(item.get_price())
-            if item_price > self.config.charging_price_hard_cap:
+        if check_hardcap:
+            try:
+                item_price = float(item.get_price())
+                if item_price > self.config.charging_price_hard_cap:
+                    return False
+            except (TypeError, ValueError):
+                self.logger.log_error("is_valid_item: item_price > float(self.config.charging_price_hard_cap).")
                 return False
-        except (TypeError, ValueError):
-            self.logger.log_error("is_valid_item: item_price > float(self.config.charging_price_hard_cap).")
-            return False
 
         return now < end_datetime.replace(tzinfo=timezone.utc) < midnight
 
-    def get_valid_items_count_until_next_midnight(self, price_list):
+    def get_valid_items_count_until_next_midnight(self, price_list, check_hardcap):
         now = datetime.now()
         next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).replace(
             tzinfo=timezone.utc)
 
-        valid_items = [item for item in price_list if self.is_valid_item(item, now, next_midnight)]
+        valid_items = [item for item in price_list if self.is_valid_item(item, now, next_midnight, check_hardcap)]
 
         return len(valid_items)
 

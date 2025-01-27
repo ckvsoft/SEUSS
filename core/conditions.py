@@ -163,7 +163,7 @@ class Conditions:
             condition_function = self.create_condition_function(price, lambda x, y: x == y)
             self.conditions_by_operation_mode["charging"][key] = condition_function
 
-        count = self.items.get_valid_items_count_until_midnight(additional_prices)
+        count = self.items.get_valid_items_count_until_midnight(additional_prices, True)
         message = f"There {'is' if count == 1 else 'are'} still {count} {'cheap price' if count == 1 else 'cheap prices'} available today."
         self.logger.log_info(message)
 
@@ -181,7 +181,7 @@ class Conditions:
             condition_function = self.create_condition_function(price, lambda x, y: x == y)
             self.conditions_by_operation_mode["discharging"][key] = condition_function
 
-        count = self.items.get_valid_items_count_until_midnight(additional_prices)
+        count = self.items.get_valid_items_count_until_midnight(additional_prices, False)
         message = f"There {'is' if count == 1 else 'are'} still {count} {'expensive price' if count == 1 else 'expensive prices'} available today."
         self.logger.log_info(message)
 
