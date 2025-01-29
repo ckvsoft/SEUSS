@@ -33,75 +33,88 @@ REQUIREMENTS_FILE="/data/seuss/requirements.txt"
 LAST_MODIFIED_FILE="/tmp/seuss_last_modified"
 
 # Check if the requirements.txt file exists
-if [ -e "$REQUIREMENTS_FILE" ]; then
-    current_modified_time=$(stat -c %Y "$REQUIREMENTS_FILE")
-    last_modified_time=0
+if [ ! -e "$REQUIREMENTS_FILE" ]; then
+    echo "Error: The requirements.txt file does not exist."
+    exit 1
+fi
 
-    # Check if the last modified file exists
-    if [ -e "$LAST_MODIFIED_FILE" ]; then
-        last_modified_time=$(cat "$LAST_MODIFIED_FILE")
+current_modified_time=$(stat -c %Y "$REQUIREMENTS_FILE")
+last_modified_time=0
+
+# Check if the last modified file exists
+if [ -e "$LAST_MODIFIED_FILE" ]; then
+    last_modified_time=$(cat "$LAST_MODIFIED_FILE")
+fi
+
+# Always update OPKG before installing packages
+echo "Updating opkg..."
+if opkg update; then
+    echo "opkg update completed successfully."
+else
+    echo "Error: opkg update failed. Exiting."
+    exit 1
+fi
+
+# Ensure python3-pip is installed
+if ! which pip3 &> /dev/null; then
+    echo "Installing python3-pip..."
+    if opkg install python3-pip; then
+        echo "python3-pip installed successfully."
+    else
+        echo "Error: Failed to install python3-pip. Exiting."
+        exit 1
+    fi
+fi
+
+update_required=false
+
+while IFS= read -r line; do
+    # Ignore comments and empty lines
+    if [[ "$line" =~ ^[[:space:]]*# || -z "$line" ]]; then
+        continue
     fi
 
-    # Compare change times
-    if [ "$current_modified_time" -gt "$last_modified_time" ]; then
-        echo "requirements.txt has changed since the last call. Update the packages."
+    # Extract package name
+    package_name=$(echo "$line" | awk -F '[=~><]' '{print $1}')
 
-        # Update opkg
-        if opkg update; then
-            echo "opkg update completed successfully."
+    # Get installed version (if any)
+    installed_version=$(pip3 show "$package_name" | awk '/Version:/ {print $2}')
+
+    # Check latest available version
+    latest_version=$(pip3 index versions "$package_name" 2>/dev/null | head -n 1 | awk '{print $NF}')
+
+    # If package is not installed, install it
+    if [ -z "$installed_version" ]; then
+        echo "Installing $package_name..."
+        if pip3 install "$line"; then
+            echo "$package_name installed successfully."
+            update_required=true
         else
-            echo "Error: opkg update failed. Exiting."
+            echo "Error: Failed to install $package_name."
             exit 1
         fi
-
-        # Install python3-pip if not already installed
-        if ! which pip3 &> /dev/null; then
-            if opkg install python3-pip; then
-                echo "python3-pip installed successfully."
+    else
+        # Compare versions and update if necessary
+        if [ "$installed_version" != "$latest_version" ] && [ -n "$latest_version" ]; then
+            echo "Updating $package_name (installed: $installed_version, latest: $latest_version)..."
+            if pip3 install --upgrade "$package_name"; then
+                echo "$package_name updated successfully."
+                update_required=true
             else
-                echo "Error: Failed to install python3-pip. Exiting."
+                echo "Error: Failed to update $package_name."
                 exit 1
             fi
-        fi
-
-        all_packages_installed=true
-
-        while IFS= read -r line; do
-            # Ignorieren von Kommentaren und leeren Zeilen
-            if [[ "$line" =~ ^[[:space:]]*# || -z "$line" ]]; then
-                continue
-            fi
-
-            # Extract the package name before the version statement
-            package_name=$(echo "$line" | awk -F '[=~><]' '{print $1}')
-
-            # Check if the package is already installed
-            if pip3 show "$package_name" &> /dev/null; then
-                echo "Package $package_name is already installed."
-            else
-                # Installing the package with pip3
-                if pip3 install "$line"; then
-                    echo "Package $package_name installed successfully."
-                else
-                    echo "Error: Failed to install package $package_name. Exiting."
-                    all_packages_installed=false
-                    break
-                fi
-            fi
-
-        done < "$REQUIREMENTS_FILE"
-
-        if [ "$all_packages_installed" = true ]; then
-            echo "$current_modified_time" > "$LAST_MODIFIED_FILE"
         else
-            echo "Error: Not all packages were successfully installed."
-            exit 1
+            echo "$package_name is up-to-date ($installed_version)."
         fi
-
-        echo "Packages installation completed successfully."
-    else
-        echo "requirements.txt has not changed since the last time it was called. No update required."
     fi
+
+done < "$REQUIREMENTS_FILE"
+
+# Only update timestamp if at least one package was updated
+if [ "$update_required" = true ]; then
+    echo "$current_modified_time" > "$LAST_MODIFIED_FILE"
+    echo "Package updates completed."
 else
-    echo "Error: The requirements.txt file does not exist."
+    echo "All packages are already up-to-date."
 fi
