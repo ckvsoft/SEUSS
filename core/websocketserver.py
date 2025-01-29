@@ -69,7 +69,7 @@ class WebSocketServer:
 
     def send_data_to_all_clients(self, message):
         """Sends a message to all connected WebSocket clients synchronously."""
-        self.last_message = json.dumps(message)
+        self.last_message = message
         if not self.clients:
             # self.logger.log_info("No connected clients")
             return
