@@ -87,7 +87,7 @@ class WebSocketServer:
 
     def start(self):
         """Startet den WebSocket-Server synchron."""
-        with ws_serv(self.handler, "localhost", 8765) as server:
+        with ws_serv(self.handler, "0.0.0.0", 8765) as server:
             self.logger.log_info("WebSocket-Server gestartet auf ws://localhost:8765")
             server.serve_forever()
 
