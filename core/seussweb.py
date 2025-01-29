@@ -46,58 +46,58 @@ from spotmarket.abstract_classes.itemlist import Itemlist
 
 class WebSocketServer:
     def __init__(self):
-        self.clients = set()  # Set von verbundenen Clients
+        self.clients = set()  # Set of connected clients
         self.logger = CustomLogger()
         self.last_message = None
 
     def handler(self, websocket):
-        """Handhabt eingehende WebSocket-Verbindungen synchron."""
+        """Handles incoming WebSocket connections synchronously."""
         self.clients.add(websocket)
         try:
             remote_address = websocket.socket.getpeername()
-            self.logger.log_info(f"Client verbunden: {remote_address}")
+            # self.logger.log_info(f"Client connected: {remote_address}")
         except Exception as e:
-            self.logger.log_error(f"Konnte Client-Adresse nicht ermitteln: {e}")
+            self.logger.log_error(f"Could not determine client address: {e}")
             remote_address = None
 
         if self.last_message:
             try:
                 websocket.send(json.dumps(self.last_message))
-                self.logger.log_info(f"Letzte Nachricht an neuen Client gesendet: {self.last_message}")
+                # self.logger.log_info(f"Sent last message to new client: {self.last_message}")
             except Exception as e:
-                self.logger.log_error(f"Fehler beim Senden der letzten Nachricht: {e}")
+                self.logger.log_error(f"Error sending last message: {e}")
 
         try:
-            # Warten auf eingehende Nachrichten vom Client
+            # Waiting for incoming messages from the client
             while True:
                 message = websocket.recv()
-                self.logger.log_info(f"Nachricht vom Client: {message}")
+                self.logger.log_debug(f"Message from client: {message}")
         except websockets.exceptions.ConnectionClosed as e:
-            self.logger.log_info(f"Verbindung geschlossen: {e}")
+            self.logger.log_debug(f"Connection closed: {e}")
         finally:
-            # Entferne den Client aus der Liste der Verbindungen
+            # Remove the client from the list of connections
             self.clients.discard(websocket)
             if remote_address:
-                self.logger.log_info(f"Client getrennt: {remote_address}")
+                self.logger.log_debug(f"Client disconnected: {remote_address}")
 
     def send_data_to_all_clients(self, message):
-        """Sendet eine Nachricht an alle verbundenen WebSocket-Clients synchron."""
+        """Sends a message to all connected WebSocket clients synchronously."""
         self.last_message = json.dumps(message)
         if not self.clients:
-            self.logger.log_info("Keine verbundenen Clients")
+            # self.logger.log_info("No connected clients")
             return
         for client in list(self.clients):
             try:
                 client.send(json.dumps(message))
-                self.logger.log_info(f"Nachricht an Client gesendet: {message}")
+                # self.logger.log_info(f"Message sent to client: {message}")
             except Exception as e:
-                self.logger.log_error(f"Fehler beim Senden an Client: {e}")
-                self.clients.discard(client)  # Entferne fehlerhafte Clients
+                self.logger.log_error(f"Error sending message to client: {e}")
+                self.clients.discard(client)  # Remove faulty clients
 
     def start(self):
-        """Startet den WebSocket-Server synchron."""
+        """Starts the WebSocket server synchronously."""
         with ws_serv(self.handler, "0.0.0.0", 8765) as server:
-            self.logger.log_info("WebSocket-Server gestartet auf ws://localhost:8765")
+            self.logger.log_info("WebSocket server started at ws://0.0.0.0:8765")
             server.serve_forever()
 
 
