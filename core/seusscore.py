@@ -56,6 +56,7 @@ class SEUSS:
         self.svs_thread = None
         self.seuss_web = SEUSSWeb()
         self.power_consumption_manager = PowerConsumptionManager()
+
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
@@ -77,6 +78,10 @@ class SEUSS:
         if essunit is not None:
             unit_config = essunit.get_config()
             self.power_consumption_manager.update_instance(unit_config)
+            if self.seuss_web:
+                power_consumption_instance = self.power_consumption_manager.get_instance()
+                if power_consumption_instance:
+                    power_consumption_instance.set_seuss_web(self.seuss_web)
 
             # if essunit is not None:
             #    essunit.get_data()

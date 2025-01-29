@@ -138,6 +138,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         print(f"Average Stats: {value:.4f} Wh")
                         print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
+                        if self.seuss_web:
+                            self.seuss_web.emit_ws({'averageWh': value, 'power': self.current_power})
+                            print(f"Gesendetes Event: {value}")
+
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)
                     except Exception as e:

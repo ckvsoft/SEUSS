@@ -36,6 +36,7 @@ from core.statsmanager import StatsManager
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
         self.interval_duration = interval_duration
+        self.seuss_web = None
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
         self.running = False
@@ -80,6 +81,9 @@ class PowerConsumptionBase:
     def run(self):
         """Main process - Implementation in derived classes."""
         raise NotImplementedError("This method must be implemented in the derived class.")
+
+    def set_seuss_web(self, sw):
+        self.seuss_web = sw
 
     def load_data(self):
         """Lädt gespeicherte Daten aus einer JSON-Datei."""

@@ -25,26 +25,78 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 from datetime import datetime
+
+from websockets.sync.server import serve as ws_serv
+import websockets
+
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
 import bottle
-
 import json
 import os, sys, glob
 import zipfile
 import threading
 import core.version as version
 from waitress import serve
+
 from core.config import Config
 from core.logreader import LogReader
 from core.log import CustomLogger
 from spotmarket.abstract_classes.itemlist import Itemlist
 
+class WebSocketServer:
+    def __init__(self):
+        self.clients = set()  # Set von verbundenen Clients
+        self.logger = CustomLogger()
+
+    def handler(self, websocket):
+        """Handhabt eingehende WebSocket-Verbindungen synchron."""
+        self.clients.add(websocket)
+        try:
+            remote_address = websocket.socket.getpeername()
+            self.logger.log_info(f"Client verbunden: {remote_address}")
+        except Exception as e:
+            self.logger.log_error(f"Konnte Client-Adresse nicht ermitteln: {e}")
+            remote_address = None
+
+        try:
+            # Warten auf eingehende Nachrichten vom Client
+            while True:
+                message = websocket.recv()
+                self.logger.log_info(f"Nachricht vom Client: {message}")
+        except websockets.exceptions.ConnectionClosed as e:
+            self.logger.log_info(f"Verbindung geschlossen: {e}")
+        finally:
+            # Entferne den Client aus der Liste der Verbindungen
+            self.clients.discard(websocket)
+            if remote_address:
+                self.logger.log_info(f"Client getrennt: {remote_address}")
+
+    def send_data_to_all_clients(self, message):
+        """Sendet eine Nachricht an alle verbundenen WebSocket-Clients synchron."""
+        if not self.clients:
+            self.logger.log_info("Keine verbundenen Clients")
+            return
+        for client in list(self.clients):
+            try:
+                client.send(json.dumps(message))
+                self.logger.log_info(f"Nachricht an Client gesendet: {message}")
+            except Exception as e:
+                self.logger.log_error(f"Fehler beim Senden an Client: {e}")
+                self.clients.discard(client)  # Entferne fehlerhafte Clients
+
+    def start(self):
+        """Startet den WebSocket-Server synchron."""
+        with ws_serv(self.handler, "localhost", 8765) as server:
+            self.logger.log_info("WebSocket-Server gestartet auf ws://localhost:8765")
+            server.serve_forever()
+
 
 class SEUSSWeb:
     def __init__(self):
+        self.ws_server = WebSocketServer()
+        # Erstelle die Bottle-App und integriere Socket.IO
         self.app = bottle.Bottle()
-        self.server = None
         main_script_path = os.path.abspath(sys.argv[0])
         self.main_script_directory = os.path.dirname(main_script_path)
         self.view_path = os.path.join(self.main_script_directory, 'views')
@@ -56,6 +108,11 @@ class SEUSSWeb:
 
         # Routen einrichten
         self.setup_routes()
+
+#    def get_sio(self):#
+#        return self.ws_server
+    def emit_ws(self, message):
+        self.ws_server.send_data_to_all_clients(message)
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
@@ -468,12 +525,17 @@ class SEUSSWeb:
         return percentage1, percentage2
 
     def run(self, host='0.0.0.0', port=5000, debug=False):
+
+        # WebSocket-Server starten
+        server_thread = threading.Thread(target=self.ws_server.start, daemon=True)
+        server_thread.start()
+
         if self.config.log_level == "DEBUG":
             debug = True
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
-        serve(self.app, host=host, port=port)
         self.logger.log_info(f"start bottle host:{host}, port:{port}")
+        serve(self.app, host=host, port=port)
 
         # self.app.run(host=host, port=port, debug=debug)
 
