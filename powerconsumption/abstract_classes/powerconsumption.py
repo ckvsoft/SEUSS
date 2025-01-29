@@ -250,6 +250,7 @@ class PowerConsumptionBase:
         return self.daily_wh
 
     def get_minutes_since_midnight(self):
+        """Berechnet die vergangenen Minuten seit Mitternacht."""
         current_time = time.time()  # Aktueller Zeitstempel in Sekunden
         midnight = current_time - (current_time % 86400)  # Berechnet den Zeitstempel für Mitternacht
         elapsed_seconds = current_time - midnight  # Vergangene Sekunden seit Mitternacht
