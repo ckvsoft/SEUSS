@@ -46,6 +46,12 @@ if [ -e "$LAST_MODIFIED_FILE" ]; then
     last_modified_time=$(cat "$LAST_MODIFIED_FILE")
 fi
 
+# If the file has not changed since the last check, exit
+if [ "$current_modified_time" -eq "$last_modified_time" ]; then
+    echo "No changes detected in $REQUIREMENTS_FILE. Skipping package update."
+    exit 0
+fi
+
 # Always update OPKG before installing packages
 echo "Updating opkg..."
 if opkg update; then
@@ -80,9 +86,6 @@ while IFS= read -r line; do
     # Get installed version (if any)
     installed_version=$(pip3 show "$package_name" | awk '/Version:/ {print $2}')
 
-    # Check latest available version
-    latest_version=$(pip3 index versions "$package_name" 2>/dev/null | head -n 1 | awk '{print $NF}')
-
     # If package is not installed, install it
     if [ -z "$installed_version" ]; then
         echo "Installing $package_name..."
@@ -94,21 +97,18 @@ while IFS= read -r line; do
             exit 1
         fi
     else
-        # Compare versions and update if necessary
-        if [ "$installed_version" != "$latest_version" ] && [ -n "$latest_version" ]; then
-            echo "Updating $package_name (installed: $installed_version, latest: $latest_version)..."
-            if pip3 install --upgrade "$package_name"; then
-                echo "$package_name updated successfully."
-                update_required=true
-            else
-                echo "Error: Failed to update $package_name."
-                exit 1
-            fi
+        # Update the package if a newer version is available
+        echo "Checking for newer version of $package_name..."
+
+        # Attempt to install the latest version
+        if pip3 install --upgrade "$package_name"; then
+            echo "$package_name updated successfully."
+            update_required=true
         else
-            echo "$package_name is up-to-date ($installed_version)."
+            echo "Error: Failed to update $package_name."
+            exit 1
         fi
     fi
-
 done < "$REQUIREMENTS_FILE"
 
 # Only update timestamp if at least one package was updated
