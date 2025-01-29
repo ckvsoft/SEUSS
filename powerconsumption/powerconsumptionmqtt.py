@@ -138,8 +138,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         print(f"Average Stats: {value:.4f} Wh")
                         print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
-                        if self.seuss_web:
-                            self.seuss_web.emit_ws({'averageWh': value, 'power': self.current_power})
+                        if self.ws_server:
+                            self.ws_server.emit_ws({'averageWh': value, 'power': self.current_power, 'consumptionD': self.get_daily_wh()})
                             print(f"Gesendetes Event: {value}")
 
                     try:

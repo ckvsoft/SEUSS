@@ -44,66 +44,8 @@ from core.logreader import LogReader
 from core.log import CustomLogger
 from spotmarket.abstract_classes.itemlist import Itemlist
 
-class WebSocketServer:
-    def __init__(self):
-        self.clients = set()  # Set of connected clients
-        self.logger = CustomLogger()
-        self.last_message = None
-
-    def handler(self, websocket):
-        """Handles incoming WebSocket connections synchronously."""
-        self.clients.add(websocket)
-        try:
-            remote_address = websocket.socket.getpeername()
-            # self.logger.log_info(f"Client connected: {remote_address}")
-        except Exception as e:
-            self.logger.log_error(f"Could not determine client address: {e}")
-            remote_address = None
-
-        if self.last_message:
-            try:
-                websocket.send(json.dumps(self.last_message))
-                # self.logger.log_info(f"Sent last message to new client: {self.last_message}")
-            except Exception as e:
-                self.logger.log_error(f"Error sending last message: {e}")
-
-        try:
-            # Waiting for incoming messages from the client
-            while True:
-                message = websocket.recv()
-                self.logger.log_debug(f"Message from client: {message}")
-        except websockets.exceptions.ConnectionClosed as e:
-            self.logger.log_debug(f"Connection closed: {e}")
-        finally:
-            # Remove the client from the list of connections
-            self.clients.discard(websocket)
-            if remote_address:
-                self.logger.log_debug(f"Client disconnected: {remote_address}")
-
-    def send_data_to_all_clients(self, message):
-        """Sends a message to all connected WebSocket clients synchronously."""
-        self.last_message = json.dumps(message)
-        if not self.clients:
-            # self.logger.log_info("No connected clients")
-            return
-        for client in list(self.clients):
-            try:
-                client.send(json.dumps(message))
-                # self.logger.log_info(f"Message sent to client: {message}")
-            except Exception as e:
-                self.logger.log_error(f"Error sending message to client: {e}")
-                self.clients.discard(client)  # Remove faulty clients
-
-    def start(self):
-        """Starts the WebSocket server synchronously."""
-        with ws_serv(self.handler, "0.0.0.0", 8765) as server:
-            self.logger.log_info("WebSocket server started at ws://0.0.0.0:8765")
-            server.serve_forever()
-
-
 class SEUSSWeb:
     def __init__(self):
-        self.ws_server = WebSocketServer()
         # Erstelle die Bottle-App und integriere Socket.IO
         self.app = bottle.Bottle()
         main_script_path = os.path.abspath(sys.argv[0])
@@ -117,11 +59,6 @@ class SEUSSWeb:
 
         # Routen einrichten
         self.setup_routes()
-
-#    def get_sio(self):#
-#        return self.ws_server
-    def emit_ws(self, message):
-        self.ws_server.send_data_to_all_clients(message)
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
@@ -534,10 +471,6 @@ class SEUSSWeb:
         return percentage1, percentage2
 
     def run(self, host='0.0.0.0', port=5000, debug=False):
-
-        # WebSocket-Server starten
-        server_thread = threading.Thread(target=self.ws_server.start, daemon=True)
-        server_thread.start()
 
         if self.config.log_level == "DEBUG":
             debug = True

@@ -28,6 +28,7 @@
             <h1>Realtime Data</h1>
             <div id="averageWh">Average Wh: -</div>
             <div id="power">Power: -</div>
+            <div id="consumptionD">Consumption today: -</div>
         </div>
     </div>
 
@@ -73,6 +74,12 @@
                         const powerElement = document.getElementById("power");
                         if (powerElement) {
                             powerElement.textContent = `Power: ${data.power.toFixed(2)} W`;
+                        }
+                    }
+                    if (data.consumptionD !== undefined) {
+                        const consumptionDElement = document.getElementById("consumptionD");
+                        if (consumptionDElement) {
+                            consumptionDElement.textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
                         }
                     }
 
