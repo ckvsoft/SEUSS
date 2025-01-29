@@ -140,7 +140,6 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
                         if self.ws_server:
                             self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average() , 'power': self.current_power, 'consumptionD': self.get_daily_wh()})
-                            print(f"Gesendetes Event: {value}")
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)
