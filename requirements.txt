@@ -4,4 +4,4 @@ pytz~=2024.1
 paho-mqtt~=2.1.0
 bottle~=0.12.25
 waitress~=3.0.1
-websockets
+websockets>8.1.0
