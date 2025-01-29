@@ -239,9 +239,10 @@ class PowerConsumptionBase:
     def get_daily_average(self):
         total_duration_minutes = self.get_minutes_since_midnight()
         if total_duration_minutes > 0:
-            consumption_per_minute = self.get_daily_wh() / total_duration_minutes
+            consumption_per_minute = self.daily_wh / total_duration_minutes
             projected_consumption_wh = consumption_per_minute * 1440
             return projected_consumption_wh / 24
+
         return 0
 
     def get_daily_wh(self):
