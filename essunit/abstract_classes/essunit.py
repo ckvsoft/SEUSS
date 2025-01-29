@@ -27,16 +27,14 @@
 
 from core.config import Config
 from enum import Enum
-
+from typing import Tuple, Union
 
 class EssUnitNameResolutionError(Exception):
     pass
 
-
 class ESSStatus(Enum):
     ON = 'on'
     OFF = 'off'
-
 
 class ESSUnit:
     def __init__(self, **kwargs) -> None:
@@ -56,10 +54,16 @@ class ESSUnit:
     def get_battery_current_voltage(self):
         pass
 
+    def get_battery_current_wh(self):
+        pass
+
     def get_battery_minimum_soc_limit(self):
         pass
 
     def get_battery_capacity(self):
+        pass
+
+    def get_battery_installed_capacity(self):
         pass
 
     def get_soc(self):
@@ -79,3 +83,9 @@ class ESSUnit:
 
     def get_solar_energy(self):
         pass
+
+    def get_converter_efficiency(self) -> Tuple[float, float]:
+        pass
+
+    def get_config(self):
+        raise NotImplementedError("This method must be implemented in the derived class.")

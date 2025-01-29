@@ -47,7 +47,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 from spotmarket.abstract_classes.itemlist import Itemlist
 from core.seussweb import SEUSSWeb
 from core.timeutilities import TimeUtilities
-
+from powerconsumption.powerconsumptionmanager import PowerConsumptionManager
 
 class SEUSS:
     def __init__(self):
@@ -55,6 +55,8 @@ class SEUSS:
         self.logger = CustomLogger()
         self.svs_thread = None
         self.seuss_web = SEUSSWeb()
+        self.power_consumption_manager = PowerConsumptionManager()
+
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
@@ -73,16 +75,23 @@ class SEUSS:
 
     def run_essunit(self):
         essunit = self.initialize_essunit()
-        # if essunit is not None:
-        #    essunit.get_data()
-        total_solar = self.process_solar_data(essunit)
-        self.process_solar_forecast(total_solar)
-        if self.items.get_item_count() > 0:
-            self.evaluate_conditions_and_control_charging_discharging(essunit)
-        else:
-            self.handle_no_data(essunit)
-
         if essunit is not None:
+            unit_config = essunit.get_config()
+            self.power_consumption_manager.update_instance(unit_config)
+            if self.seuss_web:
+                power_consumption_instance = self.power_consumption_manager.get_instance()
+                if power_consumption_instance:
+                    power_consumption_instance.set_seuss_web(self.seuss_web)
+
+            # if essunit is not None:
+            #    essunit.get_data()
+            total_solar = self.process_solar_data(essunit)
+            self.process_solar_forecast(total_solar)
+            if self.items.get_item_count() > 0:
+                self.evaluate_conditions_and_control_charging_discharging(essunit)
+            else:
+                self.handle_no_data(essunit)
+
             next_minute = (self.current_time.minute // 15 + 1) * 15
             if next_minute >= 60:
                 next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
@@ -92,6 +101,7 @@ class SEUSS:
             self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
             return
 
+        self.power_consumption_manager.stop_instance()
         self.logger.log_info("No enabled essunit found.")
 
     def run_svs(self):
@@ -114,7 +124,14 @@ class SEUSS:
                 interval_minutes = 15
                 if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
                         self.current_time.second == 0):
-                    self.run_essunit()
+                    if (
+                            self.items.get_item_count() < 25
+                            if self.config.use_second_day and 13 < self.current_time.hour < 15
+                            else False
+                    ):
+                        self.run_markets()
+                    else:
+                        self.run_essunit()
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
@@ -165,6 +182,7 @@ class SEUSS:
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
+        total_forward_hourly = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
@@ -177,6 +195,19 @@ class SEUSS:
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+
+        statsmanager = StatsManager()
+        total_forward_hourly_list = statsmanager.get_data("powerconsumption","hourly_watt_average")
+        total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
+        manager_instance = (self.power_consumption_manager.get_instance())
+        if manager_instance:
+            value = manager_instance.get_hourly_average()
+            consumption = manager_instance.get_daily_wh()
+            total_forward_hourly = (total_forward_hourly + value) / 2
+            self.logger.log_info(
+                f"Consumption today: {round(consumption, 2):.2f} Wh, forecast today: {total_forward_hourly * 24:.2f} Wh average hour: {round(total_forward_hourly, 2):.2f} Wh")
+
+            statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')
@@ -227,7 +258,7 @@ class SEUSS:
         if not only_observation:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
-            conditions_instance = Conditions(self.items, self.solardata)
+            conditions_instance = Conditions(self.items, self.solardata, essunit)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
@@ -243,12 +274,15 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
+            StatsManager().set_status_data('Energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
+            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
+            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:
@@ -257,6 +291,7 @@ class SEUSS:
             essunit.set_discharge("on")
         elif condition_discharging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_discharging_result.condition}, discharging is turned off.")
+            essunit.set_discharge("off")
         elif essunit is not None:
             self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
@@ -297,6 +332,7 @@ class SEUSS:
         print("\r   ")  # clear ^C
         self.logger.log_info("Program will be terminated...")
         self.seuss_web.stop()
+        self.power_consumption_manager.stop_instance()
         self.svs_thread_stop_flag.set()
 
         sys.exit(0)

@@ -25,26 +25,87 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 from datetime import datetime
+
+from websockets.sync.server import serve as ws_serv
+import websockets
+
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
 import bottle
-
 import json
 import os, sys, glob
 import zipfile
 import threading
 import core.version as version
 from waitress import serve
+
 from core.config import Config
 from core.logreader import LogReader
 from core.log import CustomLogger
 from spotmarket.abstract_classes.itemlist import Itemlist
 
+class WebSocketServer:
+    def __init__(self):
+        self.clients = set()  # Set of connected clients
+        self.logger = CustomLogger()
+        self.last_message = None
+
+    def handler(self, websocket):
+        """Handles incoming WebSocket connections synchronously."""
+        self.clients.add(websocket)
+        try:
+            remote_address = websocket.socket.getpeername()
+            # self.logger.log_info(f"Client connected: {remote_address}")
+        except Exception as e:
+            self.logger.log_error(f"Could not determine client address: {e}")
+            remote_address = None
+
+        if self.last_message:
+            try:
+                websocket.send(json.dumps(self.last_message))
+                # self.logger.log_info(f"Sent last message to new client: {self.last_message}")
+            except Exception as e:
+                self.logger.log_error(f"Error sending last message: {e}")
+
+        try:
+            # Waiting for incoming messages from the client
+            while True:
+                message = websocket.recv()
+                self.logger.log_debug(f"Message from client: {message}")
+        except websockets.exceptions.ConnectionClosed as e:
+            self.logger.log_debug(f"Connection closed: {e}")
+        finally:
+            # Remove the client from the list of connections
+            self.clients.discard(websocket)
+            if remote_address:
+                self.logger.log_debug(f"Client disconnected: {remote_address}")
+
+    def send_data_to_all_clients(self, message):
+        """Sends a message to all connected WebSocket clients synchronously."""
+        self.last_message = json.dumps(message)
+        if not self.clients:
+            # self.logger.log_info("No connected clients")
+            return
+        for client in list(self.clients):
+            try:
+                client.send(json.dumps(message))
+                # self.logger.log_info(f"Message sent to client: {message}")
+            except Exception as e:
+                self.logger.log_error(f"Error sending message to client: {e}")
+                self.clients.discard(client)  # Remove faulty clients
+
+    def start(self):
+        """Starts the WebSocket server synchronously."""
+        with ws_serv(self.handler, "0.0.0.0", 8765) as server:
+            self.logger.log_info("WebSocket server started at ws://0.0.0.0:8765")
+            server.serve_forever()
+
 
 class SEUSSWeb:
     def __init__(self):
+        self.ws_server = WebSocketServer()
+        # Erstelle die Bottle-App und integriere Socket.IO
         self.app = bottle.Bottle()
-        self.server = None
         main_script_path = os.path.abspath(sys.argv[0])
         self.main_script_directory = os.path.dirname(main_script_path)
         self.view_path = os.path.join(self.main_script_directory, 'views')
@@ -56,6 +117,11 @@ class SEUSSWeb:
 
         # Routen einrichten
         self.setup_routes()
+
+#    def get_sio(self):#
+#        return self.ws_server
+    def emit_ws(self, message):
+        self.ws_server.send_data_to_all_clients(message)
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
@@ -281,27 +347,29 @@ class SEUSSWeb:
         current_time = datetime.now()
         current_hour = current_time.hour
         width = 35
+        factor = 12
+
+        # Wenn keine Preise vorhanden sind, initialisiere mit 24 Preisen von 0.00
+        if not data:
+            data = {hour: None for hour in range(24)}
 
         svg = f"""
         <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
-        avg_height = 15
-        average_price = 0.0
+        avg_height = 12
         if tomorrow and average_price_tomorow is not None:
-            avg_height = (average_price_tomorow + 1) * 15  # Umrechnung in Höhe (Skalierung)
-            average_price = average_price_tomorow
+            avg_height = (average_price_tomorow + 1) * factor  # Umrechnung in Höhe (Skalierung)
         elif not tomorrow and average_price_today is not None:
-            avg_height = (average_price_today + 1) * 15  # Umrechnung in Höhe (Skalierung)
-            average_price = average_price_today
+            avg_height = (average_price_today + 1) * factor  # Umrechnung in Höhe (Skalierung)
 
         y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
         <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
 
-        charge_limit_height = (abs(self.config.charging_price_limit) + 1) * 15
+        charge_limit_height = (abs(self.config.charging_price_limit) + 1) * factor
         svg += f"""
         <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
         """
@@ -316,22 +384,26 @@ class SEUSSWeb:
                 color = "gainsboro"
 
             # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
-            if price < self.config.charging_price_limit or hour in green_hours:
-                if price < self.config.charging_price_hard_cap:
-                    color = "green" if current_hour > hour else "#32CD32"
-            elif hour in red_hours and hour not in green_hours:
-                color = "darkred" if current_hour > hour else "red"
-
-            if tomorrow:
+            if price is not None:
                 if price < self.config.charging_price_limit or hour in green_hours:
                     if price < self.config.charging_price_hard_cap:
-                        color = "#32CD32"
+                        color = "green" if current_hour > hour else "#32CD32"
                 elif hour in red_hours and hour not in green_hours:
-                    color = "red"
+                    color = "darkred" if current_hour > hour else "red"
 
-            # Berechne die Höhe und Ausrichtung des Balkens
-            height = (abs(price) + 1) * 15
-            y = 330 - height if price >= 0 else 330
+                if tomorrow:
+                    if price < self.config.charging_price_limit or hour in green_hours:
+                        if price < self.config.charging_price_hard_cap:
+                            color = "#32CD32"
+                    elif hour in red_hours and hour not in green_hours:
+                        color = "red"
+
+                # Berechne die Höhe und Ausrichtung des Balkens
+                height = (abs(price) + 1) * factor
+                y = 330 - height if price >= 0 else 330
+            else:
+                height = factor
+                y = 330 - height
 
             # Füge Balken hinzu
             svg += f"""
@@ -343,12 +415,27 @@ class SEUSSWeb:
             <text x="{hour * width + 15}" y="345" text-anchor="middle" font-size="10">{hour}</text>
             """
 
-            # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
-            svg += f"""
-            <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
-            """
+            if price is None:
+                price = ""
 
-        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * 15
+            # Überprüfen, ob der Balken höher als der Diagrammrahmen ist (330 Pixel)
+            if height > 330:
+                # Preis wird innerhalb des Balkens angezeigt (Kontrastfarbe)
+                price_color = "white" if (color != "gray" and color != "gainsboro") else "black"  # Kontrastfarbe wählen
+                svg += f"""
+                <text x="{hour * width + 15}" y="15" text-anchor="middle" font-size="10" fill="{price_color}">{price}</text>
+                """
+            else:
+                # Standardposition für den Preis oberhalb des Balkens
+                svg += f"""
+                <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
+                """
+#            # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
+#            svg += f"""
+#            <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
+#            """
+
+        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * factor
         svg += f"""
         <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
         """
@@ -447,12 +534,17 @@ class SEUSSWeb:
         return percentage1, percentage2
 
     def run(self, host='0.0.0.0', port=5000, debug=False):
+
+        # WebSocket-Server starten
+        server_thread = threading.Thread(target=self.ws_server.start, daemon=True)
+        server_thread.start()
+
         if self.config.log_level == "DEBUG":
             debug = True
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
-        serve(self.app, host=host, port=port)
         self.logger.log_info(f"start bottle host:{host}, port:{port}")
+        serve(self.app, host=host, port=port)
 
         # self.app.run(host=host, port=port, debug=debug)
 

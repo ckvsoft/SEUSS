@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Status Info</title>
     <link rel="stylesheet" type="text/css" href="static/styles.css">
+    <link rel="shortcut icon" href="/static/favicon.ico" />
 </head>
-
 <body>
     % include('header', title='Status')
 
@@ -25,6 +25,9 @@
             <div id="legend">
                 {{ !legend_svg }}
             </div>
+            <h1>Realtime Data</h1>
+            <div id="averageWh">Average Wh: -</div>
+            <div id="power">Power: -</div>
         </div>
     </div>
 
@@ -36,6 +39,78 @@
             document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
         }, 1000);
     </script>
+    <script>
+        let ws; // Declare WebSocket globally
+        let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
+        let reconnectAttempts = 0; // Count of reconnection attempts
+        const maxReconnectAttempts = 10; // Optional: Maximum reconnection attempts (or use infinite retries)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname; // Get only the hostname, not the port
+        const port = 8765; // Desired port
+        const wsUrl = `${protocol}//${host}:${port}`;
+
+        function connectWebSocket() {
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function () {
+                console.log('Connected to the WebSocket server');
+                reconnectAttempts = 0; // Reset reconnection attempts after successful connection
+            };
+
+            ws.onmessage = function (event) {
+                console.log('Message from server:', event.data);
+
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.averageWh !== undefined) {
+                        const averageWhElement = document.getElementById("averageWh");
+                        if (averageWhElement) {
+                            averageWhElement.textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
+                        }
+                    }
+                    if (data.power !== undefined) {
+                        const powerElement = document.getElementById("power");
+                        if (powerElement) {
+                            powerElement.textContent = `Power: ${data.power.toFixed(2)} W`;
+                        }
+                    }
+
+                    const responseElement = document.getElementById("response");
+                    if (responseElement) {
+                        responseElement.textContent = `Server response: ${event.data}`;
+                    }
+                } catch (error) {
+                    console.error('Error processing server message:', error);
+                }
+            };
+
+            ws.onerror = function (error) {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = function () {
+                console.log('Connection to server closed');
+                attemptReconnect();
+            };
+        }
+
+        function attemptReconnect() {
+            if (reconnectAttempts < maxReconnectAttempts || maxReconnectAttempts === 0) {
+                reconnectAttempts++;
+                console.log(`Attempting to reconnect... (Attempt ${reconnectAttempts})`);
+                setTimeout(() => {
+                    connectWebSocket();
+                }, reconnectInterval);
+            } else {
+                console.warn('Max reconnection attempts reached. Stopping reconnection.');
+            }
+        }
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+    </script>
+
 </body>
 
 </html>

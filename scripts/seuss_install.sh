@@ -161,7 +161,7 @@ if [ "$package_manager" != "opkg" ]; then
     source "$target_directory/venv/bin/activate"
     # Step 3: Install dependencies
     echo -e "${GREEN}Step 3: Install dependencies${NC}"
-    pip3 install -r "$target_directory/requirements.txt"
+    pip3 install --upgrade -r "$target_directory/requirements.txt"
 else
     echo -e "${GREEN}Step 2: Install dependencies${NC}"
     /bin/bash "$target_directory/missing.sh"

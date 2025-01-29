@@ -29,6 +29,7 @@ import json
 import os
 import socket
 import sys
+from typing import Tuple
 
 from core.log import CustomLogger
 from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
@@ -50,6 +51,8 @@ class Victron(ESSUnit):
         self.subsribers = Subscribers()
         self.inverters = PvInverterResults()
         self.gridmeters = GridMetersResults()
+
+        self.config.converter_efficiency = self.get_converter_efficiency()
 
         current_directory = os.path.dirname(os.path.realpath(sys.argv[0]))
         certificate_path = os.path.join(current_directory, 'certificate')
@@ -100,6 +103,14 @@ class Victron(ESSUnit):
             currentvoltage = 0.0  # Setze einen Standardwert
             return currentvoltage
 
+    def get_battery_current_wh(self):
+        soc = self.get_soc()
+        full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
+        battery_capacity_wh = full_capacity * 55.20
+        battery_current_wh = ((soc or 0) / 100) * battery_capacity_wh
+        self.logger.log_debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
+        return battery_current_wh
+
     def get_battery_minimum_soc_limit(self):
         minimumsoclimit = self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))
         self.logger.log_debug(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}%")
@@ -109,6 +120,11 @@ class Victron(ESSUnit):
         capacity = self._process_result(self.subsribers.get('Battery', 'Capacity'))
         self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
         return capacity
+
+    def get_battery_installed_capacity(self):
+        installed_capacity = self._process_result(self.subsribers.get('Battery', 'InstalledCapacity'))
+        self.logger.log_debug(f"{self._name} Batterie installed capacity: {installed_capacity} Ah")
+        return installed_capacity
 
     def get_soc(self):
         soc = self._process_result(self.subsribers.get('Battery', 'Soc'))
@@ -255,6 +271,7 @@ class Victron(ESSUnit):
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
+                f"Battery:N/{self.unit_id}/battery/{instance}/InstalledCapacity",
                 f"Firmware:N/{self.unit_id}/platform/0/Firmware/Installed/Version"
             ]
 
@@ -274,3 +291,19 @@ class Victron(ESSUnit):
 #                self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(self.subsribers.get('Schedule', 'Duration'))}")
 #                self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
 #                self.logger.log_info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
+    def get_converter_efficiency(self) -> Tuple[float, float]:
+        return 0.84, 0.90
+
+    def get_config(self):
+        mqtt_config = self.mqtt_config
+        mqtt_config["type"] = "mqtt"
+        mqtt_config["interval_duration"] = 5
+        mqtt_config["unit_id"] = self.unit_id
+        mqtt_config["keep_alive_topic"] = f"R/{self.unit_id}/keepalive"
+        mqtt_config["topics"] = {
+            "P_AC_consumption_L1": f"N/{self.unit_id}/system/0/Ac/Consumption/L1/Power",
+            "P_AC_consumption_L2": f"N/{self.unit_id}/system/0/Ac/Consumption/L2/Power",
+            "P_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Consumption/L3/Power",
+            "number_of_phases": f"N/{self.unit_id}/system/0/Ac/Consumption/NumberOfPhases"
+        }
+        return mqtt_config
