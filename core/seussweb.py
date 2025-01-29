@@ -48,6 +48,7 @@ class WebSocketServer:
     def __init__(self):
         self.clients = set()  # Set von verbundenen Clients
         self.logger = CustomLogger()
+        self.last_message = None
 
     def handler(self, websocket):
         """Handhabt eingehende WebSocket-Verbindungen synchron."""
@@ -58,6 +59,13 @@ class WebSocketServer:
         except Exception as e:
             self.logger.log_error(f"Konnte Client-Adresse nicht ermitteln: {e}")
             remote_address = None
+
+        if self.last_message:
+            try:
+                websocket.send(json.dumps(self.last_message))
+                self.logger.log_info(f"Letzte Nachricht an neuen Client gesendet: {self.last_message}")
+            except Exception as e:
+                self.logger.log_error(f"Fehler beim Senden der letzten Nachricht: {e}")
 
         try:
             # Warten auf eingehende Nachrichten vom Client
@@ -74,6 +82,7 @@ class WebSocketServer:
 
     def send_data_to_all_clients(self, message):
         """Sendet eine Nachricht an alle verbundenen WebSocket-Clients synchron."""
+        self.last_message = message
         if not self.clients:
             self.logger.log_info("Keine verbundenen Clients")
             return
