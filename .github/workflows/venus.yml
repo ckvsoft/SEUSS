@@ -56,6 +56,7 @@ jobs:
           github_branch: ${{ env.BRANCH_NAME }}
           NOSUDO: 1
           ACTOR: ${{ github.actor }}
+          BRANCH: "dev"
       - name: Execute SEUSS under Venus OS
         run: |
           . /data/seuss/venv/bin/activate && python3 seuss.py
