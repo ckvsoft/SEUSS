@@ -333,6 +333,7 @@ class SEUSS:
     def graceful_exit(self, signum, frame):
         print("\r   ")  # clear ^C
         self.logger.log_info("Program will be terminated...")
+        self.ws_server.stop()
         self.seuss_web.stop()
         self.power_consumption_manager.stop_instance()
         self.svs_thread_stop_flag.set()

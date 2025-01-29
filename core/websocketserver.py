@@ -35,6 +35,7 @@ class WebSocketServer:
         self.clients = set()  # Set of connected clients
         self.logger = CustomLogger()
         self.last_message = None
+        self.server = None
 
     def handler(self, websocket):
         """Handles incoming WebSocket connections synchronously."""
@@ -85,6 +86,12 @@ class WebSocketServer:
 
     def run(self, host="0.0.0.0", port=8765):
         """Starts the WebSocket server synchronously."""
-        with ws_serv(self.handler, host, port) as server:
-            self.logger.log_info(f"WebSocket server started at ws://{host}:{port}")
-            server.serve_forever()
+        with ws_serv(self.handler, host, port) as self.server:
+            self.logger.log_info(f"start WebSocket server host:{host} port:{port}")
+            self.server.serve_forever()
+
+    def stop(self):
+        if self.server:
+            self.server.shutdown()
+            self.logger.log_debug(f"WebSocket server Stop.")
+
