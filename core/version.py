@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 20.4.4225 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 20.4.4325 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -25,4 +25,4 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-__version__ = "0.4.42"
+__version__ = "0.4.43"
