@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 20.4.5225 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2024 - 2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
