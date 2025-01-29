@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 
 import core.version as version
 from core.statsmanager import StatsManager
+from core.websocketserver import WebSocketServer
 from solar.openmeteo import OpenMeteo
 from solar.solardata import Solardata
 from solar.solarbatterycalculator import SolarBatteryCalculator
@@ -54,6 +55,7 @@ class SEUSS:
         self.config = Config()
         self.logger = CustomLogger()
         self.svs_thread = None
+        self.ws_server = WebSocketServer()
         self.seuss_web = SEUSSWeb()
         self.power_consumption_manager = PowerConsumptionManager()
 
@@ -78,10 +80,10 @@ class SEUSS:
         if essunit is not None:
             unit_config = essunit.get_config()
             self.power_consumption_manager.update_instance(unit_config)
-            if self.seuss_web:
+            if self.ws_server:
                 power_consumption_instance = self.power_consumption_manager.get_instance()
                 if power_consumption_instance:
-                    power_consumption_instance.set_seuss_web(self.seuss_web)
+                    power_consumption_instance.set_ws_server(self.ws_server)
 
             # if essunit is not None:
             #    essunit.get_data()
@@ -342,12 +344,15 @@ class SEUSS:
 
     def start(self):
         sys.excepthook = self.excepthook_handler
-        bottle_thread = threading.Thread(target=self.seuss_web.run)
-        bottle_thread.daemon = True
+
+        # WebSocket-Server starten
+        ws_server_thread = threading.Thread(target=self.ws_server.run, daemon=True)
+        ws_server_thread.start()
+
+        bottle_thread = threading.Thread(target=self.seuss_web.run, daemon=True)
         bottle_thread.start()
 
-        self.svs_thread = threading.Thread(target=self.run_svs)
-        self.svs_thread.daemon = True
+        self.svs_thread = threading.Thread(target=self.run_svs, daemon=True)
         self.svs_thread.start()
 
         signal.signal(signal.SIGINT, self.graceful_exit)
