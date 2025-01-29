@@ -235,9 +235,21 @@ class PowerConsumptionBase:
             return projected_wh
         return 0
 
+    def get_daily_average(self):
+        hours = self.get_hours_since_midnight()
+        wh_avg = (self.get_daily_wh() / hours) if hours != 0 else 0
+        return wh_avg
+
     def get_daily_wh(self):
         """Returns the current daily consumption in Wh."""
         return self.daily_wh
+
+    def get_hours_since_midnight(self):
+        current_time = time.time()
+        midnight = current_time - (current_time % 86400)
+        elapsed_seconds = current_time - midnight
+        elapsed_hours = elapsed_seconds / 3600
+        return elapsed_hours
 
     def reset_data(self):
         """Reset all tracked data to default values."""
