@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Status Info</title>
     <link rel="stylesheet" type="text/css" href="static/styles.css">
+    <link rel="shortcut icon" href="/static/favicon.ico" />
 </head>
 <body>
     % include('header', title='Status')
