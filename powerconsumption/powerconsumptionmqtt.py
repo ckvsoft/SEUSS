@@ -46,6 +46,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.client = None
 
         # Save the new configuration
+        if broker is "": return
+
         self.broker = broker
         self.port = port
         self.unit_id = unit_id

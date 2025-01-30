@@ -84,6 +84,7 @@ class SEUSSWeb:
         self.app.route('/update_log', method='GET', callback=self.update_log)
         self.app.route('/check_is_online', method='GET', callback=self.check_is_online)
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
+        self.app.route('/get_charts', method='POST', callback=self.get_charts())
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
@@ -110,8 +111,7 @@ class SEUSSWeb:
     def set_item_list(self, items):
         self.market_items = items
 
-    def index(self):
-
+    def get_charts(self, as_json=True):
         data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_current_list())
         green_data, green_hours, next_green_data, next_green_hours = Itemlist.get_price_hour_lists(
@@ -122,6 +122,17 @@ class SEUSSWeb:
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
         next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
 
+        if as_json:
+            response.content_type = 'application/json'
+            return {
+                "today_chart": chart_svg,
+                "tomorrow_chart": next_chart_svg
+            }
+
+        return chart_svg, next_chart_svg
+
+    def index(self):
+        chart_svg, next_chart_svg = self.get_charts(False)
         legend_svg = self.generate_legend_svg()
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,

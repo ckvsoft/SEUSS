@@ -15,9 +15,9 @@
         <div class="left">
             <!-- SVG-Code oder andere Inhalte -->
             <h1>Today</h1>
-            <div>{{ !chart_svg }}</div>
+            <div id="chart_svg">{{ !chart_svg }}</div>
             <h1>Tomorrow</h1>
-            <div>{{ !next_chart_svg }}</div>
+            <div id="next_chart_svg">{{ !next_chart_svg }}</div>
         </div>
         <div class="right">
             <p id="datetime"></p>
@@ -40,8 +40,18 @@
             var currentDate = new Date();
             document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
         }, 1000);
-    </script>
-    <script>
+
+        function scheduleChartUpdate() {
+            const now = new Date();
+            const minutesUntilNextHour = 60 - now.getMinutes();
+            const secondsUntilNextHour = (minutesUntilNextHour * 60) - now.getSeconds();
+
+            setTimeout(() => {
+                updateCharts();
+                setInterval(updateCharts, 60 * 60 * 1000); // Update every hour
+            }, secondsUntilNextHour * 1000);
+        }
+
         let ws; // Declare WebSocket globally
         let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
         let reconnectAttempts = 0; // Count of reconnection attempts
@@ -121,8 +131,29 @@
             }
         }
 
+        function updateCharts() {
+            fetch('/get_charts')  // Unified API endpoint
+                .then(response => response.json())  // Parse JSON response
+                .then(data => {
+                    if (data.today_chart !== undefined) {
+                        const todayChart = document.getElementById("chart_svg");
+                        if (todayChart) todayChart.innerHTML = data.today_chart;
+                    }
+
+                    if (data.tomorrow_chart !== undefined) {
+                        const tomorrowChart = document.getElementById("next_chart_svg");
+                        if (tomorrowChart) tomorrowChart.innerHTML = data.tomorrow_chart;
+                    }
+                })
+                .catch(error => console.error("Error updating charts:", error));
+
+            console.log("Charts updated at full hour");
+        }
+
         // Initialize WebSocket connection
         connectWebSocket();
+        scheduleChartUpdate();
+
     </script>
 
 </body>
