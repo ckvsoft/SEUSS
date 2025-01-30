@@ -128,9 +128,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 if self.client.is_connected():
                     self.current_power = self.current_power or 0
                     print(f"Current power: {self.current_power:.2f} W")
-                    print(f"Hourly average: {self.get_hourly_average():.4f} Wh")
                     print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
-                    print(f"Daily forcast: {self.get_hourly_average() * 24:.4f} Wh")
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     if average_list:
                         value, count = average_list

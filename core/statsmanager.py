@@ -103,7 +103,7 @@ class StatsManager(Singleton):
 
     @classmethod
     def set_status_data(cls, group, key, value):
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if not isinstance(value, (int, float, tuple)) or isinstance(value, bool):
             return
 
         date_key = f"date_{key}"

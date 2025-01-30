@@ -47,11 +47,11 @@ class PowerConsumptionBase:
         self.last_time = None   # Last timestamp (seconds since epoch)
 
         self.hourly_wh = 0          # Consumption for the current hour in kWh
-        self.hourly_start_time = None  # Start time of the current hour
+        self.hourly_start_time = time.time()  # Start time of the current hour
 
         self.daily_wh = 0           # Daily consumption in kWh
-        self.current_hour = None     # Current hour
-        self.current_day = None      # Current day
+        self.current_hour = time.localtime(time.time()).tm_hour
+        self.current_day = time.localtime(time.time()).tm_yday
 
         # Initialized variables
         self.P_AC_consumption_L1 = self.P_AC_consumption_L2 = self.P_AC_consumption_L3 = None
@@ -88,45 +88,44 @@ class PowerConsumptionBase:
         self.ws_server = ws
 
     def load_data(self):
+        self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh")
+
+        hourly_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_wh")
+        self.hourly_wh, self.hourly_start_time = hourly_wh_list if isinstance(hourly_wh_list, tuple) and len(hourly_wh_list) == 2 else (0, time.time())
+
+        average_list = self.statsmanager.get_data("powerconsumption", "average")
+        self.average = average_list if isinstance(average_list, tuple) and len(average_list) == 2 else (0, 0)
+
+        last_value_list = self.statsmanager.get_data("powerconsumption", "last_power_value")
+        self.last_value, self.last_time = last_value_list if isinstance(last_value_list, tuple) and len(last_value_list) == 2 else (0, time.time())
+
         """Lädt gespeicherte Daten aus einer JSON-Datei."""
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, "r") as file:
                     data = json.load(file)
                     self.hourly_wh = data.get("hourly_wh", 0)
-                    self.daily_wh = data.get("daily_wh", 0)
                     self.hourly_start_time = data.get("hourly_start_time", time.time())
                     self.last_value = data.get("last_value", 0)
                     self.last_time = data.get("last_time", time.time())
-                    self.current_hour = data.get("current_hour", time.localtime(time.time()).tm_hour)
-                    self.current_day = data.get("current_day", time.localtime(time.time()).tm_yday)
                     self.average = data.get("average", (0,0))
             except json.JSONDecodeError:
                 self.logger.log_error("Corrupted JSON file detected. Resetting data.")
                 self.reset_data()
 
     def save_data(self):
-        """Speichert den aktuellen Status in einer JSON-Datei."""
-        data = {
-            "hourly_wh": self.hourly_wh,
-            "daily_wh": self.daily_wh,
-            "hourly_start_time": self.hourly_start_time,
-            "last_value": self.last_value,
-            "last_time": self.last_time,
-            "current_hour": self.current_hour,
-            "current_day": self.current_day,
-            "average": self.average
-        }
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time))
+        self.statsmanager.set_status_data("powerconsumption","average", self.average)
+        self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time))
+
         backup_file = f"{self.data_file}.backup"
         try:
             if os.path.exists(self.data_file):
-                os.replace(self.data_file, backup_file)  # Backup der aktuellen Datei
-            with open(self.data_file, "w") as file:
-                json.dump(data, file, indent=4)
-        except Exception as e:
-            self.logger.log_error(f"Error saving data: {e}")
+                os.remove(self.data_file)
             if os.path.exists(backup_file):
-                os.replace(backup_file, self.data_file)  # Wiederherstellung aus Backup
+                os.remove(backup_file)
+        except Exception as e:
+            self.logger.log_error(f"Error remove file: {e}")
 
     def save_hour(self):
         """Speichert den Durchschnitt des aktuellen Stundenverbrauchs."""
@@ -139,10 +138,8 @@ class PowerConsumptionBase:
             count += 1
             value /= count
             self.average = (value, count)
-        else:
-            avg_wh = 0
-        print(f"Hourly average for hour {self.current_hour}: {avg_wh:.4f} Wh")
-        print(f"Hourly average : {value:.4f} Wh")
+
+        self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average)
         self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value)
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average())
         self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh)
@@ -151,15 +148,9 @@ class PowerConsumptionBase:
         self.save_data()
 
     def save_day(self):
-        """Speichert den täglichen Verbrauch und ruft save_data auf."""
         print(f"Daily consumption: {self.daily_wh:.4f} Wh")
-        elapsed_time_in_hours = (time.time() - self.hourly_start_time) / 3600
-        if elapsed_time_in_hours > 0:
-            daily_forecast = (self.daily_wh / elapsed_time_in_hours) * 24
-            self.statsmanager.update_percent_status_data("powerconsumption", "daily_wh_average", daily_forecast)
-            print(f"Projected daily consumption: {daily_forecast:.4f} Wh")
-        else:
-            print("No projected data available.")
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_wh_average", self.get_daily_average())
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average())
 
         # Speichert die Daten
         self.save_data()
