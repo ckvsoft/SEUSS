@@ -26,9 +26,6 @@
 #
 from datetime import datetime
 
-from websockets.sync.server import serve as ws_serv
-import websockets
-
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
 import bottle
@@ -84,7 +81,7 @@ class SEUSSWeb:
         self.app.route('/update_log', method='GET', callback=self.update_log)
         self.app.route('/check_is_online', method='GET', callback=self.check_is_online)
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
-        self.app.route('/get_charts', method='POST', callback=self.get_charts())
+        self.app.route('/get_charts', method='POST', callback=self.get_charts)
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
