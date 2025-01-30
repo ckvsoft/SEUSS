@@ -124,10 +124,10 @@ class SEUSSWeb:
 
         if as_json:
             response.content_type = 'application/json'
-            return {
+            return json.dumps({
                 "today_chart": chart_svg,
                 "tomorrow_chart": next_chart_svg
-            }
+            })
 
         return chart_svg, next_chart_svg
 
