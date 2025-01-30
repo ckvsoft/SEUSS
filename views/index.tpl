@@ -26,8 +26,8 @@
                 {{ !legend_svg }}
             </div>
             <h1>Realtime Data</h1>
-            <div id="averageWh">Average current Hour: -</div>
-            <div id="averageWhD">Average current Day: -</div>
+            <div id="averageWh">Average: -</div>
+            <div id="averageWhD">Average Now: -</div>
             <div id="power">Power: -</div>
             <div id="consumptionD">Consumption today: -</div>
         </div>
@@ -68,13 +68,13 @@
                     if (data.averageWh !== undefined) {
                         const averageWhElement = document.getElementById("averageWh");
                         if (averageWhElement) {
-                            averageWhElement.textContent = `Average current Hour: ${data.averageWh.toFixed(2)} Wh`;
+                            averageWhElement.textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
                         }
                     }
                     if (data.averageWhD !== undefined) {
                         const averageWhDElement = document.getElementById("averageWhD");
                         if (averageWhDElement) {
-                            averageWhDElement.textContent = `Average current Day: ${data.averageWhD.toFixed(2)} Wh`;
+                            averageWhDElement.textContent = `Average now: ${data.averageWhD.toFixed(2)} Wh`;
                         }
                     }
                     if (data.power !== undefined) {
