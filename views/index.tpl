@@ -36,22 +36,6 @@
     % include('footer')
 
     <script>
-        setInterval(function () {
-            var currentDate = new Date();
-            document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
-        }, 1000);
-
-        function scheduleChartUpdate() {
-            const now = new Date();
-            const minutesUntilNextHour = 60 - now.getMinutes();
-            const secondsUntilNextHour = (minutesUntilNextHour * 60) - now.getSeconds();
-
-            setTimeout(() => {
-                updateCharts();
-                setInterval(updateCharts, 60 * 60 * 1000); // Update every hour
-            }, secondsUntilNextHour * 1000);
-        }
-
         let ws; // Declare WebSocket globally
         let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
         let reconnectAttempts = 0; // Count of reconnection attempts
@@ -60,6 +44,18 @@
         const host = window.location.hostname; // Get only the hostname, not the port
         const port = 8765; // Desired port
         const wsUrl = `${protocol}//${host}:${port}`;
+        let lastUpdatedHour = -1;  // Flag für die letzte aktualisierte Stunde
+
+        setInterval(function () {
+            var currentDate = new Date();
+            document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
+
+            // Prüfen, ob es zur vollen Stunde ist (Minute 0)
+            if (currentDate.getMinutes() === 0 && currentDate.getHours() !== lastUpdatedHour) {
+                updateCharts();  // Chart-Update nur zur vollen Stunde
+                lastUpdatedHour = currentDate.getHours();
+            }
+        }, 1000);
 
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
@@ -152,7 +148,6 @@
 
         // Initialize WebSocket connection
         connectWebSocket();
-        scheduleChartUpdate();
 
     </script>
 
