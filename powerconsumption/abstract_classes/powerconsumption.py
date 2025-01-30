@@ -32,6 +32,8 @@ import time
 
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
+from core.timeutilities import TimeUtilities
+
 
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
@@ -237,7 +239,7 @@ class PowerConsumptionBase:
         return 0
 
     def get_daily_average(self):
-        total_duration_minutes = self.get_minutes_since_midnight()
+        total_duration_minutes, _ = self.get_minutes_since_until__midnight()
         if total_duration_minutes > 0:
             consumption_per_minute = self.daily_wh / total_duration_minutes
             projected_consumption_wh = consumption_per_minute * 1440
@@ -249,13 +251,12 @@ class PowerConsumptionBase:
         """Returns the current daily consumption in Wh."""
         return self.daily_wh
 
-    def get_minutes_since_midnight(self):
+    def get_minutes_since_until__midnight(self):
         """Berechnet die vergangenen Minuten seit Mitternacht."""
-        current_time = time.time()  # Aktueller Zeitstempel in Sekunden
-        midnight = current_time - (current_time % 86400)  # Berechnet den Zeitstempel für Mitternacht
-        elapsed_seconds = current_time - midnight  # Vergangene Sekunden seit Mitternacht
-        elapsed_minutes = elapsed_seconds / 60  # Umrechnung in Minuten
-        return elapsed_minutes
+        now = TimeUtilities.get_now()  # Lokale Zeit holen
+        elapsed_minutes = now.hour * 60 + now.minute + now.second / 60  # Umrechnung in Minuten
+        remaining_minutes = 1440 - elapsed_minutes  # Verbleibende Minuten bis Mitternacht
+        return elapsed_minutes, remaining_minutes
 
     def reset_data(self):
         """Reset all tracked data to default values."""
