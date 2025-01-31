@@ -88,7 +88,7 @@ class PowerConsumptionBase:
         self.ws_server = ws
 
     def load_data(self):
-        self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh")
+        self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh") or 0.0
 
         hourly_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_wh")
         self.hourly_wh, self.hourly_start_time = hourly_wh_list if isinstance(hourly_wh_list, tuple) and len(hourly_wh_list) == 2 else (0, time.time())
