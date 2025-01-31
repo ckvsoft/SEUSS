@@ -22,7 +22,7 @@
         <div class="right">
             <p id="datetime"></p>
             <p>Version: {{ version }}</p>
-            <div id="legend">
+            <div id="legend_svg">
                 {{ !legend_svg }}
             </div>
             <h1>Realtime Data</h1>
@@ -141,9 +141,9 @@
                         if (tomorrowChart) tomorrowChart.innerHTML = data.tomorrow_chart;
                     }
 
-                    if (data.legend !== undefined) {
-                        const legend = document.getElementById("legend");
-                        if (legend) legend.innerHTML = data.legend;
+                    if (data.legend_svg !== undefined) {
+                        const legend_svg = document.getElementById("legend_svg");
+                        if (legend_svg) legend.innerHTML = data.legend_svg;
                     }
                 })
                 .catch(error => console.error("Error updating charts:", error));

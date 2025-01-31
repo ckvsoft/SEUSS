@@ -125,7 +125,7 @@ class SEUSSWeb:
             return json.dumps({
                 "today_chart": chart_svg,
                 "tomorrow_chart": next_chart_svg,
-                "legend": legend_svg
+                "legend_svg": legend_svg
             })
 
         return chart_svg, next_chart_svg, legend_svg
