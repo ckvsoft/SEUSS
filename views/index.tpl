@@ -140,6 +140,11 @@
                         const tomorrowChart = document.getElementById("next_chart_svg");
                         if (tomorrowChart) tomorrowChart.innerHTML = data.tomorrow_chart;
                     }
+
+                    if (data.legend !== undefined) {
+                        const legend = document.getElementById("legend");
+                        if (legend) legend.innerHTML = data.legend;
+                    }
                 })
                 .catch(error => console.error("Error updating charts:", error));
 

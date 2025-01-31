@@ -118,19 +118,20 @@ class SEUSSWeb:
 
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
         next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
+        legend_svg = self.generate_legend_svg()
 
         if as_json:
             response.content_type = 'application/json'
             return json.dumps({
                 "today_chart": chart_svg,
-                "tomorrow_chart": next_chart_svg
+                "tomorrow_chart": next_chart_svg,
+                "legend": legend_svg
             })
 
-        return chart_svg, next_chart_svg
+        return chart_svg, next_chart_svg, legend_svg
 
     def index(self):
-        chart_svg, next_chart_svg = self.get_charts(False)
-        legend_svg = self.generate_legend_svg()
+        chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
                         version=version.__version__, root=self.view_path)
