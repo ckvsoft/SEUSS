@@ -59,6 +59,7 @@
 
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
+            console.log('Connected to  ${wsUrl}');
 
             ws.onopen = function () {
                 console.log('Connected to the WebSocket server');
@@ -143,7 +144,7 @@
 
                     if (data.legend_svg !== undefined) {
                         const legend_svg = document.getElementById("legend_svg");
-                        if (legend_svg) legend.innerHTML = data.legend_svg;
+                        if (legend_svg) legend_svg.innerHTML = data.legend_svg;
                     }
                 })
                 .catch(error => console.error("Error updating charts:", error));
