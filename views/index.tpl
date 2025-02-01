@@ -59,7 +59,7 @@
 
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
-            console.log('Connected to  ${wsUrl}');
+            console.log('Connected to ' + wsUrl);
 
             ws.onopen = function () {
                 console.log('Connected to the WebSocket server');

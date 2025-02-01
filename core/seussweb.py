@@ -109,6 +109,7 @@ class SEUSSWeb:
         self.market_items = items
 
     def get_charts(self, as_json=True):
+
         data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_current_list())
         green_data, green_hours, next_green_data, next_green_hours = Itemlist.get_price_hour_lists(
@@ -118,6 +119,7 @@ class SEUSSWeb:
 
         chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
         next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
+
         legend_svg = self.generate_legend_svg()
 
         if as_json:
