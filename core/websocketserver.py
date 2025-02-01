@@ -42,7 +42,7 @@ class WebSocketServer:
         self.clients.add(websocket)
         try:
             remote_address = websocket.socket.getpeername()
-            # self.logger.log_info(f"Client connected: {remote_address}")
+            self.logger.log_info(f"Client connected: {remote_address}")
         except Exception as e:
             self.logger.log_error(f"Could not determine client address: {e}")
             remote_address = None
@@ -72,6 +72,7 @@ class WebSocketServer:
         self.last_message = message
         if not self.clients:
             # self.logger.log_info("No connected clients")
+            print("No connected clients")
             return
         for client in list(self.clients):
             try:
