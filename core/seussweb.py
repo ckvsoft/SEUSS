@@ -347,7 +347,7 @@ class SEUSSWeb:
                         color = "red"
 
                 # Berechne die Höhe und Ausrichtung des Balkens
-                height = (abs(price) + 1) * factor
+                height = (abs(price if price else 0) + 1) * factor
                 y = 330 - height if price >= 0 else 330
             else:
                 height = factor
