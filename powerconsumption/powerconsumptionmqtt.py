@@ -124,7 +124,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         """Sends periodic keep-alive messages to the broker."""
         while self.keep_alive_running:
             time.sleep(self.interval_duration)  # Wait for the interval
-            if self.client:
+            if self.client and self.keep_alive_running:
                 if self.client.is_connected():
                     self.current_power = self.current_power or 0
                     print(f"Current power: {self.current_power:.2f} W")
@@ -160,16 +160,27 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.client.subscribe(topic)
 
         # Start the keep-alive thread
-        self.keep_alive_running = True  # Start the new keep-alive thread
-        threading.Thread(target=self.send_keep_alive, daemon=True).start()
+        self.keep_alive_running = True
+        keep_alive_thread = threading.Thread(target=self.send_keep_alive, daemon=True)
+        keep_alive_thread.start()
 
-        # Start the MQTT loop and wait for messages
+        # Start the MQTT loop in a non-blocking thread
+        mqtt_thread = threading.Thread(target=self.mqtt_loop)
+        mqtt_thread.start()
+
+        # Wait until stop_event is set
+        self.stop_event.wait()  # Blocks until the stop_event is set
+
+        # Cleanup once the thread is stopped
+        self.client.disconnect()
+        self.save_data()  # Save data on exit
+
+    def mqtt_loop(self):
+        """MQTT loop to keep receiving messages."""
         try:
             self.client.loop_forever()
         except KeyboardInterrupt:
             print("Exiting program...")
-        finally:
-            self.save_data()  # Save data on exit
 
     def _create_ssl_context(self, certificate):
         """Create an SSL context for the MQTT connection."""

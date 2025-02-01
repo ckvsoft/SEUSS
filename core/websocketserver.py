@@ -94,5 +94,5 @@ class WebSocketServer:
     def stop(self):
         if self.server:
             self.server.shutdown()
-            self.logger.log_debug(f"WebSocket server Stop.")
+            self.logger.log_debug(f"WebSocket server has stopped.")
 

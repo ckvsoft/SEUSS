@@ -38,6 +38,7 @@ from core.timeutilities import TimeUtilities
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
         self.interval_duration = interval_duration
+        self.stop_event = threading.Event()
         self.ws_server = None
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
@@ -65,7 +66,7 @@ class PowerConsumptionBase:
         self.average = (0,0)
 
     def start(self):
-        if self.thread is None:
+        if self.thread is None or not self.thread.is_alive():
             self.thread = threading.Thread(target=self.run)
             self.thread.start()
             self.logger.log_debug(f"{self.__class__.__name__} started with interval {self.interval_duration} minutes.")
@@ -73,12 +74,12 @@ class PowerConsumptionBase:
             self.logger.log_debug(f"{self.__class__.__name__} is already running.")
 
     def stop(self):
-        if self.thread is not None:
-            self.logger.log_debug(f"{self.__class__.__name__} is stopping...")
-            self.thread.join()  # Wait until the thread finishes
-            self.thread = None
-        else:
-            self.logger.log_debug(f"{self.__class__.__name__} is not running.")
+        """Stop the running thread."""
+        self.stop_event.set()  # Set the stop flag to end the run loop
+        if self.thread:
+            self.thread.join()  # Wait for the main thread to finish
+
+
 
     def run(self):
         """Main process - Implementation in derived classes."""

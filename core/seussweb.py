@@ -493,7 +493,7 @@ class SEUSSWeb:
         # self.app.run(host=host, port=port, debug=debug)
 
     def stop(self):
-        self.logger.log_debug(f"Bottle Stop")
+        self.logger.log_debug(f"Bottle has stopped.")
         sys.stderr.close()
         self.app.close()
 

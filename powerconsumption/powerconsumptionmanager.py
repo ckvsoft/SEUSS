@@ -30,6 +30,7 @@ class PowerConsumptionManager:
         if self.current_instance:
             self.current_instance.stop()
             self.current_instance = None
+            self.logger.log_debug(f"{self.__class__.__name__} has stopped.")
 
     def update_instance(self, new_config):
         """Updates the instance when the configuration changes."""
