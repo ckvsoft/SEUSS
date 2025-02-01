@@ -30,10 +30,12 @@
 cd /data/seuss || exit
 
 error_file="/tmp/seuss_error.log"
+output_file="/tmp/seuss_output.log"
 
 {
     bash /data/seuss/missing.sh
-} 2>> "$error_file"
+} >> "$output_file" 2>> "$error_file"
 
-exec 2>> "$error_file"
+exec >> "$output_file" 2>> "$error_file"
+
 python /data/seuss/seuss.py
