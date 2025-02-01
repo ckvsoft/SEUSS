@@ -32,6 +32,8 @@ cd /data/seuss || exit
 error_file="/tmp/seuss_error.log"
 output_file="/tmp/seuss_output.log"
 
+sleep 0.5
+
 {
     bash /data/seuss/missing.sh
 } >> "$output_file" 2>> "$error_file"
