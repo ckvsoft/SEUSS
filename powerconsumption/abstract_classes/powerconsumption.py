@@ -117,8 +117,7 @@ class PowerConsumptionBase:
 
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time))
-        self.statsmanager.set_status_data("powerconsumption","average", self.average)
-        self.logger.log_debug(f"save ... set average: {self.average}")
+        self.statsmanager.update_percent_status_data("powerconsumption","average", self.average)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time))
         if logging:
             self.logger.log_debug("data saved.")

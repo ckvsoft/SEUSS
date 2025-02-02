@@ -26,7 +26,12 @@
                 {{ !legend_svg }}
             </div>
             <div>
-                <h1>Realtime Data</h1>
+                <div>
+                    <div class="realtime-header">
+                        <h1>Realtime Data</h1>
+                        <div class="loading-circle" id="loadingCircle"></div>
+                    </div>
+                </div>
                 <div class="realtime-container">
                     <div class="realtime-left">
                         <div id="averageWh">Average: -</div>
@@ -81,34 +86,27 @@
                     const data = JSON.parse(event.data);
 
                     if (data.averageWh !== undefined) {
-                        const averageWhElement = document.getElementById("averageWh");
-                        if (averageWhElement) {
-                            averageWhElement.textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
-                        }
+                        document.getElementById("averageWh").textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
                     }
                     if (data.averageWhD !== undefined) {
-                        const averageWhDElement = document.getElementById("averageWhD");
-                        if (averageWhDElement) {
-                            averageWhDElement.textContent = `Average now: ${data.averageWhD.toFixed(2)} Wh`;
-                        }
+                        document.getElementById("averageWhD").textContent = `Average now: ${data.averageWhD.toFixed(2)} Wh`;
                     }
                     if (data.power !== undefined) {
-                        const powerElement = document.getElementById("power");
-                        if (powerElement) {
-                            powerElement.textContent = `Power: ${data.power.toFixed(2)} W`;
-                        }
+                        document.getElementById("power").textContent = `Power: ${data.power.toFixed(2)} W`;
                     }
                     if (data.consumptionD !== undefined) {
-                        const consumptionDElement = document.getElementById("consumptionD");
-                        if (consumptionDElement) {
-                            consumptionDElement.textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
-                        }
+                        document.getElementById("consumptionD").textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
                     }
 
-                    const responseElement = document.getElementById("response");
-                    if (responseElement) {
-                        responseElement.textContent = `Server response: ${event.data}`;
-                    }
+                    // 🔄 Induktionskreis aktivieren
+                    const loadingCircle = document.getElementById("loadingCircle");
+                    loadingCircle.classList.add("active");
+
+                    // Nach 2 Sekunden die Animation wieder entfernen
+                    setTimeout(() => {
+                        loadingCircle.classList.remove("active");
+                    }, 2000);
+
                 } catch (error) {
                     console.error('Error processing server message:', error);
                 }
