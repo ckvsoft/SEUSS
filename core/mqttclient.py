@@ -114,7 +114,6 @@ class GridMetersResults(MqttResult):
         super().__init__()
         self.results = {}
         self.gridmeters = {}
-        # self.status = StatsManager()
 
     def add_value(self, topic, value):
         self.results[topic] = value
@@ -169,7 +168,6 @@ class GridMetersResults(MqttResult):
 
         # Umwandlung der vergangenen Zeit in Stunden
         hours_since_midnight = time_since_midnight.total_seconds() / 3600
-        stats_manager_instance = StatsManager()
         return forward / hours_since_midnight
 
     def get_value(self, device_id, key):

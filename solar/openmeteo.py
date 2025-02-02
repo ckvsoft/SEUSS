@@ -57,6 +57,7 @@ class OpenMeteo:
     def __init__(self, **kwargs) -> None:
         self.config = Config()
         self.logger = CustomLogger()
+        self.statsmanager = StatsManager()
         self.panels = self.config.get_pv_panels()
         self.noon_hour = 12
         self.damping = (0.0, 0.0)
@@ -166,12 +167,12 @@ class OpenMeteo:
                 # Berechne den Anpassungsfaktor basierend auf der tatsächlichen Stunde und der Vorhersage
                 adjustment_factor = solardata.current_hour_solar_yield / forcast_total_watts_current_hour
 
-            previous_adjustment_factor = StatsManager.get_data("solar", "adjustment_factor") or 1.0
+            previous_adjustment_factor = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
 
             if adjustment_factor != 0.0:
-                StatsManager.set_status_data("solar", "adjustment_factor", adjustment_factor)
+                self.statsmanager.set_status_data("solar", "adjustment_factor", adjustment_factor)
             else:
-                adjustment_factor = StatsManager.get_data("solar", "adjustment_factor") or 0.0
+                adjustment_factor = self.statsmanager.get_data("solar", "adjustment_factor") or 0.0
 
             self.logger.log_debug(f"Solar adjustment_factor: {adjustment_factor}")
             self.logger.log_debug(f"Solar raw current_hour data: {total_watts_current_hour} Wh")

@@ -46,6 +46,7 @@ class Conditions:
         self.essunit = essunit
         self.config = Config()
         self.logger = CustomLogger()
+        self.statsmanager = StatsManager()
         self.available_surplus = 0.0
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
@@ -311,7 +312,7 @@ class Conditions:
 
     def _calculate_required_capacity(self, upcoming_hours):
         average_consumption = 0.0
-        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
+        average_consumption_list = self.statsmanager.get_data('gridmeters', 'forward_hourly')
         if average_consumption_list is not None:
             average_consumption = round(average_consumption_list[0], 2)
 
@@ -478,15 +479,14 @@ class Conditions:
         ]
 
         # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
-        statsmanager = StatsManager()
-        initial_charge_state_wh = statsmanager.get_data('Energy', "initial_charge_state_wh") or 0.0  # Umbenannt
+        initial_charge_state_wh = self.statsmanager.get_data('Energy', "initial_charge_state_wh") or 0.0  # Umbenannt
         self.logger.log_debug(f"Initial charge state wh: {initial_charge_state_wh:.2f} Wh")
         hourly_loaded_wh = 0.0
         if initial_charge_state_wh > 0.0:
             minute = now.minute
             if minute == 0:
                 minute = 60  # Wenn genau zu Beginn der Stunde, setze Minute auf 60
-                statsmanager.set_status_data('Energy', "initial_charge_state_wh", self.essunit.get_battery_current_wh())
+                self.statsmanager.set_status_data('Energy', "initial_charge_state_wh", self.essunit.get_battery_current_wh())
 
             current_loaded_wh = (self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minute
             hourly_loaded_wh = current_loaded_wh * 60

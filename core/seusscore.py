@@ -58,6 +58,7 @@ class SEUSS:
         self.ws_server = WebSocketServer()
         self.seuss_web = SEUSSWeb()
         self.power_consumption_manager = PowerConsumptionManager()
+        self.statsmanager = StatsManager()
 
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
@@ -198,10 +199,9 @@ class SEUSS:
             for key_inner, value_inner in value_outer.items():
                 self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        statsmanager = StatsManager()
-        total_forward_hourly_list = statsmanager.get_data("powerconsumption","hourly_watt_average")
+        total_forward_hourly_list = self.statsmanager.get_data("powerconsumption","hourly_watt_average")
         total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
-        manager_instance = (self.power_consumption_manager.get_instance())
+        manager_instance = self.power_consumption_manager.get_instance()
         if manager_instance:
             value = manager_instance.get_hourly_average()
             consumption = manager_instance.get_daily_wh()
@@ -209,7 +209,7 @@ class SEUSS:
             self.logger.log_info(
                 f"Consumption today: {round(consumption, 2):.2f} Wh, forecast today: {total_forward_hourly * 24:.2f} Wh average hour: {round(total_forward_hourly, 2):.2f} Wh")
 
-            statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
+            self.statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')
@@ -241,9 +241,9 @@ class SEUSS:
             current_time = TimeUtilities.get_now().time()
 
             if current_time < sunset_time and total_solar > 0.0:
-                efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
+                efficiency = self.statsmanager.update_percent_status_data('solar', 'efficiency', percentage)
             else:
-                efficiency_list = StatsManager.get_data('solar', 'efficiency')
+                efficiency_list = self.statsmanager.get_data('solar', 'efficiency')
                 if efficiency_list is not None:
                     efficiency = round(efficiency_list[0], 2)
             rounded_percentage = round(percentage, 2)
@@ -276,15 +276,15 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
+            self.statsmanager.set_status_data('Energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
+            self.statsmanager.set_status_data('Energy', "initial_charge_state_wh", 0.0)
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
+            self.statsmanager.set_status_data('Energy', "initial_charge_state_wh", 0.0)
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:

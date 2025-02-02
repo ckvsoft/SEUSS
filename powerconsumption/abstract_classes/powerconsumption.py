@@ -75,6 +75,7 @@ class PowerConsumptionBase:
 
     def stop(self):
         """Stop the running thread."""
+        self.save_data(True)
         self.stop_event.set()  # Set the stop flag to end the run loop
         if self.thread:
             self.thread.join()  # Wait for the main thread to finish
@@ -114,10 +115,12 @@ class PowerConsumptionBase:
                 self.logger.log_error("Corrupted JSON file detected. Resetting data.")
                 self.reset_data()
 
-    def save_data(self):
+    def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time))
         self.statsmanager.set_status_data("powerconsumption","average", self.average)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time))
+        if logging:
+            self.logger.log_debug("data saved.")
 
         backup_file = f"{self.data_file}.backup"
         try:
@@ -194,8 +197,9 @@ class PowerConsumptionBase:
 
         # Speichern der Daten alle 5 Minuten
         current_minute = time.localtime(timestamp).tm_min
-        if current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]:
+        if current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] and current_minute != self.last_minute:
             self.save_data()
+            self.last_minute = current_minute
 
         # Aktualisieren der letzten Werte
         self.last_value = power
