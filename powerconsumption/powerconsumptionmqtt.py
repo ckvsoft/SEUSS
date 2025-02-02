@@ -130,6 +130,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     print(f"Current power: {self.current_power:.2f} W")
                     print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
+                    value = 0.0
                     if average_list:
                         value, count = average_list
                         value *= count
@@ -138,8 +139,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         print(f"Average Stats: {value:.4f} Wh")
                         print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
-                        if self.ws_server:
-                            self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'consumptionD': self.get_daily_wh()})
+                    if self.ws_server:
+                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'consumptionD': self.get_daily_wh()})
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)

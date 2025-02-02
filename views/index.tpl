@@ -20,16 +20,24 @@
             <div id="next_chart_svg">{{ !next_chart_svg }}</div>
         </div>
         <div class="right">
-            <p id="datetime"></p>
+            <p id="datetime">Current date and time: -</p>
             <p>Version: {{ version }}</p>
             <div id="legend_svg">
                 {{ !legend_svg }}
             </div>
-            <h1>Realtime Data</h1>
-            <div id="averageWh">Average: -</div>
-            <div id="averageWhD">Average Now: -</div>
-            <div id="power">Power: -</div>
-            <div id="consumptionD">Consumption today: -</div>
+            <div>
+                <h1>Realtime Data</h1>
+                <div class="realtime-container">
+                    <div class="realtime-left">
+                        <div id="averageWh">Average: -</div>
+                        <div id="power">Power: -</div>
+                    </div>
+                    <div class="realtime-right">
+                        <div id="averageWhD">Average Now: -</div>
+                        <div id="consumptionD">Consumption today: -</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

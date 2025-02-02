@@ -224,3 +224,33 @@ nav a {
 .notification.red {
     background-color: red;
 }
+
+.realtime-container {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    border: 1px solid #3fff33;
+    padding: 10px;
+    background-color: white;
+    max-width: 500px;
+}
+
+.realtime-left, .realtime-right {
+    flex: 1;
+}
+
+.realtime-left div, .realtime-right div {
+    padding: 8px;
+    border-bottom: 1px solid #ddd;
+}
+
+body.dark-mode .realtime-container {
+    background-color: black;
+    border: 1px solid #3fff33;
+}
+
+body.dark-mode .realtime-left div,
+body.dark-mode .realtime-right div {
+    border-bottom: 1px solid #666;
+    color: #ccc;
+}
