@@ -58,17 +58,29 @@
         const port = 8765; // Desired port
         const wsUrl = `${protocol}//${host}:${port}`;
         let lastUpdatedHour = -1;  // Flag für die letzte aktualisierte Stunde
+        let lastUpdatedMinute = -1;  // Flag für die letzte aktualisierte Minute
 
         setInterval(function () {
             var currentDate = new Date();
             document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
 
-            // Prüfen, ob es zur vollen Stunde ist (Minute 0)
-            if (currentDate.getMinutes() === 0 && currentDate.getHours() !== lastUpdatedHour) {
-                updateCharts();  // Chart-Update nur zur vollen Stunde
-                lastUpdatedHour = currentDate.getHours();
+            var currentHour = currentDate.getHours();
+            var currentMinute = currentDate.getMinutes();
+
+            // Volle Stunde prüfen (aber nur einmal pro Stunde)
+            if (currentMinute === 0 && currentHour !== lastUpdatedHour) {
+                updateCharts();
+                lastUpdatedHour = currentHour;
+                lastUpdatedMinute = currentMinute;
             }
-        }, 1000);
+
+            // Zwischen 13:00 und 14:00 Uhr zusätzlich alle 15 Minuten (13:00, 13:15, 13:30, 13:45)
+            if (currentHour === 13 && currentMinute % 15 === 0 && lastUpdatedMinute !== currentMinute) {
+                updateCharts();
+                lastUpdatedMinute = currentMinute;  // Speichert, dass diese Minute schon geupdatet wurde
+            }
+
+        }, 1000); // Jede Sekunde laufen lassen
 
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
@@ -102,10 +114,10 @@
                     const loadingCircle = document.getElementById("loadingCircle");
                     loadingCircle.classList.add("active");
 
-                    // Nach 2 Sekunden die Animation wieder entfernen
+                    // Nach 1.5 Sekunden die Animation wieder entfernen
                     setTimeout(() => {
                         loadingCircle.classList.remove("active");
-                    }, 2000);
+                    }, 1500);
 
                 } catch (error) {
                     console.error('Error processing server message:', error);
