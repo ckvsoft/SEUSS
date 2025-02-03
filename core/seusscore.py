@@ -59,6 +59,7 @@ class SEUSS:
         self.seuss_web = SEUSSWeb()
         self.power_consumption_manager = PowerConsumptionManager()
         self.statsmanager = StatsManager()
+        self.statsmanager.remove_unused_datagroups()
 
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()

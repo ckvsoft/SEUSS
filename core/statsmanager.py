@@ -206,6 +206,16 @@ class StatsManager(Singleton):
             cls.save_data()
 
     @classmethod
+    def remove_unused_datagroups(cls):
+        # List of keys to keep
+        keep_groups = {"powerconsumption", "gridmeters", "pvinverters", "market", "solar"}
+        # Filter the dictionary
+        filtered_data = {key: value for key, value in cls.data.items() if key in keep_groups}
+        cls.data = filtered_data
+        cls.save_data()
+        return filtered_data
+
+    @classmethod
     def get_data(cls, group, key):
         group_data = cls.data.get(group, {})
         return group_data.get(key, None)
@@ -231,3 +241,4 @@ class StatsManager(Singleton):
     @classmethod
     def get_power_events(cls, event_type):
         return cls.power_events.get(event_type, [])
+
