@@ -21,7 +21,7 @@ header {
 
 h1 {
     color: #4285f4;
-    margin: 2px 0 2; /* Reduzieren Sie den oberen Abstand nach Bedarf */
+    margin: 2px 0 2px;
 }
 
 .container {
