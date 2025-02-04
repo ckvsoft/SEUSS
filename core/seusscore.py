@@ -87,16 +87,11 @@ class SEUSS:
             self.logger.log_info(f"Active Soc Limit: {active_soc_limit} Soc: {soc} Delay: {delay_active_soc_limit} ")
 
             if delay_active_soc_limit and soc < active_soc_limit:
-                delay = self.statsmanager.get_data("ess_unit", "soc_delay") or 0
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
                 if check_limit is None:
                     self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
                     check_limit = active_soc_limit
                     self.logger.log_info(f"Save Active Soc Limit Status: {active_soc_limit}")
-
-                if check_limit < active_soc_limit:
-                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
-                    self.logger.log_info(f"Update Active Soc Limit Status: {active_soc_limit}")
 
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
                 t_soc = (soc // 5) * 5
@@ -319,11 +314,17 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
-            self.statsmanager.set_status_data('energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
+
+            if self.statsmanager.get_data('energy', "initial_charge_state_wh") is None:
+                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
+
+            self.update_charging_statistics(essunit)
+
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
             self.statsmanager.set_status_data('energy', "initial_charge_state_wh", 0.0)
+
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
@@ -340,6 +341,26 @@ class SEUSS:
         elif essunit is not None:
             self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
+
+    def update_charging_statistics(self, essunit):
+        """Speichert die Ladeleistung als gleitenden Durchschnitt."""
+        current_wh = essunit.get_battery_current_wh()
+        initial_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0
+        last_average_wh_per_min = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or 0.0
+
+        if initial_wh == 0.0 or current_wh <= initial_wh:
+            return
+
+        now = TimeUtilities.get_now()
+        minutes_passed = now.minute if now.minute > 0 else 60
+        current_wh_per_min = (current_wh - initial_wh) / minutes_passed
+
+        smoothed_wh_per_min = (0.8 * last_average_wh_per_min) + (0.2 * current_wh_per_min)
+
+        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", smoothed_wh_per_min)
+        self.statsmanager.set_status_data('energy', "initial_charge_state_wh", current_wh)
+
+        self.logger.log_debug(f"Updated charge average: {smoothed_wh_per_min:.2f} Wh/min")
 
     def handle_no_data(self, essunit):
         self.logger.log_warning("No data available")
