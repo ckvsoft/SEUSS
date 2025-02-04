@@ -465,7 +465,14 @@ class Conditions:
     def _check_for_cheaper_hours(self, additional_prices):
         now = TimeUtilities.get_now()
         current_hour_start = now.replace(minute=0, second=0, microsecond=0)
-#        additional_prices = [
+
+        current_soc = self.essunit.get_battery_current_soc()
+
+        if current_soc >= 99.0:
+            self.logger.log_debug(f"SoC is {current_soc:.2f}%, charging is unnecessary.")
+            return False
+
+        #        additional_prices = [
 #            Item(now + timedelta(hours=0), now + timedelta(hours=1), 30),  # Preis für aktuelle Stunde
 #            Item(now + timedelta(hours=1), now + timedelta(hours=2), 28),  # Günstiger
 #            Item(now + timedelta(hours=2), now + timedelta(hours=3), 32),  # Teurer
@@ -481,7 +488,8 @@ class Conditions:
         # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
         initial_charge_state_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0  # Umbenannt
         self.logger.log_debug(f"Initial charge state wh: {initial_charge_state_wh:.2f} Wh")
-        hourly_loaded_wh = self.statsmanager.get_data('energy', "average_charge_wh_per_min") * 60 or 0.0
+        average_charge_wh_per_min = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or 0.0
+        hourly_loaded_wh = average_charge_wh_per_min * 60
 
         if initial_charge_state_wh > 0.0:
             minute = now.minute
