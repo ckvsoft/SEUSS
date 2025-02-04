@@ -105,10 +105,13 @@ class SEUSS:
                             essunit.set_active_soc_limit(t_soc)
 
                     if abs(soc - check_limit) <= 1:
-                        # Wenn der SOC innerhalb eines Toleranzbereichs von 1 um das gespeicherte Limit liegt
-                        essunit.set_active_soc_limit(check_limit)
-                        self.statsmanager.remove_data("ess_unit", "soc_limit")
-                        self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
+                        if active_soc_limit > check_limit:
+                            self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                        else:
+                            # Auf gespeicherten Wert zurücksetzen und Delay beenden
+                            essunit.set_active_soc_limit(check_limit)
+                            self.statsmanager.remove_data("ess_unit", "soc_limit")
+                            self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
 
             self.power_consumption_manager.update_instance(unit_config)
             if self.ws_server:
