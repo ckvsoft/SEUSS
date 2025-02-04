@@ -344,7 +344,7 @@ class SEUSS:
 
     def update_charging_statistics(self, essunit):
         """Speichert die Ladeleistung als gleitenden Durchschnitt."""
-        current_wh = essunit.get_battery_current_wh()
+        current_wh = essunit.get_soc()
         initial_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0
         last_average_wh_per_min = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or 0.0
 
