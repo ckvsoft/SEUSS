@@ -87,10 +87,16 @@ class SEUSS:
             self.logger.log_info(f"Active Soc Limit: {active_soc_limit} Soc: {soc} Delay: {delay_active_soc_limit} ")
 
             if delay_active_soc_limit and soc < active_soc_limit:
+                delay = self.statsmanager.get_data("ess_unit", "soc_delay") or 0
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
                 if check_limit is None:
                     self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                    check_limit = active_soc_limit
                     self.logger.log_info(f"Save Active Soc Limit Status: {active_soc_limit}")
+
+                if check_limit < active_soc_limit:
+                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                    self.logger.log_info(f"Update Active Soc Limit Status: {active_soc_limit}")
 
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
                 t_soc = (soc // 5) * 5
@@ -106,11 +112,11 @@ class SEUSS:
                         if t_soc < check_limit:
                             essunit.set_active_soc_limit(t_soc)
 
+                    if active_soc_limit > check_limit:
+                        self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                        self.logger.log_info(f"Update Active Soc Limit Status: {active_soc_limit}")
+
                     if abs(soc - check_limit) <= 1:
-                        if active_soc_limit > check_limit:
-                            self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
-                            self.logger.log_info(f"Update Active Soc Limit Status: {active_soc_limit}")
-                        else:
                             # Auf gespeicherten Wert zurücksetzen und Delay beenden
                             essunit.set_active_soc_limit(check_limit)
                             self.statsmanager.remove_data("ess_unit", "date_soc_limit")
