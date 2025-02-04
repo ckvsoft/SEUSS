@@ -84,7 +84,7 @@ class SEUSS:
             active_soc_limit = essunit.get_active_soc_limit()
             soc = essunit.get_soc()
             delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
-            self.logger.log_info(f"Active Soc Limit: {active_soc_limit} Soc: {soc} Delay: {delay_active_soc_limit} ")
+            self.logger.log_debug(f"Active Soc Limit: {active_soc_limit} Soc: {soc}")
 
             if delay_active_soc_limit and soc < active_soc_limit:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
@@ -223,7 +223,6 @@ class SEUSS:
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
-        total_forward_hourly = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
