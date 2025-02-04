@@ -113,6 +113,7 @@ class SEUSS:
                         else:
                             # Auf gespeicherten Wert zurücksetzen und Delay beenden
                             essunit.set_active_soc_limit(check_limit)
+                            self.statsmanager.remove_data("ess_unit", "date_soc_limit")
                             self.statsmanager.remove_data("ess_unit", "soc_limit")
                             self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
 
