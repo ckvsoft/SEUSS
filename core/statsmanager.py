@@ -208,7 +208,7 @@ class StatsManager(Singleton):
     @classmethod
     def remove_unused_datagroups(cls):
         # List of keys to keep
-        keep_groups = {"energy", "powerconsumption", "gridmeters", "pvinverters", "market", "solar"}
+        keep_groups = {"energy", "powerconsumption", "gridmeters", "pvinverters", "market", "solar", "ess_unit"}
         # Filter the dictionary
         filtered_data = {key: value for key, value in cls.data.items() if key in keep_groups}
         cls.data = filtered_data

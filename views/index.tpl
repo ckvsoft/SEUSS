@@ -147,6 +147,7 @@
         }
 
         function updateCharts() {
+            console.log('fetch /get_charts');
             fetch('/get_charts')  // Unified API endpoint
                 .then(response => response.json())  // Parse JSON response
                 .then(data => {

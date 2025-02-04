@@ -69,7 +69,13 @@ class ESSUnit:
     def get_soc(self):
         pass
 
+    def get_active_soc_limit(self):
+        pass
+
     def get_scheduler_soc(self):
+        pass
+
+    def set_active_soc_limit(self, value):
         pass
 
     def set_discharge(self, status):

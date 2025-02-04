@@ -64,7 +64,7 @@ class SEUSS:
         self.no_data = [0]
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
-        self.items = self.initialize_items()
+        self.items = Itemlist.create_item_list([])
         self.current_time = datetime.now()
 
     def handle_config_update(self, config_data):
@@ -81,6 +81,35 @@ class SEUSS:
         essunit = self.initialize_essunit()
         if essunit is not None:
             unit_config = essunit.get_config()
+            active_soc_limit = essunit.get_active_soc_limit()
+            soc = essunit.get_soc()
+            delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
+
+            if delay_active_soc_limit and soc < active_soc_limit:
+                check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
+                if check_limit is None:
+                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+
+                self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
+                t_soc = (soc // 5) * 5
+                if t_soc < active_soc_limit:
+                    essunit.set_active_soc_limit(t_soc)
+
+            else:
+                check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
+
+                if check_limit is not None:
+                    if soc > active_soc_limit:
+                        t_soc = (soc // 5) * 5
+                        if t_soc < check_limit:
+                            essunit.set_active_soc_limit(t_soc)
+
+                    if abs(soc - check_limit) <= 1:
+                        # Wenn der SOC innerhalb eines Toleranzbereichs von 1 um das gespeicherte Limit liegt
+                        essunit.set_active_soc_limit(check_limit)
+                        self.statsmanager.remove_data("ess_unit", "soc_limit")
+                        self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
+
             self.power_consumption_manager.update_instance(unit_config)
             if self.ws_server:
                 power_consumption_instance = self.power_consumption_manager.get_instance()
@@ -112,40 +141,43 @@ class SEUSS:
         self.load_configuration()
         self.initialize_logging()
         self.config.observer.add_observer("seuss", self)
+        lasttime_minute = None  # Startwert bleibt None, damit die erste Ausführung sofort möglich ist
 
         try:
             while True:
                 self.current_time = datetime.now()
 
-                if self.current_time.minute == 0 and self.current_time.second == 5 or self.items.get_item_count() == 0:
+                if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
                     self.run_markets()
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
                         self.logger.log_info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                        )
 
                 interval_minutes = 15
-                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
-                        self.current_time.second == 0):
-                    if (
-                            self.items.get_item_count() < 25
-                            if self.config.use_second_day and 13 < self.current_time.hour < 15
-                            else False
-                    ):
+                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
+                    lasttime_minute = self.current_time.minute
+
+                    if self.config.use_second_day and 13 < self.current_time.hour < 15 and self.items.get_item_count() < 25:
                         self.run_markets()
                     else:
                         self.run_essunit()
+
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                         self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
                         self.logger.log_info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                        )
 
                 self.perform_test_run()
                 self.handle_no_data_sleep()
-                # self.handle_time_to_next_hour(current_time)
-                time.sleep(1)
+
+                self.current_time = datetime.now()
+                sleep_time = 1 - (self.current_time.microsecond / 1_000_000)
+                time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             self.graceful_exit(signal.SIGINT, None)
@@ -156,9 +188,6 @@ class SEUSS:
     def initialize_logging(self):
         self.logger.log_info(f"SEUSS v{version.__version__} started...")
         self.logger.log_info(f"{self.config.config_data}")
-
-    def initialize_items(self):
-        return Itemlist.create_item_list([])
 
     def update_items(self):
         return self.items.perform_update(self.items)
@@ -333,7 +362,7 @@ class SEUSS:
 
     def graceful_exit(self, signum, frame):
         print("\r   ")  # clear ^C
-        print("Program will be terminated...")
+        print(f"Program will be terminated... signal: {signum}")
         self.logger.log_info("Program will be terminated...")
 
         self.power_consumption_manager.stop_instance()
@@ -360,6 +389,7 @@ class SEUSS:
         self.svs_thread.start()
 
         signal.signal(signal.SIGINT, self.graceful_exit)
+        signal.signal(signal.SIGTERM, self.graceful_exit)
 
         try:
             while not self.svs_thread_stop_flag.is_set():

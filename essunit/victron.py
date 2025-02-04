@@ -131,10 +131,23 @@ class Victron(ESSUnit):
         self.logger.log_info(f"{self._name} SOC: {soc}%")
         return soc
 
+    def get_active_soc_limit(self):
+        soc = self._process_result(self.subsribers.get('Control', 'ActiveSocLimit'))
+        self.logger.log_info(f"{self._name} ActiveSocLimit: {soc}%")
+        return soc
+
     def get_scheduler_soc(self):
         soc = self._process_result(self.subsribers.get('Schedule', 'Soc'))
         self.logger.log_info(f"{self._name} Scheduler SOC: {soc}%")
         return soc
+
+    def set_active_soc_limit(self, value):
+        try:
+            current_value = self._process_result(self.subsribers.get('Control', 'ActiveSocLimit'))
+            if value == current_value: return
+            self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit", value)
+        except (TypeError, ValueError) as e:
+            self.logger.log_error(f"Error: {e}")
 
     def set_discharge(self, status):
         try:
@@ -267,6 +280,7 @@ class Victron(ESSUnit):
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
                 f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
+                f"Control:N/{self.unit_id}/system/0/Control/ActiveSocLimit",
                 f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",

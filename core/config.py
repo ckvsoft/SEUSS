@@ -51,6 +51,7 @@ class Config(Singleton):
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
         "use_solar_forecast_to_abort": False,
+        "delay_grid_charging_below_active_soc_limit": False,
         "prices": [
             {
                 "use_second_day": False,
