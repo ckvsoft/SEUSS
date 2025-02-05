@@ -164,11 +164,13 @@ class SEUSS:
                             f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
                         )
 
-                interval_minutes = 15
+                interval_minutes = 5
                 if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
                     lasttime_minute = self.current_time.minute
 
-                    if self.config.use_second_day and 13 < self.current_time.hour < 15 and self.items.get_item_count() < 25:
+                    count = self.items.get_item_count()
+                    self.logger.log_debug(f"Item count: {count}")
+                    if self.config.use_second_day and 13 < self.current_time.hour < 15 and count < 25:
                         self.run_markets()
                     else:
                         self.run_essunit()
