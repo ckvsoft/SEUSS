@@ -94,7 +94,7 @@ class SEUSS:
                     self.logger.log_info(f"Save Active Soc Limit Status: {active_soc_limit}")
 
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
-                t_soc = (soc // 5) * 5
+                t_soc = soc #(soc // 5) * 5
                 if t_soc < active_soc_limit:
                     essunit.set_active_soc_limit(t_soc)
 
@@ -103,7 +103,7 @@ class SEUSS:
 
                 if check_limit is not None:
                     if soc > active_soc_limit:
-                        t_soc = (soc // 5) * 5
+                        t_soc = soc # (soc // 5) * 5
                         if t_soc < check_limit:
                             essunit.set_active_soc_limit(t_soc)
 
