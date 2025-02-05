@@ -116,8 +116,8 @@ class PowerConsumptionBase:
                 self.reset_data()
 
     def save_data(self, logging=False):
-        self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time))
-        self.statsmanager.update_percent_status_data("powerconsumption","average", self.average)
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time), save_data=False)
+        self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time))
         if logging:
             self.logger.log_debug("data saved.")
@@ -143,19 +143,18 @@ class PowerConsumptionBase:
             value /= count
             self.average = (value, count)
 
-        self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average)
+        self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average, save_data=False)
         self.logger.log_debug(f"save ... update average: {self.average}")
-        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value)
-        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average())
-        self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh)
+        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value, save_data=False)
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh, save_data=False)
 
         # Speichert die Daten
         self.save_data()
 
     def save_day(self):
         print(f"Daily consumption: {self.daily_wh:.4f} Wh")
-        self.statsmanager.update_percent_status_data("powerconsumption", "daily_wh_average", self.get_daily_average())
-        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average())
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
 
         # Speichert die Daten
         self.save_data()

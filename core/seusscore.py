@@ -89,8 +89,7 @@ class SEUSS:
             if delay_active_soc_limit and soc < active_soc_limit:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
                 if check_limit is None:
-                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
-                    check_limit = active_soc_limit
+                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit, save_data=False)
                     self.logger.log_info(f"Save Active Soc Limit Status: {active_soc_limit}")
 
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
@@ -114,8 +113,8 @@ class SEUSS:
                     if abs(soc - check_limit) <= 1:
                             # Auf gespeicherten Wert zurücksetzen und Delay beenden
                             essunit.set_active_soc_limit(check_limit)
-                            self.statsmanager.remove_data("ess_unit", "date_soc_limit")
-                            self.statsmanager.remove_data("ess_unit", "soc_limit")
+                            self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
+                            self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
                             self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
 
             self.power_consumption_manager.update_instance(unit_config)
@@ -358,7 +357,7 @@ class SEUSS:
 
         smoothed_wh_per_min = (0.8 * last_average_wh_per_min) + (0.2 * current_wh_per_min)
 
-        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", smoothed_wh_per_min)
+        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", smoothed_wh_per_min, save_data=False)
         self.statsmanager.set_status_data('energy', "initial_charge_state_wh", current_wh)
 
         self.logger.log_debug(f"Updated charge average: {smoothed_wh_per_min:.2f} Wh/min")

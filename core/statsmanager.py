@@ -63,7 +63,7 @@ class StatsManager(Singleton):
             json.dump(cls.data, file, indent=4)
 
     @classmethod
-    def insert_new_daily_status_data(cls, group, key, value):
+    def insert_new_daily_status_data(cls, group, key, value, save_data=True):
         # cls.cleanup_old_entries(group)  # Clean up old entries before inserting new data
 
         date_key = f"date_{key}"
@@ -82,10 +82,10 @@ class StatsManager(Singleton):
 
             cls.data[group][date_key] = today
             cls.data[group][key] = value
-            cls.save_data()
+            cls.save_data() if save_data else None
 
     @classmethod
-    def insert_new_status_data(cls, group, key, value):
+    def insert_new_status_data(cls, group, key, value, save_data=True):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return
 
@@ -99,10 +99,10 @@ class StatsManager(Singleton):
             # If the date key doesn't exist or is not today, update the entry
             cls.data[group][date_key] = today
             cls.data[group][key] = value
-            cls.save_data()
+            cls.save_data() if save_data else None
 
     @classmethod
-    def set_status_data(cls, group, key, value):
+    def set_status_data(cls, group, key, value, save_data=True):
         if not isinstance(value, (int, float, tuple)) or isinstance(value, bool):
             return
 
@@ -114,10 +114,10 @@ class StatsManager(Singleton):
 
         cls.data[group][date_key] = today
         cls.data[group][key] = value
-        cls.save_data()
+        cls.save_data() if save_data else None
 
     @classmethod
-    def insert_peek_data(cls, key, value):
+    def insert_peek_data(cls, key, value, save_data=True):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return
 
@@ -135,12 +135,12 @@ class StatsManager(Singleton):
         else:
             cls.data['peek'][key] = {'value': value, 'timestamp': now}
 
-        cls.save_data()
+        cls.save_data() if save_data else None
 
         return round(value, 2), now
 
     @classmethod
-    def update_percent_status_data(cls, group, key, new_value, max_count=1000):
+    def update_percent_status_data(cls, group, key, new_value, max_count=1000, save_data=True):
         if not isinstance(new_value, (int, float)) or isinstance(new_value, bool):
             return None
 
@@ -148,7 +148,7 @@ class StatsManager(Singleton):
         today = datetime.now().strftime('%Y-%m-%d')
 
         if group not in cls.data:
-            cls.insert_new_status_data(group, key, new_value)
+            cls.insert_new_status_data(group, key, new_value, save_data=False)
 
         cls.data[group][date_key] = today
         value = new_value
@@ -170,7 +170,7 @@ class StatsManager(Singleton):
         else:
             cls.data[group][key] = (new_value, 1)
 
-        cls.save_data()
+        cls.save_data() if save_data else None
 
         return round(value, 2)
 
@@ -181,7 +181,7 @@ class StatsManager(Singleton):
         return value2 / value1
 
     @classmethod
-    def cleanup_old_entries(cls, group_to_cleanup):
+    def cleanup_old_entries(cls, group_to_cleanup, save_data=True):
         today = datetime.now().strftime('%Y-%m-%d')
 
         if group_to_cleanup in cls.data:
@@ -197,17 +197,19 @@ class StatsManager(Singleton):
             for entry_key in entries_to_delete:
                 del cls.data[group_to_cleanup][entry_key]
 
-            cls.save_data()
+            cls.save_data() if save_data else None
 
     @classmethod
-    def remove_data(cls, group, key):
+    def remove_data(cls, group, key, save_data=True):
         if group in cls.data and key in cls.data[group]:
             del cls.data[group][key]
-            cls.save_data()
+            cls.save_data() if save_data else None
 
     @classmethod
     def remove_unused_datagroups(cls):
         # List of keys to keep
+        cls.remove_data("powerconsumption","date_daily_wh_average", save_data=False)
+        cls.remove_data("powerconsumption","daily_wh_average", save_data=False)
         keep_groups = {"energy", "powerconsumption", "gridmeters", "pvinverters", "market", "solar", "ess_unit"}
         # Filter the dictionary
         filtered_data = {key: value for key, value in cls.data.items() if key in keep_groups}
