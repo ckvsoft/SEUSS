@@ -62,6 +62,7 @@ class SEUSS:
         self.statsmanager.remove_unused_datagroups()
 
         self.no_data = [0]
+        self.interval_minutes = 5
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
         self.items = Itemlist.create_item_list([])
@@ -132,7 +133,7 @@ class SEUSS:
             else:
                 self.handle_no_data(essunit)
 
-            next_minute = (self.current_time.minute // 15 + 1) * 15
+            next_minute = (self.current_time.minute // self.interval_minutes + 1) * self.interval_minutes
             if next_minute >= 60:
                 next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
             else:
@@ -163,8 +164,7 @@ class SEUSS:
                             f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
                         )
 
-                interval_minutes = 5
-                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
+                if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
                     lasttime_minute = self.current_time.minute
 
                     count = self.items.get_item_count()
