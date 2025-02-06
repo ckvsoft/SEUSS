@@ -137,6 +137,30 @@ class Config(Singleton):
                 "primary": False,
                 "enabled": False
             }
+        ],
+        "smart_switches": [
+            {
+                "name": "Shelly",
+                "ips": "10.1.1.20 | 10.1.1.21",
+                "user": "",
+                "password": "",
+                "enabled": False
+            },
+            {
+                "name": "Tasmota",
+                "ips": "10.1.1.30",
+                "user": "admin",
+                "password": "YWRtaW4",
+                "enabled": False
+            },
+            {
+                "name": "Fritz",
+                "ips": "192.168.178.1 | 10.1.1.23",
+                "ain": "1234;3443;2333 | 1234;4456;7866;3421",
+                "user": "admin",
+                "password": "YWRtaW4",
+                "enabled": False
+            }
         ]
     }
 

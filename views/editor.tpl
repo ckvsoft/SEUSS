@@ -11,7 +11,7 @@
 
 <body>
     % include('header', title='Config Editor')
-            <form id="meinFormular" >
+            <form id="meinFormular" autocomplete="off">
     <div class="container">
         <div class="left">
                 % for key, value in config.items():
@@ -25,14 +25,14 @@
                     end
                     formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
                     %>
-                    % if key not in ["ess_unit", "markets", "prices", "pv_panels"]:
+                    % if key not in ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]:
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
                             <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
                         % elif key == "password":
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
-                            <input type="password" id="{{ key }}" name="{{ key }}"">
+                            <input type="password" id="{{ key }}" name="{{ key }} autofill="new-password">
                             <span id="password-toggle" onclick="togglePasswordVisibility()">👁️</span><br>
                         % elif key == "log_level":
                             <select id="{{ key }}" name="{{ key }}">
@@ -83,6 +83,7 @@
                     <option value="ess_unit">Ess Unit</option>
                     <option value="markets">Markets</option>
                     <option value="pv_panels">Pv Panels</option>
+                    <option value="smart_switches">Smart Switches</option>
                     <!-- Weitere Optionen nach Bedarf hinzufügen -->
                 </select>
 
@@ -97,6 +98,10 @@
 
                 <div id="sectionFields_pv_panels" style="display: none;">
                     <!-- Felder für die Sektion "pv_panels" -->
+                </div>
+
+                <div id="sectionFields_smart_switches" style="display: none;">
+                    <!-- Felder für die Sektion "smart_switches" -->
                 </div>
 
                 <input type="submit" value="Save Configuration">

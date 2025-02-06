@@ -49,6 +49,7 @@ from spotmarket.abstract_classes.itemlist import Itemlist
 from core.seussweb import SEUSSWeb
 from core.timeutilities import TimeUtilities
 from powerconsumption.powerconsumptionmanager import PowerConsumptionManager
+from smartswitches.smartswitchesmanager import SmartSwitchesManager
 
 class SEUSS:
     def __init__(self):
@@ -66,11 +67,14 @@ class SEUSS:
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
         self.items = Itemlist.create_item_list([])
+        self.smartswitches = SmartSwitchesManager()
+        self.smartswitches.turn_off_all()
         self.current_time = datetime.now()
 
     def handle_config_update(self, config_data):
         self.logger.log_info("Run checks while configuration was changed")
         self.load_configuration()
+        self.smartswitches = SmartSwitchesManager()
         self.run_markets()
 
     def run_markets(self):

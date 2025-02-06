@@ -41,7 +41,7 @@ function clearGroup(elem) {
         elem.checked = false;
         return;
     }
-    for (var i = 0; group.length; i++) {
+    for (var i = 0; i < group.length; i++) {
         if (group[i] != elem) {
             group[i].checked = false;
         } else {
@@ -197,6 +197,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             input.value = currentItem[fieldKey];
                             if (fieldKey.toLowerCase() === 'password') {
                                 input.setAttribute('type', 'password');
+                                input.setAttribute('autocomplete', 'new-password');
 
                                 var toggleButton = document.createElement('span');
                                 toggleButton.textContent = '👁️';
