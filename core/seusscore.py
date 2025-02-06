@@ -169,7 +169,8 @@ class SEUSS:
 
                     count = self.items.get_item_count()
                     self.logger.log_debug(f"Item count: {count}")
-                    if self.config.use_second_day and 13 < self.current_time.hour < 15 and count < 25:
+                    self.logger.log_debug(f"Current hour: {self.current_time.hour}")
+                    if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
                         self.run_markets()
                     else:
                         self.run_essunit()
