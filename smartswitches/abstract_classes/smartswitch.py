@@ -25,8 +25,11 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
+from core.log import CustomLogger
+
 class SmartSwitch:
     def __init__(self, **kwargs) -> None:
+        self.logger = CustomLogger()
         self.name = kwargs.get("name", "")
         self.ips = kwargs.get("ips", "")
         self.user = kwargs.get("user", "")

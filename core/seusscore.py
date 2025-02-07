@@ -319,6 +319,7 @@ class SEUSS:
             self.logger.log_info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
+            self.smartswitches.turn_on_all()
 
             if self.statsmanager.get_data('energy', "initial_charge_state_wh") is None:
                 self.statsmanager.set_status_data('energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
@@ -328,11 +329,13 @@ class SEUSS:
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
+            self.smartswitches.turn_off_all()
             self.statsmanager.set_status_data('energy', "initial_charge_state_wh", 0.0)
 
         elif essunit is not None:
             self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
+            self.smartswitches.turn_off_all()
             self.statsmanager.set_status_data('energy', "initial_charge_state_wh", 0.0)
 
     def control_discharging(self, essunit, condition_discharging_result):

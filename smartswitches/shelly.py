@@ -27,6 +27,8 @@ class Shelly(SmartSwitch):
                     response = requests.get(url, timeout=5)  # Ohne Authentifizierung
 
                 response.raise_for_status()
-                print(f"[{ip}] Request erfolgreich: {response.status_code}")
+
+                self.logger.log_debug(f"[{ip}] Request successful: {response.status_code}")
             except requests.exceptions.RequestException as e:
-                print(f"[{ip}] Fehler beim Senden der Anfrage: {e}")
+                self.logger.log_debug(f"[{ip}] Error while sending the request: {e}")
+

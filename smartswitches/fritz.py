@@ -46,9 +46,10 @@ class Fritz(SmartSwitch):
         active_ain_groups = []
 
         for ip, ains in zip(ips, ain_groups):
+            ip = ip.strip()
             if ip.startswith("!"):
                 continue  # Überspringe deaktivierte IPs und deren AIN-Gruppen
-            active_ips.append(ip.strip())
+            active_ips.append(ip)
             active_ain_groups.append(ains)  # AIN-Gruppen beibehalten, wenn die IP aktiv ist
 
         return active_ips, active_ain_groups
@@ -66,7 +67,7 @@ class Fritz(SmartSwitch):
         for ip, ains in zip(self.ips, self.ain_groups):
             sid = self._get_sid(ip)
             if not sid:
-                print(f"[{ip}] Fehler: Keine gültige Session-ID erhalten.")
+                self.logger.log_debug(f"[{ip}] Error: No valid session ID received.")
                 continue
 
             for ain in ains:
@@ -74,9 +75,9 @@ class Fritz(SmartSwitch):
                 try:
                     response = requests.get(url, timeout=5)
                     response.raise_for_status()
-                    print(f"[{ip} - AIN {ain}] Erfolgreich: {response.status_code}")
+                    self.logger.log_debug(f"[{ip} - AIN {ain}] Success: {response.status_code}")
                 except requests.exceptions.RequestException as e:
-                    print(f"[{ip} - AIN {ain}] Fehler: {e}")
+                    self.logger.log_debug(f"[{ip} - AIN {ain}] Error: {e}")
 
     def _get_sid(self, ip):
         """Holt eine Session-ID über Hash-Authentifizierung"""
@@ -100,7 +101,7 @@ class Fritz(SmartSwitch):
 
             return None
         except requests.exceptions.RequestException as e:
-            print(f"[{ip}] Fehler beim Abrufen der Session-ID: {e}")
+            self.logger.log_debug(f"[{ip}] Error while retrieving the session ID: {e}")
             return None
 
     def _calculate_hash(self, challenge, password):
