@@ -24,6 +24,7 @@
 #
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
+import re
 from datetime import datetime
 
 from core.utils import Utils
@@ -513,11 +514,13 @@ class SEUSSWeb:
 
         for line in lines:
             # Teile die Zeile in Spalten auf
-            columns = [col.strip() for col in line.split('|') if col.strip()]
+            # columns = [col.strip() for col in line.split('|') if col.strip()]
+            columns = [col.strip() for col in re.split(r'(?<!\\)\|', line) if col.strip()]
 
             if len(columns) == 2:
                 key, value = columns
                 value = value.replace("<br/>", "\n")
+                value = re.sub(r'\\\|', '|', value)
                 key = key.replace("`", "")
                 result_dict[key] = value
 
