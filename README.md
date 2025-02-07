@@ -48,7 +48,7 @@ tested
 
 # Install
 
-Download the install script from the GitHub repository execute the following command in your terminal:
+Download the installation script from the GitHub repository execute the following command in your terminal:
 
 ```
 wget -O seuss_install.sh https://raw.githubusercontent.com/ckvsoft/SEUSS/dev/scripts/seuss_install.sh`
@@ -70,7 +70,7 @@ TARGET_DIRECTORY=/opt/seuss bash seuss_install.sh`
 
 On a Cerbo GX the filesystem is mounted read only.
 See [https://www.victronenergy.com/live/ccgx:root_access](https://www.victronenergy.com/live/ccgx:root_access).
-In order to make the filesystem writeable you need to execute the following command before running the install script:
+In order to make the filesystem writeable you need to execute the following command before running the installation script:
 
 ```
 /opt/victronenergy/swupdate-scripts/resize2fs.sh
@@ -112,7 +112,7 @@ For those who prefer to work in a config file, there is config.json
 
 ## Prices
 
-#### Please change prices (always use Cent/kWh, no matter if youre using Awattar (displaying Cent/kWh) or Entsoe API (displaying EUR/MWh) / net prices excl. tax).
+#### Please change prices (always use Cent/kWh, no matter if you're using Awattar (displaying Cent/kWh) or Entsoe API (displaying EUR/MWh) / net prices excl. tax).
 
 | Setting                                      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 |----------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -182,6 +182,36 @@ For those who prefer to work in a config file, there is config.json
 | `damping_morning` | With this parameter you can adjust the result in the morning. Value float 0..1, default 0    |
 | `damping_evening` | With this parameter you can adjust the result in the evening. Value float 0..1, default 0    |
 | `enabled`         | To use this entry it must be `enabled`. Otherwise `disabled`                                 |
+
+## Smart Switches  
+
+### Shelly  
+
+| Setting    | Meaning                                                                                                                                                                                                                                 |
+|:-----------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ips`      | A list of IP addresses assigned to the device. Use `\|` to separate multiple IPs. Prefix an IP with `!` to temporarily disable it without removing it from the list. Example: `"10.1.1.20 \| !10.1.1.21"` (IP `10.1.1.21` is disabled). |
+| `user`     | The username required for authentication (if applicable).                                                                                                                                                                               |
+| `password` | The password required for authentication (can be encoded in base64).                                                                                                                                                                    |
+| `enabled`  | To use this entry, it must be set to `true`. Otherwise, it is `false` (disabled).                                                                                                                                                       |
+
+### Tasmota  
+
+| Setting    | Meaning                                                                                                                                                                                      |
+|:-----------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ips`      | A list of IP addresses assigned to the device. Use `\|` to separate multiple IPs. Prefix an IP with `!` to temporarily disable it without removing it from the list. Example: `"10.1.1.30"`. |
+| `user`     | The username required for authentication.                                                                                                                                                    |
+| `password` | The password required for authentication (can be encoded in base64).                                                                                                                         |
+| `enabled`  | To use this entry, it must be set to `true`. Otherwise, it is `false` (disabled).                                                                                                            |
+
+### Fritz  
+
+| Setting    | Meaning                                                                                                                                                                                                                                                                                                 |
+|:-----------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ips`      | A list of IP addresses assigned to the device. Use `\|` to separate multiple IPs. Prefix an IP with `!` to temporarily disable it without removing it from the list. Example: `"192.168.178.1 \| !10.1.1.23"` (IP `10.1.1.23` is disabled).                                                             |
+| `ains`     | A list of AINs (Actor Identification Numbers) for Fritz devices. Multiple AINs are separated by commas, and if multiple IPs are used, the AINs for each IP are separated by `\|`. Example: `"1234,3443,2333 \| 1234,4456,7866,3421"`.                                                                   |
+| `user`     | The username required for authentication.                                                                                                                                                                                                                                                               |
+| `password` | The password required for authentication (can be encoded in base64).                                                                                                                                                                                                                                    |
+| `enabled`  | To use this entry, it must be set to `true`. Otherwise, it is `false` (disabled).                                                                                                                                                                                                                       |
 
 ***
 
