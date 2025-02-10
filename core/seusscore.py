@@ -248,7 +248,8 @@ class SEUSS:
         if manager_instance:
             value = manager_instance.get_hourly_average()
             consumption = manager_instance.get_daily_wh()
-            total_forward_hourly = (total_forward_hourly + value) / 2
+            if value > 0.0:
+                total_forward_hourly = (total_forward_hourly + value) / 2
             self.logger.log_info(
                 f"Consumption today: {round(consumption, 2):.2f} Wh, forecast today: {total_forward_hourly * 24:.2f} Wh average hour: {round(total_forward_hourly, 2):.2f} Wh")
 
