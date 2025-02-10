@@ -440,9 +440,7 @@ class Conditions:
 
                 # Berechne den verbleibenden Solarertrag bis zur günstigen Stunde
                 if current_time < sunset:
-                    solar_time_remaining = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
-                    expected_solar_energy_until_cheap_hour = (solar_time_remaining / (
-                                sunset - current_time).total_seconds()) * expected_solar_energy
+                    expected_solar_energy_until_cheap_hour = expected_solar_energy - self.solardata.current_hour_solar_yield
                 else:
                     expected_solar_energy_until_cheap_hour = 0  # Keine Solarenergie nach Sonnenuntergang
 
@@ -464,7 +462,7 @@ class Conditions:
 
                 # Berechne den verbleibenden Solarertrag bis zur nächsten günstigen Stunde
                 if current_time < sunset:
-                    expected_solar_energy = expected_solar_energy - self.solardata.current_hour_forcast
+                    expected_solar_energy = expected_solar_energy - self.solardata.current_hour_solar_yield
                 else:
                     expected_solar_energy = 0  # Keine Solarenergie nach Sonnenuntergang
 
