@@ -399,12 +399,10 @@ class Conditions:
             else:
                 return False  # Not enough SOC or surplus energy for discharging
 
-    from datetime import datetime, timedelta
-
     def _calculate_required_capacity_for_period(self):
         """
-        Calculates required capacity for the period before and after midnight based on sunset and sunrise times.
-        Uses solar forecast data to estimate battery requirements.
+        Calculates required capacity until the next cheapest hour for charging.
+        Uses solar forecast data and electricity price information.
         """
 
         current_time = TimeUtilities.get_now()
@@ -426,45 +424,103 @@ class Conditions:
             sunrise = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
 
         expected_solar_energy = self.solardata.total_current_day
-        required_capacity = 0.0  # Initialize required capacity
+        required_capacity = 0.0  # Startwert für die benötigte Kapazität
 
-        remaining_description = ""
+        # Wenn es vor Sonnenaufgang ist
+        if current_time < sunrise:
+            required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
 
-        # 1. Before sunset: Calculate required capacity until sunset
-        if current_time < sunset:
-            remaining_until_sunset = (sunset - current_time).total_seconds() / 3600
-            required_capacity += self._calculate_required_capacity(remaining_until_sunset)
-            remaining_description = f"/ remaining until sunset: {remaining_until_sunset:.2f} hours"
+            # Suche die nächste günstige Stunde nach Sonnenaufgang
+            next_cheap_hour = self._find_next_cheapest_hour()
 
-        # 2. After sunset but before midnight: Calculate required capacity until midnight
-        elif sunset <= current_time < midnight:
-            remaining_until_midnight = (midnight - current_time).total_seconds() / 3600
-            required_capacity += self._calculate_required_capacity(remaining_until_midnight)
-            remaining_description = f"/ remaining until midnight: {remaining_until_midnight:.2f} hours"
+            if next_cheap_hour:
+                # Berechne die verbleibende Zeit bis zur günstigen Stunde
+                remaining_until_cheap_hour = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
+                required_capacity += self._calculate_required_capacity(remaining_until_cheap_hour)
 
-        # 3. After midnight but before sunrise: Adjust for solar forecast
-        elif midnight <= current_time < sunrise:
-            remaining_until_sunrise = (sunrise - current_time).total_seconds() / 3600
-            remaining_night_fraction = remaining_until_sunrise / 24  # Fraction of the day still in darkness
-            night_solar_energy = expected_solar_energy * remaining_night_fraction  # Approximate nighttime solar energy
-            required_capacity = max(0, required_capacity - night_solar_energy)
+                # Berechne den verbleibenden Solarertrag bis zur günstigen Stunde
+                if current_time < sunset:
+                    solar_time_remaining = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
+                    expected_solar_energy_until_cheap_hour = (solar_time_remaining / (
+                                sunset - current_time).total_seconds()) * expected_solar_energy
+                else:
+                    expected_solar_energy_until_cheap_hour = 0  # Keine Solarenergie nach Sonnenuntergang
 
-            remaining_description = f"/ remaining until sunrise: {remaining_until_sunrise:.2f} hours"
+                # Subtrahiere den Solarertrag nur bis zur nächsten günstigen Stunde
+                required_capacity -= expected_solar_energy_until_cheap_hour
+                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
 
-        # 4. After sunrise: Consider the next night
-        elif current_time >= sunrise:
-            next_sunrise = sunrise + timedelta(days=1)
-            remaining_until_next_sunrise = (next_sunrise - current_time).total_seconds() / 3600
-            required_capacity += self._calculate_required_capacity(remaining_until_next_sunrise)
-            remaining_description = f"/ remaining until next sunrise: {remaining_until_next_sunrise:.2f} hours"
+                remaining_description = (f"/ remaining until next cheap hour: {remaining_until_cheap_hour:.2f} hours, "
+                                         f"expected solar energy: {expected_solar_energy_until_cheap_hour:.2f} Wh")
+            else:
+                remaining_description = "/ No cheap hour found, fallback to default logic"
+        else:
+            # Wenn nach Sonnenaufgang, finde die nächste günstige Stunde
+            next_cheap_hour = self._find_next_cheapest_hour()
 
-        # Logging required capacity and SOC
-        self.logger.log_info(
-            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / "
-            f"current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f} Wh)"
-        )
+            if next_cheap_hour:
+                remaining_until_cheap_hour = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
+                required_capacity += self._calculate_required_capacity(remaining_until_cheap_hour)
+
+                # Berechne den verbleibenden Solarertrag bis zur nächsten günstigen Stunde
+                if current_time < sunset:
+                    expected_solar_energy = expected_solar_energy - self.solardata.current_hour_forcast
+                else:
+                    expected_solar_energy = 0  # Keine Solarenergie nach Sonnenuntergang
+
+                # Subtrahiere den Solarertrag nur bis zur nächsten günstigen Stunde
+                required_capacity -= expected_solar_energy
+                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
+
+                remaining_description = (f"/ remaining until next cheap hour: {remaining_until_cheap_hour:.2f} hours, "
+                                         f"expected solar energy: {expected_solar_energy:.2f} Wh")
+            else:
+                # Wenn keine günstige Stunde vorhanden ist, berücksichtige den gesamten Rest des Tages
+                remaining_until_fallback = (midnight + timedelta(days=1) - current_time).total_seconds() / 3600
+                required_capacity += self._calculate_required_capacity(remaining_until_fallback)
+
+                # Berechne den gesamten Solarertrag für den Rest des Tages
+                if current_time < sunset:
+                    expected_solar_energy_remaining = (remaining_until_fallback / 24) * expected_solar_energy
+                else:
+                    expected_solar_energy_remaining = 0  # Kein Ertrag nach Sonnenuntergang
+
+                required_capacity -= expected_solar_energy_remaining
+                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
+
+                remaining_description = (f"/ No cheap hour found, fallback to midnight logic "
+                                         f"({remaining_until_fallback:.2f} hours), expected solar energy: "
+                                         f"{expected_solar_energy_remaining:.2f} Wh")
+
+        self.logger.log_info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} "
+                             f"/ current SOC {self.solardata.soc}% "
+                             f"({self._calculate_current_soc_wh()[0]:.2f} Wh)")
 
         return required_capacity
+
+    def _find_next_cheapest_hour(self):
+        """
+        Finds the next cheapest hour for charging based on available price data,
+        using get_lowest_prices to determine the cheapest hours.
+        """
+        now = TimeUtilities.get_now()
+
+        # Filter valid hours from now onwards
+        items = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
+        cheapest_hours = [
+            item for item in items if item.get_start_datetime() >= now
+        ]
+
+        if not cheapest_hours:
+            self.logger.log_debug("No cheapest hour found.")
+            return None
+
+        cheapest_hour = cheapest_hours[0]
+
+        self.logger.log_debug(
+            f"Next cheapest hour: {cheapest_hour.get_start_datetime()} with price {cheapest_hour.price}")
+
+        return cheapest_hour
 
     def _check_for_cheaper_hours(self, additional_prices):
         now = TimeUtilities.get_now()
