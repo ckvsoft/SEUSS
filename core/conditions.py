@@ -399,67 +399,70 @@ class Conditions:
             else:
                 return False  # Not enough SOC or surplus energy for discharging
 
+    from datetime import datetime, timedelta
+
     def _calculate_required_capacity_for_period(self):
         """
-        Berechnet die erforderliche Kapazität für die Zeit vor und nach Mitternacht basierend auf Sonnenuntergang und -aufgang.
-        Nutzt die Solarvorhersage, um den Bedarf abzuschätzen.
+        Calculates required capacity for the period before and after midnight based on sunset and sunrise times.
+        Uses solar forecast data to estimate battery requirements.
         """
 
         current_time = TimeUtilities.get_now()
+        midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Versuch sunset und sunrise zu parsen, falls nicht verfügbar, Standardzeiten verwenden
+        # Attempt to parse sunset and sunrise; fallback to default values if invalid
         try:
             sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(
                 tzinfo=TimeUtilities.TZ)
         except (TypeError, ValueError):
-            self.logger.log_warning("Sunset data is invalid or not available, using default sunset time.")
-            sunset = current_time.replace(hour=18, minute=0, second=0,
-                                          microsecond=0)  # Standardzeit für Sonnenuntergang
+            self.logger.log_warning("Sunset data is invalid or missing, using default (18:00).")
+            sunset = current_time.replace(hour=18, minute=0, second=0, microsecond=0)
 
         try:
             sunrise = datetime.strptime(self.solardata.sunrise_current_day, "%Y-%m-%dT%H:%M").replace(
                 tzinfo=TimeUtilities.TZ)
         except (TypeError, ValueError):
-            self.logger.log_warning("Sunrise data is invalid or not available, using default sunrise time.")
-            sunrise = current_time.replace(hour=6, minute=0, second=0, microsecond=0)  # Standardzeit für Sonnenaufgang
-
-        # Definiere midnight (Mitternacht des aktuellen Tages)
-        midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            self.logger.log_warning("Sunrise data is invalid or missing, using default (06:00).")
+            sunrise = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
 
         expected_solar_energy = self.solardata.total_current_day
-        required_capacity = 0.0  # Anfangswert für die erforderliche Kapazität
+        required_capacity = 0.0  # Initialize required capacity
 
         remaining_description = ""
-        # Berechne benötigte Kapazität bis Sonnenuntergang
+
+        # 1. Before sunset: Calculate required capacity until sunset
         if current_time < sunset:
             remaining_until_sunset = (sunset - current_time).total_seconds() / 3600
-            remaining_description = f"/ remaining until sunset: {remaining_until_sunset:.2f} hour"
             required_capacity += self._calculate_required_capacity(remaining_until_sunset)
+            remaining_description = f"/ remaining until sunset: {remaining_until_sunset:.2f} hours"
 
-        # Nach Sonnenuntergang
-        elif current_time >= sunset:
-            # Vor Mitternacht
-            if current_time < midnight:
-                remaining_until_midnight = (midnight - current_time).total_seconds() / 3600  # Stunden bis Mitternacht
-                remaining_description = f"/ remaining until midnight: {remaining_until_midnight:.2f} hour"
-                required_capacity += self._calculate_required_capacity(remaining_until_midnight)
+        # 2. After sunset but before midnight: Calculate required capacity until midnight
+        elif sunset <= current_time < midnight:
+            remaining_until_midnight = (midnight - current_time).total_seconds() / 3600
+            required_capacity += self._calculate_required_capacity(remaining_until_midnight)
+            remaining_description = f"/ remaining until midnight: {remaining_until_midnight:.2f} hours"
 
-            # Ab Mitternacht bis Sonnenaufgang
-            if midnight <= current_time < sunrise:
-                # Nutze Solarvorhersage ab Mitternacht bis Sonnenaufgang
-                required_capacity = max(0, required_capacity - expected_solar_energy)
+        # 3. After midnight but before sunrise: Adjust for solar forecast
+        elif midnight <= current_time < sunrise:
+            remaining_until_sunrise = (sunrise - current_time).total_seconds() / 3600
+            remaining_night_fraction = remaining_until_sunrise / 24  # Fraction of the day still in darkness
+            night_solar_energy = expected_solar_energy * remaining_night_fraction  # Approximate nighttime solar energy
+            required_capacity = max(0, required_capacity - night_solar_energy)
 
-        # Berechnung für den nächsten Tag (nach Sonnenaufgang)
-        if current_time >= sunrise:
-            # Berechne den benötigten Verbrauch bis zum nächsten Sonnenaufgang
-            remaining_until_next_sunrise = (sunrise + timedelta(days=1) - current_time).total_seconds() / 3600
-            remaining_description = f"/ remaining until next sunrise: {remaining_until_next_sunrise:.2f} hour"
+            remaining_description = f"/ remaining until sunrise: {remaining_until_sunrise:.2f} hours"
 
+        # 4. After sunrise: Consider the next night
+        elif current_time >= sunrise:
+            next_sunrise = sunrise + timedelta(days=1)
+            remaining_until_next_sunrise = (next_sunrise - current_time).total_seconds() / 3600
             required_capacity += self._calculate_required_capacity(remaining_until_next_sunrise)
+            remaining_description = f"/ remaining until next sunrise: {remaining_until_next_sunrise:.2f} hours"
 
-        # Ausgabe des Logs mit benötigter Kapazität und aktuellem SOC
+        # Logging required capacity and SOC
         self.logger.log_info(
-            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f} Wh)")
+            f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} / "
+            f"current SOC {self.solardata.soc}% ({self._calculate_current_soc_wh()[0]:.2f} Wh)"
+        )
 
         return required_capacity
 
