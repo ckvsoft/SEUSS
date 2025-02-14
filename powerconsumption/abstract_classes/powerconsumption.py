@@ -121,6 +121,9 @@ class PowerConsumptionBase:
         energy_costs_by_hour = self.statsmanager.get_data("powerconsumption","energy_costs_by_hour")
         energy_costs_by_day = self.statsmanager.get_data("powerconsumption","energy_costs_by_day")
 
+        self.logger.log.debug(f"Loaded energy costs by hour: {energy_costs_by_hour}")
+        self.logger.log.debug(f"Loaded energy costs by day: {energy_costs_by_day}")
+
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
         self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
 

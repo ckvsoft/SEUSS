@@ -60,7 +60,7 @@ class StatsManager(Singleton):
     @classmethod
     def save_data(cls):
         with open(cls.file_path, 'w') as file:
-            json.dump(cls.data, file, indent=4)
+            json.dump(cls.data, file, indent=2, sort_keys=True)
 
     @classmethod
     def insert_new_daily_status_data(cls, group, key, value, save_data=True):
