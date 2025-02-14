@@ -139,8 +139,8 @@ class PowerConsumptionBase:
                 self.reset_data()
 
     def save_data(self, logging=False):
-        self.statsmanager.set_dict_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
-        self.statsmanager.set_dict_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time), save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
@@ -173,7 +173,7 @@ class PowerConsumptionBase:
     def save_day(self):
         print(f"Daily consumption: {self.daily_wh:.4f} Wh")
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
-        self.statsmanager.set_dict_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
         total_cost = sum(self.energy_costs_by_hour.values())
         self.energy_costs_by_day[str(self.current_day)] = total_cost
         self.energy_costs_by_hour = {}

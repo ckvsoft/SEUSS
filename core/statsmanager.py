@@ -103,7 +103,7 @@ class StatsManager(Singleton):
 
     @classmethod
     def set_status_data(cls, group, key, value, save_data=True):
-        if not isinstance(value, (int, float, tuple)) or isinstance(value, bool):
+        if not isinstance(value, (int, float, tuple, dict)) or isinstance(value, bool):
             return
 
         date_key = f"date_{key}"
@@ -113,17 +113,6 @@ class StatsManager(Singleton):
             cls.data[group] = {}
 
         cls.data[group][date_key] = today
-        cls.data[group][key] = value
-        cls.save_data() if save_data else None
-
-    @classmethod
-    def set_dict_data(cls, group, key, value, save_data=True):
-        if not isinstance(value, dict):
-            return
-
-        if group not in StatsManager.data:
-            cls.data[group] = {}
-
         cls.data[group][key] = value
         cls.save_data() if save_data else None
 
