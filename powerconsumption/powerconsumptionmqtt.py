@@ -102,10 +102,20 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 ]
             )
 
+            # Calculate total grid power (sum of phases)
+            self.current_grid_power = sum(
+                phase_power if phase_power is not None else 0
+                for phase_power in [
+                    self.G_AC_consumption_L1,
+                    self.G_AC_consumption_L2,
+                    self.G_AC_consumption_L3,
+                ]
+            )
+
             # If all required data is available
             if self.check_for_data():
                 timestamp = time.time()  # Current timestamp
-                self.update(self.current_power, timestamp)
+                self.update(self.current_power, self.current_grid_power, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
         self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
@@ -119,16 +129,32 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.P_AC_consumption_L3 = payload.get("value", 0)
         elif topic == self.data_topics["number_of_phases"]:
             self.number_of_phases = payload.get("value", 3)
+        if topic == self.data_topics["G_AC_consumption_L1"]:
+            self.G_AC_consumption_L1 = payload.get("value", 0)
+        elif topic == self.data_topics["G_AC_consumption_L2"]:
+            self.G_AC_consumption_L2 = payload.get("value", 0)
+        elif topic == self.data_topics["G_AC_consumption_L3"]:
+            self.G_AC_consumption_L3 = payload.get("value", 0)
+        elif topic == self.data_topics["number_of_grid_phases"]:
+            self.number_of_grid_phases = payload.get("value", 3)
+
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""
         while self.keep_alive_running:
             time.sleep(self.interval_duration)  # Wait for the interval
             if self.client and self.keep_alive_running:
-                if self.client.is_connected():
+                if self.client and self.client.is_connected():
                     self.current_power = self.current_power or 0
                     print(f"Current power: {self.current_power:.2f} W")
                     print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
+                    print(f"Current grid power: {self.current_grid_power:.2f} W")
+                    cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
+                    print(f"Current Hour Grid Cost: {cost:.2f} \u00A2")
+                    total_cost = sum(self.energy_costs_by_hour.values())
+                    print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
+                    self.energy_costs_by_day[str(self.current_day)] = total_cost
+
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
                     if average_list:
@@ -140,7 +166,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
                     if self.ws_server:
-                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'consumptionD': self.get_daily_wh()})
+                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'costs': cost, 'total_costs_today': total_cost, 'consumptionD': self.get_daily_wh()})
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)

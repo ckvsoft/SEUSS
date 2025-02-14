@@ -127,6 +127,7 @@ class SEUSS:
                 power_consumption_instance = self.power_consumption_manager.get_instance()
                 if power_consumption_instance:
                     power_consumption_instance.set_ws_server(self.ws_server)
+                    power_consumption_instance.set_current_price(self.items.get_current_price(True))
 
             # if essunit is not None:
             #    essunit.get_data()

@@ -117,6 +117,17 @@ class StatsManager(Singleton):
         cls.save_data() if save_data else None
 
     @classmethod
+    def set_dict_data(cls, group, key, value, save_data=True):
+        if not isinstance(value, dict):
+            return
+
+        if group not in StatsManager.data:
+            cls.data[group] = {}
+
+        cls.data[group][key] = value
+        cls.save_data() if save_data else None
+
+    @classmethod
     def insert_peek_data(cls, key, value, save_data=True):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return
