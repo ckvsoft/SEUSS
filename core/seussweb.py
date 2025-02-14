@@ -60,10 +60,10 @@ class SEUSSWeb:
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
-        self.logger.log_info(f"save configuration to {self.config.config_file}")
+        self.logger.log.info(f"save configuration to {self.config.config_file}")
         self.config.save_config(config)
         self.config.load_config()
-        self.logger.log_info(f"{self.config.config_data}")
+        self.logger.log.info(f"{self.config.config_data}")
 
         # restart = os.path.join(self.main_script_directory, 'restart.sh')
         # if os.path.exists('/data/rc.local'):
@@ -281,9 +281,9 @@ class SEUSSWeb:
 
                     new_config[key] = value
                 else:
-                    self.logger.log_debug(f"Invalid key format - {key}")
+                    self.logger.log.debug(f"Invalid key format - {key}")
 
-        self.logger.log_debug(new_config)
+        self.logger.log.debug(new_config)
 
         delay_seconds = 1
         threading.Timer(delay_seconds, self.save_config, args=(new_config,)).start()
@@ -488,13 +488,13 @@ class SEUSSWeb:
             debug = True
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
-        self.logger.log_info(f"start bottle host:{host}, port:{port}")
+        self.logger.log.info(f"start bottle host:{host}, port:{port}")
         serve(self.app, host=host, port=port)
 
         # self.app.run(host=host, port=port, debug=debug)
 
     def stop(self):
-        self.logger.log_debug(f"Bottle has stopped.")
+        self.logger.log.debug(f"Bottle has stopped.")
         sys.stderr.close()
         self.app.close()
 

@@ -69,9 +69,9 @@ class PowerConsumptionBase:
         if self.thread is None or not self.thread.is_alive():
             self.thread = threading.Thread(target=self.run)
             self.thread.start()
-            self.logger.log_debug(f"{self.__class__.__name__} started with interval {self.interval_duration} minutes.")
+            self.logger.log.debug(f"{self.__class__.__name__} started with interval {self.interval_duration} minutes.")
         else:
-            self.logger.log_debug(f"{self.__class__.__name__} is already running.")
+            self.logger.log.debug(f"{self.__class__.__name__} is already running.")
 
     def stop(self):
         """Stop the running thread."""
@@ -112,7 +112,7 @@ class PowerConsumptionBase:
                     self.last_time = data.get("last_time", time.time())
                     self.average = data.get("average", (0,0))
             except json.JSONDecodeError:
-                self.logger.log_error("Corrupted JSON file detected. Resetting data.")
+                self.logger.log.error("Corrupted JSON file detected. Resetting data.")
                 self.reset_data()
 
     def save_data(self, logging=False):
@@ -120,7 +120,7 @@ class PowerConsumptionBase:
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time))
         if logging:
-            self.logger.log_debug("data saved.")
+            self.logger.log.debug("data saved.")
 
         backup_file = f"{self.data_file}.backup"
         try:
@@ -129,7 +129,7 @@ class PowerConsumptionBase:
             if os.path.exists(backup_file):
                 os.remove(backup_file)
         except Exception as e:
-            self.logger.log_error(f"Error remove file: {e}")
+            self.logger.log.error(f"Error remove file: {e}")
 
     def save_hour(self):
         """Speichert den Durchschnitt des aktuellen Stundenverbrauchs."""
@@ -144,7 +144,7 @@ class PowerConsumptionBase:
             self.average = (value, count)
 
         self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average, save_data=False)
-        self.logger.log_debug(f"save ... update average: {self.average}")
+        self.logger.log.debug(f"save ... update average: {self.average}")
         self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value, save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh, save_data=False)
@@ -220,7 +220,7 @@ class PowerConsumptionBase:
             missing_data.append("P_AC_consumption_L3")
 
         if missing_data:
-            self.logger.log_debug(f"Missing data: {', '.join(missing_data)}")
+            self.logger.log.debug(f"Missing data: {', '.join(missing_data)}")
             return False
 
         return True

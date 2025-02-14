@@ -233,7 +233,7 @@ class Subscribers(MqttResult):
             if group in self.subscribesValues and key in self.subscribesValues[group]:
                 return self.subscribesValues[group][key]['value']
         except KeyError:
-            self.logger.log_error(f"KeyError: The key {key} was not found.")
+            self.logger.log.error(f"KeyError: The key {key} was not found.")
         return None
 
     def get_topic(self, full_key):
@@ -316,37 +316,37 @@ class MqttClient:
             context.load_verify_locations(self.certificate)
             context.check_hostname = True
         except ImportError:
-            self.logger.log_error("SSL support not available.")
+            self.logger.log.error("SSL support not available.")
         return context
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
-            self.logger.log_debug(f"Connected with result code {rc}")
+            self.logger.log.debug(f"Connected with result code {rc}")
             query_message = ""
             query_topic = f"R/{self.unit_id}/system/0/Serial"
             self.client.publish(query_topic, query_message)
-            self.logger.log_debug(f"on_connect query: {query_topic}")
+            self.logger.log.debug(f"on_connect query: {query_topic}")
             self.flag_connected = True
             self.subscribers_instance.flag_connected = True
         else:
-            self.logger.log_error(f"Connection failed with code {rc}")
+            self.logger.log.error(f"Connection failed with code {rc}")
 
     def on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = msg.payload.decode('utf-8')
         self.subscribers_instance.received_topics.add(topic)
-        self.logger.log_debug(f"Received message on topic {topic}: {payload}")
+        self.logger.log.debug(f"Received message on topic {topic}: {payload}")
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
 
     def on_publish(self, client, userdata, mid):
-        self.logger.log_debug(f"Message published {mid}")
+        self.logger.log.debug(f"Message published {mid}")
 
     def on_log(self, client, userdata, level, buf):
-        self.logger.log_debug(buf)
+        self.logger.log.debug(buf)
 
     def on_disconnect(self, client, userdata, rc):
-        self.logger.log_debug("Client disconnected")
+        self.logger.log.debug("Client disconnected")
         self.flag_connected = False
 
     def subscribe_multiple(self, subscribers_instance, query_topics):
@@ -356,12 +356,12 @@ class MqttClient:
         try:
             # MQTT-Broker-Verbindung und Authentifizierung einrichten
             if self.user:
-                self.logger.log_debug(f"user: {self.user}, password: {self.password}")
+                self.logger.log.debug(f"user: {self.user}, password: {self.password}")
                 plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
             if not self.connect():
-                self.logger.log_error("Failed to connect to the MQTT broker.")
+                self.logger.log.error("Failed to connect to the MQTT broker.")
                 return 1
 
             self.client.loop_start()
@@ -369,7 +369,7 @@ class MqttClient:
             # Abonnements für die angegebenen Themen einrichten
             for query_topic in query_topics:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
-                self.logger.log_debug(f"Subscribing to: {actual_topic}")
+                self.logger.log.debug(f"Subscribing to: {actual_topic}")
                 self.client.subscribe(actual_topic)
 
             self.client.publish(f"R/{self.unit_id}/keepalive", "")
@@ -390,10 +390,10 @@ class MqttClient:
                         for subtopic, subtopic_data in subtopics.items()
                         if 'value' not in subtopic_data or not subtopic_data['value']
                     ]
-                    self.logger.log_debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
+                    self.logger.log.debug(f"Current subscribesValues: {subscribers_instance.subscribesValues}")
                     count = len(missing_topics)
-                    self.logger.log_debug(f"Missing or Invalid Topics ({count}): {missing_topics}")
-                    self.logger.log_warning("Timeout during the MQTT subscription process.")
+                    self.logger.log.debug(f"Missing or Invalid Topics ({count}): {missing_topics}")
+                    self.logger.log.warning("Timeout during the MQTT subscription process.")
                     result = 1
                     break
 
@@ -401,11 +401,11 @@ class MqttClient:
 
         except Exception as e:
             # Fehlerbehandlung
-            self.logger.log_error(f"Exception during subscription: {str(e)}")
+            self.logger.log.error(f"Exception during subscription: {str(e)}")
             result = 1
 
         finally:
-            self.logger.log_debug("Finish subcribe ...")
+            self.logger.log.debug("Finish subcribe ...")
             # Ressourcen freigeben
             self.client.unsubscribe("#")
             self.client.loop_stop()
@@ -416,10 +416,10 @@ class MqttClient:
     def subscribe(self, mqtt_result, query_topic):
         self.subscribers_instance = mqtt_result
         self.subscribers_instance.flag_connected = False
-        self.logger.log_debug(f"query_topic: {query_topic}")
+        self.logger.log.debug(f"query_topic: {query_topic}")
         try:
             if self.user:
-                self.logger.log_debug(f"user: {self.user}, password: {self.password}")
+                self.logger.log.debug(f"user: {self.user}, password: {self.password}")
                 plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
@@ -433,10 +433,10 @@ class MqttClient:
                 time.sleep(1)
 
                 if time.time() - start_time > self.timeout:
-                    self.logger.log_error("Timeout: Connection could not be established.")
+                    self.logger.log.error("Timeout: Connection could not be established.")
                     raise TimeoutError
 
-            self.logger.log_debug(f"subscribe: {query_topic}")
+            self.logger.log.debug(f"subscribe: {query_topic}")
             self.client.subscribe(f"{query_topic}")
             self.client.publish(f"R/{self.unit_id}/keepalive", "")
 
@@ -450,16 +450,16 @@ class MqttClient:
             time.sleep(1)
             payload = self.response_payload
             mqtt_result.result = payload
-            self.logger.log_debug(f"result {payload}")
+            self.logger.log.debug(f"result {payload}")
             result = 0
 
         except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT publish process.")
-            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
+            self.logger.log.warning("Timeout during the MQTT publish process.")
+            self.logger.log.debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
-            self.logger.log_debug("Finish subcribe ...")
+            self.logger.log.debug("Finish subcribe ...")
             self.client.unsubscribe("#")
             self.client.loop_stop()
             # self.disconnect()
@@ -467,10 +467,10 @@ class MqttClient:
         return result
 
     def publish(self, query_topic, query_message):
-        self.logger.log_debug(f"query_topic: {query_topic} {query_message}")
+        self.logger.log.debug(f"query_topic: {query_topic} {query_message}")
         try:
             if self.user:
-                self.logger.log_debug(f"user: {self.user}, password: {self.password}")
+                self.logger.log.debug(f"user: {self.user}, password: {self.password}")
                 plain_password = Utils.decode_from_base64(self.password)
                 self.client.username_pw_set(self.user, password=plain_password)
 
@@ -485,21 +485,21 @@ class MqttClient:
                 time.sleep(1)
 
                 if time.time() - start_time > self.timeout:
-                    self.logger.log_error("Timeout: Connection could not be established.")
+                    self.logger.log.error("Timeout: Connection could not be established.")
                     raise TimeoutError
 
-            self.logger.log_debug(f"publish: {query_topic} message: {query_message}")
+            self.logger.log.debug(f"publish: {query_topic} message: {query_message}")
             result = self.client.publish(query_topic, query_message)
-            self.logger.log_debug(f"result rc: {result.rc}")
+            self.logger.log.debug(f"result rc: {result.rc}")
             result = result.rc
 
         except TimeoutError:
-            self.logger.log_warning("Timeout during the MQTT publish process.")
-            self.logger.log_debug(f"Timeout MQTT Topic: {query_topic}.")
+            self.logger.log.warning("Timeout during the MQTT publish process.")
+            self.logger.log.debug(f"Timeout MQTT Topic: {query_topic}.")
             result = 1
 
         finally:
-            self.logger.log_debug("Finish subcribe ...")
+            self.logger.log.debug("Finish subcribe ...")
             self.client.loop_stop()
             # self.disconnect()
 
@@ -507,15 +507,15 @@ class MqttClient:
 
     def connect(self):
         try:
-            self.logger.log_debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
+            self.logger.log.debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
             if self.client.is_connected(): return True
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
             return True
         except ConnectionRefusedError:
-            self.logger.log_error(
+            self.logger.log.error(
                 "Error: The connection to the MQTT broker was denied. Check the broker configuration.")
         except Exception as e:
-            self.logger.log_error(f"Error: {e}")
+            self.logger.log.error(f"Error: {e}")
 
         return False
 

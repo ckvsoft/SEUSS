@@ -37,7 +37,7 @@ class MarketData:
 
     def load_data(self, use_second_day: bool):
         error_message = "Error: The abstract method 'load_data(self, use_second_day)' must be implemented in your derived class."
-        self.logger.log_error(error_message)
+        self.logger.log.error(error_message)
         raise NotImplementedError(error_message)
 
     def _calculate_dates(self, use_second_day=False, as_timestamp=False):
@@ -52,11 +52,11 @@ class MarketData:
             tomorrow = (now + timedelta(days=1))
             self.getdata_end_datetime = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        self.logger.log_debug(f"use_second_day: {use_second_day}  as_timestamp: {as_timestamp}")
-        self.logger.log_debug(f"starttime: {self.getdata_start_datetime}, endtime: {self.getdata_end_datetime}")
+        self.logger.log.debug(f"use_second_day: {use_second_day}  as_timestamp: {as_timestamp}")
+        self.logger.log.debug(f"starttime: {self.getdata_start_datetime}, endtime: {self.getdata_end_datetime}")
 
         if as_timestamp:
             self.getdata_start_datetime = str(int(self.getdata_start_datetime.timestamp())) + "000"
             self.getdata_end_datetime = str(int(self.getdata_end_datetime.timestamp())) + "000"
-            self.logger.log_debug(
+            self.logger.log.debug(
                 f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")

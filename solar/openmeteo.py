@@ -101,18 +101,18 @@ class OpenMeteo:
                         pv_info.raise_for_status()  # Raise HTTPError for bad responses
                         break  # Break the loop if the request was successful
                     except RequestException as e:
-                        self.logger.log_error(f"Can't retrieve PV info. Error: {e}")
+                        self.logger.log.error(f"Can't retrieve PV info. Error: {e}")
                         if retry < max_retries - 1:
-                            self.logger.log_info(f"Retrying... Attempt {retry + 2}/{max_retries}")
+                            self.logger.log.info(f"Retrying... Attempt {retry + 2}/{max_retries}")
                             time.sleep(20)
                         else:
-                            self.logger.log_error(f"All retry attempts failed. Exiting.")
+                            self.logger.log.error(f"All retry attempts failed. Exiting.")
                             return None
 
                 try:
                     data = pv_info.json()
                 except Exception as e:
-                    self.logger.log_error(f"Can't retrieve PV info. Error: {e}")
+                    self.logger.log.error(f"Can't retrieve PV info. Error: {e}")
                     return None
 
                 hourly_data = data.get('hourly', {})
@@ -174,11 +174,11 @@ class OpenMeteo:
             else:
                 adjustment_factor = self.statsmanager.get_data("solar", "adjustment_factor") or 0.0
 
-            self.logger.log_debug(f"Solar adjustment_factor: {adjustment_factor}")
-            self.logger.log_debug(f"Solar raw current_hour data: {total_watts_current_hour} Wh")
-            self.logger.log_debug(
+            self.logger.log.debug(f"Solar adjustment_factor: {adjustment_factor}")
+            self.logger.log.debug(f"Solar raw current_hour data: {total_watts_current_hour} Wh")
+            self.logger.log.debug(
                 f"Solar raw current_day data: {(total_watt_hours_current_day * efficiency_inverter)} Wh")
-            self.logger.log_debug(
+            self.logger.log.debug(
                 f"Solar raw tomorrow_day data: {(total_watt_hours_tomorrow_day * efficiency_inverter)} Wh")
 
             total_watts_current_hour = (total_watts_current_hour * efficiency_inverter) * adjustment_factor
@@ -199,10 +199,10 @@ class OpenMeteo:
             solardata.update_sun_time_tomorrow(sunshine_duration_tomorrow_day / 60)
 
             # Log der Gesamtwerte
-            self.logger.log_info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
-            self.logger.log_info(
+            self.logger.log.info(f"Total Solar for the current hour: {solardata.total_current_hour} Wh")
+            self.logger.log.info(
                 f"Total Solar for the current day ({current_date}): {solardata.total_current_day} Wh")
-            self.logger.log_info(
+            self.logger.log.info(
                 f"Total Solar for the tomorrow day ({tomorrow_date}): {solardata.total_tomorrow_day} Wh")
 
             return solardata.total_current_hour
@@ -233,10 +233,10 @@ class OpenMeteo:
         damping = 1.0 - damping
 
         if damping == 0.0:
-            self.logger.log_debug(f"exponential_damping: hour {hour}, damping {1 + damping}, exponential damping 0.0")
+            self.logger.log.debug(f"exponential_damping: hour {hour}, damping {1 + damping}, exponential damping 0.0")
             return 0.0  # Volle Dämpfung, daher ist der Dämpfungsfaktor immer 0
         elif damping == 1.0:
-            self.logger.log_debug(f"exponential_damping: hour {hour}, damping {1 - damping}, exponential damping 1.0")
+            self.logger.log.debug(f"exponential_damping: hour {hour}, damping {1 - damping}, exponential damping 1.0")
             return 1.0  # Keine Dämpfung, daher ist der Dämpfungsfaktor immer 1
         else:
             # Berechnung des Dämpfungsfaktors basierend auf dem gewünschten Verhalten
@@ -251,6 +251,6 @@ class OpenMeteo:
                 exponential_damping = damping + (1 - damping) * (
                         (hour - self.start_hour) / (self.noon_hour - self.start_hour))
 
-            self.logger.log_debug(
+            self.logger.log.debug(
                 f"exponential_damping: hour {hour}, damping {damping}, exponential damping {exponential_damping}")
             return exponential_damping

@@ -38,10 +38,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         if self.client:
             # If a client exists, compare the current and new configuration
             if broker == self.broker and port == self.port and unit_id == self.unit_id:
-                self.logger.log_debug("The new MQTT configuration matches the current one. No changes required.")
+                self.logger.log.debug("The new MQTT configuration matches the current one. No changes required.")
                 return
 
-            self.logger.log_debug("MQTT configuration has changed. Reconnecting client...")
+            self.logger.log.debug("MQTT configuration has changed. Reconnecting client...")
             self.client.disconnect()
             self.client = None
 
@@ -72,20 +72,20 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.client.username_pw_set(user, password=plain_password)
 
             self.client.connect(self.broker, self.port, keepalive=60)
-            self.logger.log_debug("Connected to the broker.")
+            self.logger.log.debug("Connected to the broker.")
         except socket.gaierror as e:
-            self.logger.log_error(f"Network error: {e}. The broker hostname could not be resolved.")
+            self.logger.log.error(f"Network error: {e}. The broker hostname could not be resolved.")
         except ConnectionRefusedError as e:
-            self.logger.log_error(f"Connection refused: {e}. Is the broker online?")
+            self.logger.log.error(f"Connection refused: {e}. Is the broker online?")
         except Exception as e:
-            self.logger.log_error(f"An unexpected error occurred: {e}")
+            self.logger.log.error(f"An unexpected error occurred: {e}")
 
     def on_message(self, client, userdata, msg):
         topic = msg.topic
         try:
             payload = json.loads(msg.payload.decode())
         except json.JSONDecodeError:
-            self.logger.log_error(f"Error decoding the payload: {msg.payload}")
+            self.logger.log.error(f"Error decoding the payload: {msg.payload}")
             return
 
         # Check if the received topic is in the defined topics
@@ -108,7 +108,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.update(self.current_power, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
-        self.logger.log_debug(f"Disconnected from MQTT server. Code {rc}")
+        self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
 
     def update_values(self, topic, payload):
         if topic == self.data_topics["P_AC_consumption_L1"]:
@@ -145,9 +145,9 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)
                     except Exception as e:
-                        self.logger.log_error(f"Error sending the keep-alive message: {e}")
+                        self.logger.log.error(f"Error sending the keep-alive message: {e}")
                 else:
-                    self.logger.log_debug("No connection to MQTT server. Attempting to reconnect.")
+                    self.logger.log.debug("No connection to MQTT server. Attempting to reconnect.")
                     self.client = None
                     self.update_config(self.mqtt_config)
 
@@ -194,5 +194,5 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             context.load_verify_locations(certificate)
             context.check_hostname = True
         except ImportError:
-            self.logger.log_error("SSL support not available.")
+            self.logger.log.error("SSL support not available.")
         return context

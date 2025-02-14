@@ -42,44 +42,44 @@ class WebSocketServer:
         self.clients.add(websocket)
         try:
             remote_address = websocket.socket.getpeername()
-            self.logger.log_info(f"Client connected: {remote_address}")
+            self.logger.log.info(f"Client connected: {remote_address}")
         except Exception as e:
-            self.logger.log_error(f"Could not determine client address: {e}")
+            self.logger.log.error(f"Could not determine client address: {e}")
             remote_address = None
 
         if self.last_message:
             try:
                 websocket.send(json.dumps(self.last_message))
-                # self.logger.log_info(f"Sent last message to new client: {self.last_message}")
+                # self.logger.log.info(f"Sent last message to new client: {self.last_message}")
             except Exception as e:
-                self.logger.log_error(f"Error sending last message: {e}")
+                self.logger.log.error(f"Error sending last message: {e}")
 
         try:
             # Waiting for incoming messages from the client
             while True:
                 message = websocket.recv()
-                self.logger.log_debug(f"Message from client: {message}")
+                self.logger.log.debug(f"Message from client: {message}")
         except websockets.exceptions.ConnectionClosed as e:
-            self.logger.log_debug(f"Connection closed: {e}")
+            self.logger.log.debug(f"Connection closed: {e}")
         finally:
             # Remove the client from the list of connections
             self.clients.discard(websocket)
             if remote_address:
-                self.logger.log_debug(f"Client disconnected: {remote_address}")
+                self.logger.log.debug(f"Client disconnected: {remote_address}")
 
     def send_data_to_all_clients(self, message):
         """Sends a message to all connected WebSocket clients synchronously."""
         self.last_message = message
         if not self.clients:
-            # self.logger.log_info("No connected clients")
+            # self.logger.log.info("No connected clients")
             print("No connected clients")
             return
         for client in list(self.clients):
             try:
                 client.send(json.dumps(message))
-                # self.logger.log_info(f"Message sent to client: {message}")
+                # self.logger.log.info(f"Message sent to client: {message}")
             except Exception as e:
-                self.logger.log_error(f"Error sending message to client: {e}")
+                self.logger.log.error(f"Error sending message to client: {e}")
                 self.clients.discard(client)  # Remove faulty clients
 
     def emit_ws(self, message):
@@ -88,11 +88,11 @@ class WebSocketServer:
     def run(self, host="0.0.0.0", port=8765):
         """Starts the WebSocket server synchronously."""
         with ws_serv(self.handler, host, port) as self.server:
-            self.logger.log_info(f"start WebSocket server host:{host} port:{port}")
+            self.logger.log.info(f"start WebSocket server host:{host} port:{port}")
             self.server.serve_forever()
 
     def stop(self):
         if self.server:
             self.server.shutdown()
-            self.logger.log_debug(f"WebSocket server has stopped.")
+            self.logger.log.debug(f"WebSocket server has stopped.")
 

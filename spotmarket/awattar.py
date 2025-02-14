@@ -58,16 +58,16 @@ class Awattar(MarketData):
             if response.status_code == 200:
                 return self._load_data_from_json(response.text)
             else:
-                self.logger.log_warning(f"Error downloading Awattar prices. Status code: {response.status_code}")
+                self.logger.log.warning(f"Error downloading Awattar prices. Status code: {response.status_code}")
                 return []
 
         except ConnectionError as e:
             if isinstance(e.args[0], socket.gaierror):
-                self.logger.log_error(f"Error in name resolution for 'api.awattar.com'")
-                self.logger.log_error("Please check your network connection and DNS configuration.")
+                self.logger.log.error(f"Error in name resolution for 'api.awattar.com'")
+                self.logger.log.error("Please check your network connection and DNS configuration.")
             else:
-                self.logger.log_error(f"Connection error: {e}")
-                self.logger.log_error("Please check your network connection and server configuration.")
+                self.logger.log.error(f"Connection error: {e}")
+                self.logger.log.error("Please check your network connection and server configuration.")
 
             return []
 
@@ -81,7 +81,7 @@ class Awattar(MarketData):
                 items.append(awattar_item)
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            self.logger.log_warning(f"Error loading Awattar prices: {e}")
+            self.logger.log.warning(f"Error loading Awattar prices: {e}")
             return []
 
     def _make_url(self) -> str:

@@ -35,7 +35,7 @@ logger = CustomLogger()
 
 
 def excepthook_handler(exc_type, exc_value, exc_traceback):
-    logger.log_error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
+    logger.log.error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
     main_script_path = os.path.abspath(sys.argv[0])
     main_script_directory = os.path.dirname(main_script_path)
     restart = os.path.join(main_script_directory, 'restart.sh')

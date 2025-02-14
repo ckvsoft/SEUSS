@@ -64,17 +64,17 @@ class Entsoe(MarketData):
                 # print(response.text)
                 return self._load_data_from_xml(response.text)
             else:
-                self.logger.log_warning(f"Error downloading ENTSO-E prices. Status code: {response.status_code}")
-                self.logger.log_warning(f"URL: {url}")
+                self.logger.log.warning(f"Error downloading ENTSO-E prices. Status code: {response.status_code}")
+                self.logger.log.warning(f"URL: {url}")
                 return []
 
         except ConnectionError as e:
             if isinstance(e.args[0], socket.gaierror):
-                self.logger.log_error(f"Error in name resolution for 'api.awattar.com'")
-                self.logger.log_error("Please check your network connection and DNS configuration.")
+                self.logger.log.error(f"Error in name resolution for 'api.awattar.com'")
+                self.logger.log.error("Please check your network connection and DNS configuration.")
             else:
-                self.logger.log_error(f"Connection error: {e}")
-                self.logger.log_error("Please check your network connection and server configuration.")
+                self.logger.log.error(f"Connection error: {e}")
+                self.logger.log.error("Please check your network connection and server configuration.")
 
             return []
 
@@ -84,11 +84,11 @@ class Entsoe(MarketData):
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
 
         url = f"https://web-api.tp.entsoe.eu/api?securityToken={self.api_token}&documentType=A44&in_Domain={self.in_domain}&out_Domain={self.out_domain}&periodStart={start_date_str}&periodEnd={end_date_str}"
-        self.logger.log_debug(f"entsoe url: {url}")
+        self.logger.log.debug(f"entsoe url: {url}")
         return url
 
     def _load_data_from_xml(self, xml_data: str):
-        # self.logger.log_debug(f"raw xml: {xml_data}")
+        # self.logger.log.debug(f"raw xml: {xml_data}")
         statsmanager = StatsManager()
         error_code = 0
         error_message = ""
@@ -123,7 +123,7 @@ class Entsoe(MarketData):
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
-                            self.logger.log_warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
+                            self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     period_count += 1  # Zähler inkrementieren
                     if period_count == 1:
@@ -151,7 +151,7 @@ class Entsoe(MarketData):
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
-                            self.logger.log_warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
+                            self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     last_pos = current_pos
             elif valid_period and "<price.amount>" in line:
@@ -175,8 +175,8 @@ class Entsoe(MarketData):
                 in_reason = False
 
         if error_code == 999:
-            self.logger.log_warning(f"Entsoe data retrieval error found in the XML data: {error_message}")
+            self.logger.log.warning(f"Entsoe data retrieval error found in the XML data: {error_message}")
         elif not items:
-            self.logger.log_warning("No prices found in the XML data.")
+            self.logger.log.warning("No prices found in the XML data.")
 
         return items

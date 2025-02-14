@@ -35,7 +35,7 @@ class GenericLoaderFactory:
     def create_loader(loader_type, info):
         logger = CustomLogger()
         if info is None:
-            logger.log_warning(f"Received None for {loader_type} info. Returning None.")
+            logger.log.warning(f"Received None for {loader_type} info. Returning None.")
             return None
 
         try:
@@ -47,5 +47,5 @@ class GenericLoaderFactory:
             loader_class = getattr(loader_module, loader_class_name)
             return loader_class(**info)
         except (ModuleNotFoundError, AttributeError, ValueError):
-            logger.log_error(f"Invalid {loader_type} Loader: {info}")
+            logger.log.error(f"Invalid {loader_type} Loader: {info}")
             return None

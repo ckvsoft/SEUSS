@@ -28,6 +28,6 @@ class Tasmota(SmartSwitch):
                     response = requests.get(url, timeout=5)  # Ohne Authentifizierung
 
                 response.raise_for_status()
-                self.logger.log_debug(f"[{ip}] Request successful: {response.status_code}")
+                self.logger.log.debug(f"[{ip}] Request successful: {response.status_code}")
             except requests.exceptions.RequestException as e:
-                self.logger.log_debug(f"[{ip}] Error while sending the request: {e}")
+                self.logger.log.debug(f"[{ip}] Error while sending the request: {e}")

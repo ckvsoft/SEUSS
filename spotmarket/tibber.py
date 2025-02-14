@@ -76,15 +76,15 @@ class Tibber(MarketData):
                 # data = response.json()
                 return self._load_data_from_json(response.text)
             else:
-                self.logger.log_error(f"Error with the API request. Status code: {response.status_code}")
+                self.logger.log.error(f"Error with the API request. Status code: {response.status_code}")
 
         except ConnectionError as e:
             if isinstance(e.args[0], socket.gaierror):
-                self.logger.log_error(f"Error in name resolution for 'api.awattar.com'")
-                self.logger.log_error("Please check your network connection and DNS configuration.")
+                self.logger.log.error(f"Error in name resolution for 'api.awattar.com'")
+                self.logger.log.error("Please check your network connection and DNS configuration.")
             else:
-                self.logger.log_error(f"Connection error: {e}")
-                self.logger.log_error("Please check your network connection and server configuration.")
+                self.logger.log.error(f"Connection error: {e}")
+                self.logger.log.error("Please check your network connection and server configuration.")
 
             return []
 
@@ -107,10 +107,10 @@ class Tibber(MarketData):
                     items.append(tibber_item)
 
                 if len(items) < 25:
-                    self.logger.log_warning("Error: Tibber prices for tomorrow could not be loaded.")
+                    self.logger.log.warning("Error: Tibber prices for tomorrow could not be loaded.")
 
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            self.logger.log_warning(f"Error loading all Tibber prices: {e}")
+            self.logger.log.warning(f"Error loading all Tibber prices: {e}")
 
             return items

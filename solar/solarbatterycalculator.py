@@ -62,14 +62,14 @@ class SolarBatteryCalculator:
             current_date = TimeUtilities.get_now()
 
             if current_time > sunset_time:
-                self.logger.log_debug("Use tomorrow_day forecast")
+                self.logger.log.debug("Use tomorrow_day forecast")
                 forecast = self.solardata.total_tomorrow_day
                 daylight_hours = self.solardata.sun_time_tomorrow_minutes / 60
                 sunrise_tomorrow_date = datetime.strptime(self.solardata.sunrise_tomorrow_day,
                                                           "%Y-%m-%dT%H:%M").astimezone(TimeUtilities.TZ)
                 differenz = sunrise_tomorrow_date - current_date
             else:
-                self.logger.log_debug("Use current_day forecast")
+                self.logger.log.debug("Use current_day forecast")
                 forecast = self.solardata.total_current_day
                 daylight_hours = self.solardata.sun_time_today_minutes / 60
                 sunset_date = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").astimezone(
@@ -87,7 +87,7 @@ class SolarBatteryCalculator:
             available_hours = differenz.total_seconds() / 3600
 
             # verbrauch bis sonnenuntergang oder verbrauch bis sonnenaufgang wenn nacht
-            self.logger.log_debug(
+            self.logger.log.debug(
                 f"average_consumption {self.average_consumption} * available_hours: {available_hours}")
             average_consumption = self.average_consumption * available_hours
             # restliche battery capazität über minimum soc
@@ -102,31 +102,31 @@ class SolarBatteryCalculator:
             available_battery_capacity = ((
                                                   full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
 
-            self.logger.log_info(
+            self.logger.log.info(
                 f"Current Battery state: {self.solardata.battery_capacity} Ah, maximum: {round(full_battery_capacity_wh, 2)} Wh")
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= average_consumption:
-                self.logger.log_debug(
+                self.logger.log.debug(
                     f"return while actual_solar_during_daylight ({actual_solar_during_daylight}) >= average_consumption ({average_consumption})")
                 return self.solardata.battery_minimum_soc_limit  # Der Akku muss während der Sonnenstunden nicht geladen werden
 
             # Berechnen des verbleibenden Speicherplatzes in der Batterie
             remaining_battery_capacity = available_battery_capacity + actual_solar_during_daylight - average_consumption
-            self.logger.log_debug(f"Remaining battery capacity: {remaining_battery_capacity}")
+            self.logger.log.debug(f"Remaining battery capacity: {remaining_battery_capacity}")
             battery_percentage = 0.0
             if remaining_battery_capacity < 0.0:
                 battery_percentage = ((remaining_battery_capacity / full_battery_capacity_wh) * 100) * -1
-                self.logger.log_debug(f"Battery percentage add: {battery_percentage}")
+                self.logger.log.debug(f"Battery percentage add: {battery_percentage}")
 
             battery_percentage = battery_percentage + self.solardata.battery_minimum_soc_limit
-            self.logger.log_debug(f"Battery percentage total: {battery_percentage}")
+            self.logger.log.debug(f"Battery percentage total: {battery_percentage}")
 
             # Berücksichtigung der verbleibenden Batteriekapazität
             battery_percentage = min(min(battery_percentage, 100), 100)
             battery_percentage = max(battery_percentage - (battery_percentage / 100) * 5,
                                      self.solardata.battery_minimum_soc_limit)
-            self.logger.log_debug(f"Battery percentage (- 5% spare: {battery_percentage}")
+            self.logger.log.debug(f"Battery percentage (- 5% spare: {battery_percentage}")
 
             return round(battery_percentage, 2)
 

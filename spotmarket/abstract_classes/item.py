@@ -73,12 +73,12 @@ class Item:
         if check_time:
             # Vergleiche sowohl Datum als auch Uhrzeit
             expired = item_local < now_local
-            self.logger.log_debug(f"Item expired: {expired}, now: {now_local}, item: {item_local}")
+            self.logger.log.debug(f"Item expired: {expired}, now: {now_local}, item: {item_local}")
 
         else:
             # Vergleiche nur das Datum
             expired = item_local.date() < now_local.date()
-            self.logger.log_debug(f"Item expired: {expired}, now: {now_local.date()}, item: {item_local.date()}")
+            self.logger.log.debug(f"Item expired: {expired}, now: {now_local.date()}, item: {item_local.date()}")
 
         return expired
 
