@@ -46,7 +46,8 @@ class PowerConsumptionBase:
         self.running = False
         self.last_minute = None
         self.last_value = None  # Last power value in watts
-        self.last_grid_value = None  # Last power value in watts
+        self.last_grid_value = None
+        self.last_dc_value = 0
         self.last_time = None   # Last timestamp (seconds since epoch)
         self.current_price = 0
 
@@ -192,9 +193,7 @@ class PowerConsumptionBase:
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
         self.daily_wh += wh   # Update des täglichen Verbrauchs
 
-        grid_wh = 0
-        if self.last_grid_value > 0.0: # only positiv watt
-            grid_wh = (self.last_grid_value * time_diff)
+        grid_wh = (self.last_grid_value * time_diff)
         if grid_wh > 0.0:
             self.hourly_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
@@ -217,6 +216,7 @@ class PowerConsumptionBase:
             self.current_hour = current_hour
             self.hourly_wh = 0  # Setze den stündlichen Verbrauch zurück
             self.hourly_start_time = timestamp
+            self.hourly_grid_wh = 0
 
         # Speichern der Daten alle 5 Minuten
         current_minute = time.localtime(timestamp).tm_min
@@ -227,6 +227,7 @@ class PowerConsumptionBase:
         # Aktualisieren der letzten Werte
         self.last_value = power
         self.last_grid_value = grid_power
+        self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
 
     def check_for_data(self):

@@ -150,11 +150,50 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     print(f"Current power: {self.current_power:.2f} W")
                     print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
                     print(f"Current grid power: {self.current_grid_power:.2f} W")
+                    print(f"Current DC power: {self.P_DC_consumption_Battery:.2f} W")
                     cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
-                    print(f"Current Hour Grid Cost: {cost:.2f} \u00A2")
+                    # print(f"Current Hour Grid Cost: {cost:.2f} \u00A2")
                     total_cost = sum(self.energy_costs_by_hour.values())
-                    print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
+                    # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
+
+                    total_consumption = self.current_power  # Nur den aktuellen Verbrauch zählen
+                    if self.P_DC_consumption_Battery < 0:  # Batterie entlädt
+                        total_consumption += abs(
+                            self.P_DC_consumption_Battery)  # Entladen der Batterie erhöht den Gesamtverbrauch
+
+                    # Berechnung, wie viel vom Grid genommen wird
+                    difference = total_consumption - self.current_grid_power
+
+                    if difference > 0:
+                        print(
+                            f"⚡ Total consumption: {total_consumption:.2f} W (🔽 {difference:.2f} W lower than grid power: {self.current_grid_power:.2f} W)")
+                    else:
+                        print(
+                            f"⚠️ More power is taken from the grid ({self.current_grid_power:.2f} W) than consumed ({total_consumption:.2f} W) → Difference: {abs(difference):.2f} W")
+
+                    # Wenn die Batterie gerade lädt, dann berücksichtige, dass sie noch nicht verbraucht ist, sondern Energie speichert
+                    if self.P_DC_consumption_Battery > 0:  # Batterie lädt
+                        total_input_power = self.current_grid_power - self.P_DC_consumption_Battery  # Batterie lädt, also die Energie wird nicht verbraucht
+                        print(f"🔋 Battery is charging: {self.P_DC_consumption_Battery:.2f} W stored from grid")
+                    else:  # Batterie entlädt
+                        total_input_power = self.current_grid_power + abs(
+                            self.P_DC_consumption_Battery)  # Batterie entlädt, also wird die Batterie unterstützt
+                        print(
+                            f"🔋 Battery is discharging: {-self.P_DC_consumption_Battery:.2f} W used to support consumption")
+
+                    difference = total_input_power - self.current_power
+
+                    # Fehlererkennung
+                    if difference > 50:  # Verluste einkalkulieren (Schwellenwert anpassen)
+                        print(
+                            f"✅ More power is supplied ({total_input_power:.2f} W) than consumed ({self.current_power:.2f} W) → Expected losses: {difference:.2f} W")
+                    elif -50 <= difference <= 50:
+                        print(
+                            f"⚠️ Warning: Power supply ({total_input_power:.2f} W) and consumption ({self.current_power:.2f} W) are nearly identical → Check losses")
+                    else:
+                        print(
+                            f"❌ ERROR: Consumption ({self.current_power:.2f} W) is HIGHER than available supply ({total_input_power:.2f} W) → Possible measurement issue! Deficit: {abs(difference):.2f} W")
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
@@ -163,8 +202,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         value *= count
                         count += 1
                         value = (value + self.get_hourly_average()) / count
-                        print(f"Average Stats: {value:.4f} Wh")
-                        print(f"Forcast Day Stats: {value * 24:.4f} Wh")
+                        # print(f"Average Stats: {value:.4f} Wh")
+                        # print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
                     if self.ws_server:
                         self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'battery_power': self.P_DC_consumption_Battery,'costs': cost, 'total_costs_today': total_cost, 'consumptionD': self.get_daily_wh()})
