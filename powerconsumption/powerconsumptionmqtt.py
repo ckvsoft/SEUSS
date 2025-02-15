@@ -157,11 +157,17 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
 
+                    error_threshold = 50  # Maximal 50W als Toleranz für kleine Abweichungen beim Entladen
                     total_consumption = self.current_power  # Nur den aktuellen Verbrauch zählen
+
                     if self.P_DC_consumption_Battery < 0:  # Batterie entlädt
-                        total_consumption -= abs(
-                            self.P_DC_consumption_Battery) + self.current_grid_power
-                    else:
+                        total_consumption -= abs(self.P_DC_consumption_Battery) + self.current_grid_power
+
+                        # Falls durch kleine Messfehler eine positive Differenz entsteht, auf 0 setzen
+                        if 0 < total_consumption < error_threshold:
+                            total_consumption = 0
+
+                    else:  # Batterie lädt
                         total_consumption -= self.P_DC_consumption_Battery + self.current_grid_power
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
