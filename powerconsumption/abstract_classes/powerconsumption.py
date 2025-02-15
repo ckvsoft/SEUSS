@@ -127,20 +127,6 @@ class PowerConsumptionBase:
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
         self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
 
-        """Lädt gespeicherte Daten aus einer JSON-Datei."""
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, "r") as file:
-                    data = json.load(file)
-                    self.hourly_wh = data.get("hourly_wh", 0)
-                    self.hourly_start_time = data.get("hourly_start_time", time.time())
-                    self.last_value = data.get("last_value", 0)
-                    self.last_time = data.get("last_time", time.time())
-                    self.average = data.get("average", (0,0))
-            except json.JSONDecodeError:
-                self.logger.log.error("Corrupted JSON file detected. Resetting data.")
-                self.reset_data()
-
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
@@ -204,7 +190,9 @@ class PowerConsumptionBase:
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
         self.daily_wh += wh   # Update des täglichen Verbrauchs
 
-        grid_wh = (self.last_grid_value * time_diff)
+        grid_wh = 0
+        if self.last_grid_value > 0.0: # only positiv watt
+            grid_wh = (self.last_grid_value * time_diff)
         if grid_wh > 0.0:
             self.hourly_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
