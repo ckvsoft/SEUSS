@@ -129,6 +129,11 @@ class PowerConsumptionBase:
 
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
         self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
+        hourly_wh = self.statsmanager.get_data("powerconsumption","hourly_wh")
+        if hourly_wh and hourly_wh[1] == self.current_hour:
+            self.hourly_wh = hourly_wh[0]
+        else:
+            self.statsmanager.remove_data("powerconsumption", "hourly_wh")
 
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
@@ -137,6 +142,7 @@ class PowerConsumptionBase:
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_grid_power_value", (self.last_grid_value, self.last_time))
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.current_hour))
 
         if logging:
             self.logger.log.debug("data saved.")

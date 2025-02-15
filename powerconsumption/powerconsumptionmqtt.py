@@ -11,6 +11,7 @@ from powerconsumption.abstract_classes.powerconsumption import PowerConsumptionB
 class PowerConsumptionMQTT(PowerConsumptionBase):
     def __init__(self, interval_duration=5, mqtt_config=None):
         super().__init__(interval_duration)
+        self.efficiency = 0.90
         self.keep_alive_running = False
 
         # MQTT configuration
@@ -157,18 +158,41 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
 
-                    error_threshold = 50  # Maximal 50W als Toleranz für kleine Abweichungen beim Entladen
-                    total_consumption = self.current_power  # Nur den aktuellen Verbrauch zählen
+                    alpha = 0.05  # Glättungsfaktor für den gleitenden Durchschnitt
+                    total_consumption = self.current_power
 
                     if self.P_DC_consumption_Battery < 0:  # Batterie entlädt
-                        total_consumption -= abs(self.P_DC_consumption_Battery) + self.current_grid_power
+                        # Berechnung des dynamischen Wirkungsgrads (falls benötigt)
+                        current_efficiency = self.current_power / abs(self.P_DC_consumption_Battery) if abs(
+                            self.P_DC_consumption_Battery) > 0 else 0.9
 
-                        # Falls durch kleine Messfehler eine positive Differenz entsteht, auf 0 setzen
-                        if 0 < total_consumption < error_threshold:
-                            total_consumption = 0
+                        # Gleitender Durchschnitt für den Wirkungsgrad
+                        self.efficiency = (1 - alpha) * self.efficiency + alpha * current_efficiency
 
-                    else:  # Batterie lädt
-                        total_consumption -= self.P_DC_consumption_Battery + self.current_grid_power
+                        # Begrenzung des Wirkungsgrads zwischen 0.7 und 1.0
+                        self.efficiency = max(0.7, min(self.efficiency, 1.0))
+
+                        # Korrigierte Entladeleistung der Batterie (mit Wirkungsgrad)
+                        corrected_battery_power = abs(self.P_DC_consumption_Battery) * self.efficiency
+                        total_consumption -= corrected_battery_power  # Entladene Batterie wird berücksichtigt
+
+                    elif self.P_DC_consumption_Battery > 0:  # Batterie lädt
+                        # Wenn die Batterie lädt, subtrahiere die Ladeleistung (abzüglich des Grid-Stroms)
+                        total_consumption -= self.P_DC_consumption_Battery  # Ladeleistung abziehen
+
+                    # Abziehen des Stroms, der aus dem Netz bezogen wird
+                    total_consumption -= self.current_grid_power  # Netzstrom wird vom Gesamtverbrauch abgezogen
+
+                    # Debug-Ausgabe
+                    self.logger.log.debug(f"🔋 Dynamic Efficiency: {self.efficiency:.3f}")
+                    self.logger.log.debug(f"⚡ Corrected Consumption: {total_consumption:.2f} W")
+
+                    # Falls die Batterie lädt, wird die Entladung nicht berücksichtigt
+                    total_consumption -= self.current_grid_power  # Netzstrom wird vom Gesamtverbrauch abgezogen
+
+                    # Debug-Ausgabe
+                    self.logger.log.debug(f"🔋 Dynamic Efficiency: {self.efficiency:.3f}")
+                    self.logger.log.debug(f"⚡ Corrected Consumption: {total_consumption:.2f} W")
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
