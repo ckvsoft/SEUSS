@@ -38,6 +38,7 @@
                         <div id="power">Power: -</div>
                         <div id="grid_power">Gridpower: -</div>
                         <div id="battery_power">Batterypower: -</div>
+                        <div id="test">Test: -</div>
                     </div>
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
@@ -121,6 +122,9 @@
                     }
                     if (data.total_costs_today !== undefined) {
                         document.getElementById("total_costs_today").textContent = `Total Costs Today: ${data.total_costs_today.toFixed(2)} \u00A2`;
+                    }
+                    if (data.test !== undefined) {
+                        document.getElementById("test").textContent = `Test: ${data.test.toFixed(2)} W`;
                     }
                     if (data.consumptionD !== undefined) {
                         document.getElementById("consumptionD").textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
