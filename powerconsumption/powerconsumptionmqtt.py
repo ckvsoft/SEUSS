@@ -115,7 +115,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             # If all required data is available
             if self.check_for_data():
                 timestamp = time.time()  # Current timestamp
-                self.update(self.current_power, self.current_grid_power, timestamp)
+                self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
         self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
@@ -137,7 +137,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.G_AC_consumption_L3 = payload.get("value", 0)
         elif topic == self.data_topics["number_of_grid_phases"]:
             self.number_of_grid_phases = payload.get("value", 3)
-
+        elif topic == self.data_topics["P_DC_consumption_Battery"]:
+            self.P_DC_consumption_Battery = payload.get("value", 0)
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""
@@ -166,7 +167,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
                     if self.ws_server:
-                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'costs': cost, 'total_costs_today': total_cost, 'consumptionD': self.get_daily_wh()})
+                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'battery_power': self.P_DC_consumption_Battery,'costs': cost, 'total_costs_today': total_cost, 'consumptionD': self.get_daily_wh()})
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)

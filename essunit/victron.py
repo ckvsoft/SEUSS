@@ -323,5 +323,6 @@ class Victron(ESSUnit):
             "G_AC_consumption_L2": f"N/{self.unit_id}/system/0/Ac/Grid/L2/Power",
             "G_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Grid/L3/Power",
             "number_of_grid_phases": f"N/{self.unit_id}/system/0/Ac/Grid/NumberOfPhases",
+            "P_DC_consumption_Battery":f"N/{self.unit_id}/system/0/Dc/Battery/Power"
         }
         return mqtt_config

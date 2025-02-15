@@ -63,12 +63,14 @@ class PowerConsumptionBase:
         self.curent_year = time.localtime(time.time()).tm_year
 
         # Initialized variables
+        self.P_DC_consumption_Battery = None
         self.P_AC_consumption_L1 = self.P_AC_consumption_L2 = self.P_AC_consumption_L3 = None
         self.G_AC_consumption_L1 = self.G_AC_consumption_L2 = self.G_AC_consumption_L3 = None
         self.number_of_phases = 3  # Default number of phases, adjust if needed
         self.number_of_grid_phases = 3  # Default number of phases, adjust if needed
         self.current_power = 0
         self.current_grid_power = 0
+        self.consumption_diff = 0
 
         self.data_file = "consumption_data.json"
         self.load_data()
@@ -170,7 +172,7 @@ class PowerConsumptionBase:
         # Speichert die Daten
         self.save_data()
 
-    def update(self, power, grid_power, timestamp):
+    def update(self, power, grid_power, battery_power, timestamp):
         """Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit."""
         # Setze den Startwert, wenn es die erste Messung ist
         if self.last_time is None:

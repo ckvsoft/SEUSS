@@ -37,6 +37,7 @@
                         <div id="averageWh">Average: -</div>
                         <div id="power">Power: -</div>
                         <div id="grid_power">Gridpower: -</div>
+                        <div id="battery_power">Batterypower: -</div>
                     </div>
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
@@ -111,6 +112,9 @@
                     }
                     if (data.grid_power !== undefined) {
                         document.getElementById("grid_power").textContent = `Gridpower: ${data.grid_power.toFixed(2)} W`;
+                    }
+                    if (data.battery_power !== undefined) {
+                        document.getElementById("battery_power").textContent = `Batterypower: ${data.battery_power.toFixed(2)} W`;
                     }
                     if (data.costs !== undefined) {
                         document.getElementById("costs").textContent = `Costs: ${data.costs.toFixed(2)} \u00A2`;
