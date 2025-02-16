@@ -115,6 +115,9 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             # If all required data is available
             if self.check_for_data():
                 timestamp = time.time()  # Current timestamp
+                if self.current_power > 0: self.handler.update_value("current_power", self.current_power)
+                if self.current_grid_power > 0: self.handler.update_value("current_grid_power", self.current_grid_power)
+
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
@@ -139,6 +142,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.number_of_grid_phases = payload.get("value", 3)
         elif topic == self.data_topics["P_DC_consumption_Battery"]:
             self.P_DC_consumption_Battery = payload.get("value", 0)
+            self.handler.update_value("P_DC_consumption_Battery", self.P_DC_consumption_Battery)
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""
@@ -157,15 +161,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
 
-                    total_consumption = self.current_power  # Nur den aktuellen Verbrauch zählen
-                    if self.P_DC_consumption_Battery < 0:  # Batterie entlädt
-                        total_consumption -= abs(
-                            self.P_DC_consumption_Battery) + self.current_grid_power
-                    else:
-                        total_consumption -= self.P_DC_consumption_Battery + self.current_grid_power
+                    value = self.handler.get_value()
 
                     # Abziehen des Stroms, der aus dem Netz bezogen wird
-                    total_consumption -= self.current_grid_power  # Netzstrom wird vom Gesamtverbrauch abgezogen
+                    total_consumption = value if value else "-"
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0

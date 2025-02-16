@@ -509,9 +509,8 @@ class SEUSSWeb:
         result_dict = {}
 
         # Suche nach Zeilen, die mit "|" beginnen und nicht den Überschriften entsprechen
-        lines = [line.strip() for line in markdown_text.splitlines() if line.strip().startswith(
-            '|') and "Setting" not in line and "Meaning" not in line and "-------" not in line]
-
+        splitlines = markdown_text.splitlines()
+        lines = [line.strip() for line in splitlines if line.strip().startswith('|') and "Setting" not in line.split(' ', 1)[0] and "Meaning" not in line.split(' ', 1)[0] and "-------" not in line]
         for line in lines:
             # Teile die Zeile in Spalten auf
             # columns = [col.strip() for col in line.split('|') if col.strip()]

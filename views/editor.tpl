@@ -28,6 +28,7 @@
                     % if key not in ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]:
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
+                            <br/>
                             <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
                         % elif key == "password":

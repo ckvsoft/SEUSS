@@ -35,9 +35,56 @@ from core.log import CustomLogger
 from core.statsmanager import StatsManager
 from core.timeutilities import TimeUtilities
 
+class PowerDataHandler:
+    def __init__(self):
+        self.buffer = {
+            "current_power": None,
+            "current_grid_power": None,
+            "P_DC_consumption_Battery": None
+        }
+        self.is_complete = False
+        self.final_data = {}  # Endgültige Werte für Berechnungen
+        self.total_consumption = None
+
+    def update_value(self, key, value):
+        """Werte in den Buffer speichern"""
+        if key in self.buffer:
+            self.buffer[key] = value
+
+        # Prüfen, ob alle Werte vorhanden sind
+        self.is_complete = all(v is not None for v in self.buffer.values())
+
+        # Wenn alles gefüllt ist, übergeben an final_data
+        if self.is_complete:
+            self.final_data = self.buffer.copy()
+            self.process_data()
+            self.reset_buffer()
+
+    def reset_buffer(self):
+        """Buffer leeren und Status zurücksetzen"""
+        for key in self.buffer:
+            self.buffer[key] = None
+        self.is_complete = False
+
+    def process_data(self):
+        """Berechnungen mit vollständigen Daten durchführen"""
+        total_consumption = self.final_data["current_power"]
+
+        if self.final_data["P_DC_consumption_Battery"] < 0:  # Batterie entlädt
+            total_consumption -= abs(self.final_data["P_DC_consumption_Battery"]) + self.final_data["current_grid_power"]
+        else:  # Batterie lädt
+            total_consumption -= self.final_data["P_DC_consumption_Battery"] + self.final_data["current_grid_power"]
+
+        self.total_consumption = total_consumption
+        # Debugging-Ausgabe
+        print(f"Processed Data -> Consumption: {total_consumption} W")
+
+    def get_value(self):
+        return self.total_consumption
 
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
+        self.handler = PowerDataHandler()
         self.interval_duration = interval_duration
         self.stop_event = threading.Event()
         self.ws_server = None
