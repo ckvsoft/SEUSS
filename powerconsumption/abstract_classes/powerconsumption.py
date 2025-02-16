@@ -88,8 +88,8 @@ class PowerDataHandler:
             self.total_consumption = total_consumption - self.final_data["P_DC_inverter_Charger"]
         # Debugging-Ausgabe
         print(f"Processed Data -> Consumption: {total_consumption} W")
-        print(f"Processed Data -> Consumption: {self.final_data["current_power"]} W")
-        print(f"Processed Data -> Consumption: {self.final_data["current_grid_power"] - self.final_data["P_DC_consumption_Battery"]} W")
+        print(f"Processed Data -> Consumption: {self.final_data['current_power']} W")
+        print(f"Processed Data -> Consumption: {self.final_data['current_grid_power'] - self.final_data['P_DC_consumption_Battery']} W")
 
     def get_value(self):
         return self.total_consumption
