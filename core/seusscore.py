@@ -91,7 +91,7 @@ class SEUSS:
             delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
             self.logger.log.debug(f"Active Soc Limit: {active_soc_limit} Soc: {soc}")
 
-            if delay_active_soc_limit and soc < active_soc_limit:
+            if delay_active_soc_limit and (soc if soc is not None else 0) < (active_soc_limit if active_soc_limit is not None else 0):
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
                 if check_limit is None:
                     self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit, save_data=False)

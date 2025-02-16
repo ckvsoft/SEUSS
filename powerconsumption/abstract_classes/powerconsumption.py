@@ -46,8 +46,10 @@ class PowerDataHandler:
         self.is_complete = False
         self.final_data = {}  # Endgültige Werte für Berechnungen
         self.total_consumption = None
+        self.last_value = 0
 
     def update_value(self, key, value):
+        if self.is_complete: return
         """Werte in den Buffer speichern"""
         if key in self.buffer:
             self.buffer[key] = value
@@ -73,12 +75,21 @@ class PowerDataHandler:
 
         if self.final_data["P_DC_consumption_Battery"] < 0:  # Batterie entlädt
             total_consumption -= abs(self.final_data["P_DC_consumption_Battery"]) + self.final_data["current_grid_power"]
+            if total_consumption > 0:
+                total_consumption = (self.last_value + total_consumption) / 2
+            else:
+                self.last_value = total_consumption
         else:  # Batterie lädt
             total_consumption -= self.final_data["P_DC_consumption_Battery"] + self.final_data["current_grid_power"]
 
-        self.total_consumption = total_consumption - self.final_data["P_DC_inverter_Charger"]
+        if self.final_data["P_DC_inverter_Charger"] < 0:
+            self.total_consumption = total_consumption
+        else:
+            self.total_consumption = total_consumption - self.final_data["P_DC_inverter_Charger"]
         # Debugging-Ausgabe
         print(f"Processed Data -> Consumption: {total_consumption} W")
+        print(f"Processed Data -> Consumption: {self.final_data["current_power"]} W")
+        print(f"Processed Data -> Consumption: {self.final_data["current_grid_power"] - self.final_data["P_DC_consumption_Battery"]} W")
 
     def get_value(self):
         return self.total_consumption

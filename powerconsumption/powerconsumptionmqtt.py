@@ -12,6 +12,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
     def __init__(self, interval_duration=5, mqtt_config=None):
         super().__init__(interval_duration)
         self.keep_alive_running = False
+        self.updated_ac_phases = set()  # Set für AC Power Updates
+        self.updated_grid_phases = set()  # Set für Grid Power Updates
 
         # MQTT configuration
         self.broker = None
@@ -92,60 +94,82 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         if topic in self.data_topics.values():
             self.update_values(topic, payload)
 
-            # Calculate total power (sum of phases)
-            self.current_power = sum(
-                phase_power if phase_power is not None else 0
-                for phase_power in [
-                    self.P_AC_consumption_L1,
-                    self.P_AC_consumption_L2,
-                    self.P_AC_consumption_L3,
-                ]
-            )
+            # Berechnung der aktuellen AC-Power, wenn alle relevanten Phasen aktuell sind
+            if self.all_phases_updated(self.updated_ac_phases, self.number_of_phases) and self.check_for_data():
+                self.current_power = sum(
+                    filter(None, [getattr(self, f"P_AC_consumption_L{i + 1}", 0) for i in range(self.number_of_phases)])
+                )
+                if self.current_power > 0:
+                    self.handler.update_value("current_power", self.current_power)
+                self.reset_phase_updates(self.updated_ac_phases)
 
-            # Calculate total grid power (sum of phases)
-            self.current_grid_power = sum(
-                phase_power if phase_power is not None else 0
-                for phase_power in [
-                    self.G_AC_consumption_L1,
-                    self.G_AC_consumption_L2,
-                    self.G_AC_consumption_L3,
-                ]
-            )
+            # Berechnung der aktuellen Grid-Power, wenn alle relevanten Phasen aktuell sind
+            if self.all_phases_updated(self.updated_grid_phases, self.number_of_grid_phases) and self.check_for_data():
+                self.current_grid_power = sum(
+                    filter(None,
+                           [getattr(self, f"G_AC_consumption_L{i + 1}", 0) for i in range(self.number_of_grid_phases)])
+                )
+                if self.current_grid_power > 0:
+                    self.handler.update_value("current_grid_power", self.current_grid_power)
+                self.reset_phase_updates(self.updated_grid_phases)
 
-            # If all required data is available
+            # DC-Werte berücksichtigen
+            if self.P_DC_consumption_Battery is not None:
+                self.handler.update_value("P_DC_consumption_Battery", self.P_DC_consumption_Battery)
+
+            # Alle Werte überprüft und aktualisiert
             if self.check_for_data():
-                timestamp = time.time()  # Current timestamp
-                if self.current_power > 0: self.handler.update_value("current_power", self.current_power)
-                if self.current_grid_power > 0: self.handler.update_value("current_grid_power", self.current_grid_power)
+                timestamp = time.time()  # Aktuellen Zeitstempel setzen
+                if self.current_power > 0:
+                    self.handler.update_value("current_power", self.current_power)
+                if self.current_grid_power > 0:
+                    self.handler.update_value("current_grid_power", self.current_grid_power)
 
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
         self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
 
+    def all_phases_updated(self, phase_set, num_phases):
+        """Prüft, ob alle erwarteten Phasen (L1, L2, ...) für einen bestimmten Datensatz aktualisiert wurden."""
+        return {f"L{i + 1}" for i in range(num_phases)}.issubset(phase_set)
+
+    def reset_phase_updates(self, phase_set):
+        """Setzt die aktualisierten Phasen für einen bestimmten Datensatz zurück."""
+        phase_set.clear()
+
+    def all_phases_updated(self, phase_set, num_phases):
+        """Prüft, ob alle Phasen (L1, L2, ...) für einen bestimmten Datensatz aktualisiert wurden."""
+        return {f"L{i + 1}" for i in range(num_phases)}.issubset(phase_set)
+
     def update_values(self, topic, payload):
-        if topic == self.data_topics["P_AC_consumption_L1"]:
-            self.P_AC_consumption_L1 = payload.get("value", 0)
-        elif topic == self.data_topics["P_AC_consumption_L2"]:
-            self.P_AC_consumption_L2 = payload.get("value", 0)
-        elif topic == self.data_topics["P_AC_consumption_L3"]:
-            self.P_AC_consumption_L3 = payload.get("value", 0)
-        elif topic == self.data_topics["number_of_phases"]:
-            self.number_of_phases = payload.get("value", 3)
-        if topic == self.data_topics["G_AC_consumption_L1"]:
-            self.G_AC_consumption_L1 = payload.get("value", 0)
-        elif topic == self.data_topics["G_AC_consumption_L2"]:
-            self.G_AC_consumption_L2 = payload.get("value", 0)
-        elif topic == self.data_topics["G_AC_consumption_L3"]:
-            self.G_AC_consumption_L3 = payload.get("value", 0)
-        elif topic == self.data_topics["number_of_grid_phases"]:
-            self.number_of_grid_phases = payload.get("value", 3)
-        elif topic == self.data_topics["P_DC_consumption_Battery"]:
-            self.P_DC_consumption_Battery = payload.get("value", 0)
-            self.handler.update_value("P_DC_consumption_Battery", self.P_DC_consumption_Battery)
-        elif topic == self.data_topics["P_DC_inverter_Charger"]:
-            P_DC_iveeter_Charger = payload.get("value", 0)
-            self.handler.update_value("P_DC_inverter_Charger", P_DC_iveeter_Charger)
+        value = payload.get("value", 0)
+
+        # AC Verbrauch pro Phase dynamisch setzen
+        for i in range(1, self.number_of_phases + 1):
+            if topic == self.data_topics.get(f"P_AC_consumption_L{i}"):
+                setattr(self, f"P_AC_consumption_L{i}", value)
+                self.updated_ac_phases.add(f"L{i}")
+
+        # Grid Verbrauch pro Phase dynamisch setzen
+        for i in range(1, self.number_of_grid_phases + 1):
+            if topic == self.data_topics.get(f"G_AC_consumption_L{i}"):
+                setattr(self, f"G_AC_consumption_L{i}", value)
+                self.updated_grid_phases.add(f"L{i}")
+
+        # Anzahl der Phasen aktualisieren, falls ein Update kommt
+        if topic == self.data_topics.get("number_of_phases"):
+            self.number_of_phases = value
+        elif topic == self.data_topics.get("number_of_grid_phases"):
+            self.number_of_grid_phases = value
+
+        # DC Werte berücksichtigen
+        if topic == self.data_topics.get("P_DC_consumption_Battery"):
+            self.P_DC_consumption_Battery = value
+            self.handler.update_value("P_DC_consumption_Battery", value)
+        elif topic == self.data_topics.get("P_DC_inverter_Charger"):
+            self.P_DC_inverter_Charger = value
+            self.handler.update_value("P_DC_inverter_Charger", value)
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""
