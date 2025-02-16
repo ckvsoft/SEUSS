@@ -143,6 +143,9 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         elif topic == self.data_topics["P_DC_consumption_Battery"]:
             self.P_DC_consumption_Battery = payload.get("value", 0)
             self.handler.update_value("P_DC_consumption_Battery", self.P_DC_consumption_Battery)
+        elif topic == self.data_topics["P_DC_inverter_Charger"]:
+            P_DC_iveeter_Charger = payload.get("value", 0)
+            self.handler.update_value("P_DC_inverter_Charger", P_DC_iveeter_Charger)
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""

@@ -40,7 +40,8 @@ class PowerDataHandler:
         self.buffer = {
             "current_power": None,
             "current_grid_power": None,
-            "P_DC_consumption_Battery": None
+            "P_DC_consumption_Battery": None,
+            "P_DC_inverter_Charger": None
         }
         self.is_complete = False
         self.final_data = {}  # Endgültige Werte für Berechnungen
@@ -75,7 +76,7 @@ class PowerDataHandler:
         else:  # Batterie lädt
             total_consumption -= self.final_data["P_DC_consumption_Battery"] + self.final_data["current_grid_power"]
 
-        self.total_consumption = total_consumption
+        self.total_consumption = total_consumption - self.final_data["P_DC_inverter_Charger"]
         # Debugging-Ausgabe
         print(f"Processed Data -> Consumption: {total_consumption} W")
 
@@ -112,6 +113,7 @@ class PowerConsumptionBase:
 
         # Initialized variables
         self.P_DC_consumption_Battery = None
+        self.P_DC_inverter_Charger = None
         self.P_AC_consumption_L1 = self.P_AC_consumption_L2 = self.P_AC_consumption_L3 = None
         self.G_AC_consumption_L1 = self.G_AC_consumption_L2 = self.G_AC_consumption_L3 = None
         self.number_of_phases = 3  # Default number of phases, adjust if needed
