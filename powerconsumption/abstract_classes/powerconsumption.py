@@ -111,7 +111,7 @@ class PowerConsumptionBase:
         self.current_price = 0
 
         self.hourly_wh = 0          # Consumption for the current hour in kWh
-        self.hourly_grid_wh = 0
+        self.hour_grid_wh = 0
         self.energy_costs_by_hour = {}
         self.energy_costs_by_day = {}
         self.hourly_start_time = time.time()  # Start time of the current hour
@@ -189,9 +189,9 @@ class PowerConsumptionBase:
 
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
         self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
-        current_hourly_grid_wh = self.statsmanager.get_data("powerconsumption","current_hourly_grid_wh")
-        if current_hourly_grid_wh and current_hourly_grid_wh[1] == self.current_hour:
-            self.hourly_grid_wh = current_hourly_grid_wh[0]
+        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption","current_hour_grid_wh")
+        if current_hour_grid_wh and current_hour_grid_wh[1] == self.current_hour:
+            self.hour_grid_wh = current_hour_grid_wh[0]
         else:
             self.statsmanager.remove_data("powerconsumption", "current_hourly_grid_wh")
 
@@ -202,7 +202,7 @@ class PowerConsumptionBase:
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_grid_power_value", (self.last_grid_value, self.last_time))
-        self.statsmanager.set_status_data("powerconsumption","current_hour_grid_wh", (self.hourly_grid_wh, self.current_hour))
+        self.statsmanager.set_status_data("powerconsumption","current_hour_grid_wh", (self.hour_grid_wh, self.current_hour))
 
         if logging:
             self.logger.log.debug("data saved.")
@@ -261,10 +261,10 @@ class PowerConsumptionBase:
 
         grid_wh = (self.last_grid_value * time_diff)
         if grid_wh > 0.0:
-            self.hourly_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
+            self.hour_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
 
-        self.energy_costs_by_hour[str(self.current_hour)] = (self.hourly_grid_wh / 1000) * float(self.current_price)
+        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
@@ -282,7 +282,7 @@ class PowerConsumptionBase:
             self.current_hour = current_hour
             self.hourly_wh = 0  # Setze den stündlichen Verbrauch zurück
             self.hourly_start_time = timestamp
-            self.hourly_grid_wh = 0
+            self.hour_grid_wh = 0
 
         # Speichern der Daten alle 5 Minuten
         current_minute = time.localtime(timestamp).tm_min

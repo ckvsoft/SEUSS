@@ -178,10 +178,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             if self.client and self.keep_alive_running:
                 if self.client and self.client.is_connected():
                     self.current_power = self.current_power or 0
-                    print(f"Current power: {self.current_power:.2f} W")
-                    print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
-                    print(f"Current grid power: {self.current_grid_power:.2f} W")
-                    print(f"Current DC power: {self.P_DC_consumption_Battery:.2f} W")
+                    #print(f"Current power: {self.current_power:.2f} W")
+                    #print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
+                    #print(f"Current grid power: {self.current_grid_power:.2f} W")
+                    #print(f"Current DC power: {self.P_DC_consumption_Battery:.2f} W")
                     cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
                     # print(f"Current Hour Grid Cost: {cost:.2f} \u00A2")
                     total_cost = sum(self.energy_costs_by_hour.values())
