@@ -223,6 +223,7 @@ class PowerDataHandler:
 
         # Calculate losses (negative values shouldn't count as losses, so use max())
         loss = max(energy_input - usable_energy, 0)
+        # loss = abs(energy_input - usable_energy)
 
         self.total_loss = loss
 
@@ -232,10 +233,10 @@ class PowerDataHandler:
         self.last_value = loss
 
         # Calculate efficiency and ensure it doesn't exceed 100%
-        efficiency = (usable_energy / energy_input) * 100 if energy_input > 0 else 100
+        efficiency = (usable_energy / energy_input) * 99 if energy_input > 0 else 99
 
         # Clamp efficiency to 100% if necessary
-        efficiency = min(efficiency, 100)
+        efficiency = min(efficiency, 99)
 
         # Debugging output for efficiency
         print(f"Efficiency: {efficiency} %")
