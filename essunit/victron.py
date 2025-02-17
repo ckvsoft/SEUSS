@@ -324,6 +324,15 @@ class Victron(ESSUnit):
             "G_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Grid/L3/Power",
             "number_of_grid_phases": f"N/{self.unit_id}/system/0/Ac/Grid/NumberOfPhases",
             "P_DC_consumption_Battery":f"N/{self.unit_id}/system/0/Dc/Battery/Power",
-            "P_DC_inverter_Charger":f"N/{self.unit_id}/system/0/Dc/InverterCharger/Power"
+            "PV_AC_OUT_L1":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L1/Power",
+            "PV_AC_OUT_L2":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L2/Power",
+            "PV_AC_OUT_L3":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L3/Power",
+            "PV_AC_GRID_L1": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L1/Power",
+            "PV_AC_GRID_L2": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L2/Power",
+            "PV_AC_GRID_L3": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L3/Power",
+            "PV_AC_GENSET_L1": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L1/Power",
+            "PV_AC_GENSET_L2": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L2/Power",
+            "PV_AC_GENSET_L3": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L3/Power",
+            "PV_DC": f"N/{self.unit_id}/system/0/Dc/Pv/Power"
         }
         return mqtt_config

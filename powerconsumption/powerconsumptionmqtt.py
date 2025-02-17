@@ -12,8 +12,6 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
     def __init__(self, interval_duration=5, mqtt_config=None):
         super().__init__(interval_duration)
         self.keep_alive_running = False
-        self.updated_ac_phases = set()  # Set für AC Power Updates
-        self.updated_grid_phases = set()  # Set für Grid Power Updates
 
         # MQTT configuration
         self.broker = None
@@ -90,86 +88,19 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.logger.log.error(f"Error decoding the payload: {msg.payload}")
             return
 
-        # Check if the received topic is in the defined topics
         if topic in self.data_topics.values():
-            self.update_values(topic, payload)
+            topic_key = next((k for k, v in self.data_topics.items() if v == topic), None)
+            self.handler.update_values(topic_key, payload)
 
-            # Berechnung der aktuellen AC-Power, wenn alle relevanten Phasen aktuell sind
-            if self.all_phases_updated(self.updated_ac_phases, self.number_of_phases) and self.check_for_data():
-                self.current_power = sum(
-                    filter(None, [getattr(self, f"P_AC_consumption_L{i + 1}", 0) for i in range(self.number_of_phases)])
-                )
-                if self.current_power > 0:
-                    self.handler.update_value("current_power", self.current_power)
-                self.reset_phase_updates(self.updated_ac_phases)
-
-            # Berechnung der aktuellen Grid-Power, wenn alle relevanten Phasen aktuell sind
-            if self.all_phases_updated(self.updated_grid_phases, self.number_of_grid_phases) and self.check_for_data():
-                self.current_grid_power = sum(
-                    filter(None,
-                           [getattr(self, f"G_AC_consumption_L{i + 1}", 0) for i in range(self.number_of_grid_phases)])
-                )
-                if self.current_grid_power > 0:
-                    self.handler.update_value("current_grid_power", self.current_grid_power)
-                self.reset_phase_updates(self.updated_grid_phases)
-
-            # DC-Werte berücksichtigen
-            if self.P_DC_consumption_Battery is not None:
-                self.handler.update_value("P_DC_consumption_Battery", self.P_DC_consumption_Battery)
-
-            # Alle Werte überprüft und aktualisiert
-            if self.check_for_data():
-                timestamp = time.time()  # Aktuellen Zeitstempel setzen
-                if self.current_power > 0:
-                    self.handler.update_value("current_power", self.current_power)
-                if self.current_grid_power > 0:
-                    self.handler.update_value("current_grid_power", self.current_grid_power)
-
+            if self.handler.all_required_data_complete() and self.handler.check_for_data():
+                self.current_power = self.handler.get_power("AC_POWER")
+                self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
+                self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
+                timestamp = time.time()
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
     def on_disconnect(self, client, userdata, rc):
         self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
-
-    def all_phases_updated(self, phase_set, num_phases):
-        """Prüft, ob alle erwarteten Phasen (L1, L2, ...) für einen bestimmten Datensatz aktualisiert wurden."""
-        return {f"L{i + 1}" for i in range(num_phases)}.issubset(phase_set)
-
-    def reset_phase_updates(self, phase_set):
-        """Setzt die aktualisierten Phasen für einen bestimmten Datensatz zurück."""
-        phase_set.clear()
-
-    def all_phases_updated(self, phase_set, num_phases):
-        """Prüft, ob alle Phasen (L1, L2, ...) für einen bestimmten Datensatz aktualisiert wurden."""
-        return {f"L{i + 1}" for i in range(num_phases)}.issubset(phase_set)
-
-    def update_values(self, topic, payload):
-        value = payload.get("value", 0)
-
-        # AC Verbrauch pro Phase dynamisch setzen
-        for i in range(1, self.number_of_phases + 1):
-            if topic == self.data_topics.get(f"P_AC_consumption_L{i}"):
-                setattr(self, f"P_AC_consumption_L{i}", value)
-                self.updated_ac_phases.add(f"L{i}")
-
-        # Grid Verbrauch pro Phase dynamisch setzen
-        for i in range(1, self.number_of_grid_phases + 1):
-            if topic == self.data_topics.get(f"G_AC_consumption_L{i}"):
-                setattr(self, f"G_AC_consumption_L{i}", value)
-                self.updated_grid_phases.add(f"L{i}")
-
-        # Anzahl der Phasen aktualisieren, falls ein Update kommt
-        if topic == self.data_topics.get("number_of_phases"):
-            self.number_of_phases = value
-        elif topic == self.data_topics.get("number_of_grid_phases"):
-            self.number_of_grid_phases = value
-
-        # DC Werte berücksichtigen
-        if topic == self.data_topics.get("P_DC_consumption_Battery"):
-            self.P_DC_consumption_Battery = value
-            self.handler.update_value("P_DC_consumption_Battery", value)
-        elif topic == self.data_topics.get("P_DC_inverter_Charger"):
-            self.P_DC_inverter_Charger = value
-            self.handler.update_value("P_DC_inverter_Charger", value)
 
     def send_keep_alive(self):
         """Sends periodic keep-alive messages to the broker."""
@@ -188,10 +119,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
 
-                    value = self.handler.get_value()
-
+                    value = self.handler.get_power("TOTAL_POWER")
                     # Abziehen des Stroms, der aus dem Netz bezogen wird
-                    total_consumption = value if value else "-"
+                    loss = value if value else 0
+                    pv = self.handler.get_power("PV_POWER")
+                    efficiency = self.handler.get_power("EFFICIENCY")
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
@@ -204,7 +136,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         # print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
                     if self.ws_server:
-                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'battery_power': self.P_DC_consumption_Battery,'costs': cost, 'total_costs_today': total_cost, 'test': total_consumption, 'consumptionD': self.get_daily_wh()})
+                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'battery_power': self.P_DC_consumption_Battery,'costs': cost, 'total_costs_today': total_cost, 'pv': pv, 'loss': loss, 'efficiency': efficiency, 'consumptionD': self.get_daily_wh()})
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)

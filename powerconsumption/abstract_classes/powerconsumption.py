@@ -37,62 +37,250 @@ from core.timeutilities import TimeUtilities
 
 class PowerDataHandler:
     def __init__(self):
-        self.buffer = {
-            "current_power": None,
-            "current_grid_power": None,
-            "P_DC_consumption_Battery": None,
-            "P_DC_inverter_Charger": None
-        }
-        self.is_complete = False
-        self.final_data = {}  # Endgültige Werte für Berechnungen
-        self.total_consumption = None
+        self._logger = CustomLogger()
+        self.num_ac_phases = None  # Wird per MQTT gesetzt
+        self.num_grid_phases = None
+        self.ac_phases = {}
+        self.grid_phases = {}
+        self.dc_data = {}
+        self.pv_data = {}
+        self.updated_ac_phases = set()
+        self.updated_grid_phases = set()
+        self.final_data = {}
+        self.checked_data = {}
+        self.total_loss = 0
         self.last_value = 0
 
-    def update_value(self, key, value):
-        if self.is_complete: return
-        """Werte in den Buffer speichern"""
-        if key in self.buffer:
-            self.buffer[key] = value
+    def update_values(self, topic, payload):
+        """Empfängt MQTT-Daten und aktualisiert Werte."""
+        value = payload.get("value")
+        self.checked_data[topic] = True
 
-        # Prüfen, ob alle Werte vorhanden sind
-        self.is_complete = all(v is not None for v in self.buffer.values())
+        if topic == "number_of_phases":
+            self.num_ac_phases = int(value)
+        elif topic == "number_of_grid_phases":
+            self.num_grid_phases = int(value)
 
-        # Wenn alles gefüllt ist, übergeben an final_data
-        if self.is_complete:
-            self.final_data = self.buffer.copy()
-            self.process_data()
-            self.reset_buffer()
+        # PV-Daten erfassen
+        elif topic == "PV_DC":
+            self.pv_data["PV_DC"] = value if value else 0
+        elif "PV_AC_OUT" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_OUT_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_OUT_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_OUT_L3"] = value if value is not None else 0
+        elif "PV_AC_GRID" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_GRID_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_GRID_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_GRID_L3"] = value if value is not None else 0
+        elif "PV_AC_GENSET" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_GENSET_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_GENSET_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_GENSET_L3"] = value if value is not None else 0
 
-    def reset_buffer(self):
-        """Buffer leeren und Status zurücksetzen"""
-        for key in self.buffer:
-            self.buffer[key] = None
-        self.is_complete = False
+        # AC-Verbrauch erfassen
+        elif topic.startswith("P_AC_consumption_L"):
+            phase = topic.split("_")[-1]
+            self.ac_phases[phase] = value
+            self.updated_ac_phases.add(phase)
+
+        # Grid-Verbrauch erfassen
+        elif topic.startswith("G_AC_consumption_L"):
+            phase = topic.split("_")[-1]
+            self.grid_phases[phase] = value
+            self.updated_grid_phases.add(phase)
+
+        # Batterie-Verbrauch
+        elif topic == "P_DC_consumption_Battery":
+            self.dc_data["Battery"] = value
+
+        # Berechnungen ausführen
+        self.calculate_power()
+
+    def calculate_power(self):
+        """Berechnet AC_POWER, AC_GRID_POWER, PV_POWER, DC_POWER und TOTAL_POWER."""
+
+        # Sicherstellen, dass für AC und Grid mindestens ein gültiger Wert da ist
+        if self.data_complete(self.updated_ac_phases, self.num_ac_phases):
+            self.final_data["AC_POWER"] = sum(v for v in self.ac_phases.values() if v is not None)
+            self.reset(self.updated_ac_phases)
+
+        if self.data_complete(self.updated_grid_phases, self.num_grid_phases):
+            self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
+            self.reset(self.updated_grid_phases)
+
+        # DC-Werte nur einmal speichern (es gibt nur einen DC-Wert, keinen Phasen-Mehrwert)
+        if self.dc_data.get("Battery"):
+            self.final_data["DC_POWER"] = self.dc_data.get("Battery")
+
+        # Überprüfe, ob der PV_DC-Wert verfügbar ist
+        if self.pv_data.get("PV_AC_OUT_L1") is not None and \
+                self.pv_data.get("PV_AC_OUT_L2") is not None and \
+                self.pv_data.get("PV_AC_OUT_L3") is not None and \
+                self.pv_data.get("PV_AC_GRID_L1") is not None and \
+                self.pv_data.get("PV_AC_GRID_L2") is not None and \
+                self.pv_data.get("PV_AC_GRID_L3") is not None and \
+                self.pv_data.get("PV_AC_GENSET_L1") is not None and \
+                self.pv_data.get("PV_AC_GENSET_L2") is not None and \
+                self.pv_data.get("PV_AC_GENSET_L3") is not None and \
+                self.pv_data.get("PV_DC") is not None:
+            # Summiere alle Phasenwerte
+            self.final_data["PV_POWER"] = sum([
+                self.pv_data["PV_AC_OUT_L1"],
+                self.pv_data["PV_AC_OUT_L2"],
+                self.pv_data["PV_AC_OUT_L3"],
+                self.pv_data["PV_AC_GRID_L1"],
+                self.pv_data["PV_AC_GRID_L2"],
+                self.pv_data["PV_AC_GRID_L3"],
+                self.pv_data["PV_AC_GENSET_L1"],
+                self.pv_data["PV_AC_GENSET_L2"],
+                self.pv_data["PV_AC_GENSET_L3"],
+                self.pv_data["PV_DC"]
+            ])
+            print(f"Final PV_POWER: {self.final_data['PV_POWER']}")
+            self.reset(self.pv_data)
+
+        if len([value for value in self.final_data.values() if value is not None]) >= 3:
+            if self.all_required_data_complete():
+                self.final_data["TOTAL_POWER"], self.final_data["EFFICIENCY"] = self.process_data()
+
+    def data_complete(self, phase_set, num_phases):
+        """Überprüft, ob alle Phasen vorhanden sind oder wenn Phasenanzahl nicht bekannt ist."""
+        if num_phases is None:
+            return False
+        return len(phase_set) >= num_phases
+
+    def all_required_data_complete(self):
+        """Prüft, ob alle relevanten Werte für die Berechnung vorhanden sind."""
+        return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
+
+    def check_for_data(self):
+        missing_data = []
+
+        # Prüfen, ob alle notwendigen Felder vorhanden sind
+        if self.checked_data.get("P_AC_consumption_L1") is None:
+            missing_data.append("P_AC_consumption_L1")
+        if self.num_ac_phases is None:
+            missing_data.append("number_of_phases")
+
+        # Nur für 2 oder 3 Phasen:
+        if self.num_ac_phases >= 2 and self.checked_data.get("P_AC_consumption_L2") is None:
+            missing_data.append("P_AC_consumption_L2")
+        if self.num_ac_phases == 3 and self.checked_data.get("P_AC_consumption_L3") is None:
+            missing_data.append("P_AC_consumption_L3")
+
+        # Grid-Daten
+        if self.checked_data.get("G_AC_consumption_L1") is None:
+            missing_data.append("G_AC_consumption_L1")
+        if self.num_grid_phases is None:
+            missing_data.append("number_of_grid_phases")
+
+        # Nur für 2 oder 3 Phasen:
+        if self.num_grid_phases >= 2 and self.checked_data.get("G_AC_consumption_L2") is None:
+            missing_data.append("G_AC_consumption_L2")
+        if self.num_grid_phases == 3 and self.checked_data.get("G_AC_consumption_L3") is None:
+            missing_data.append("G_AC_consumption_L3")
+
+        # Hier auch die PV_DC-Überprüfung und ggf. Initialisierung:
+        if self.checked_data.get("PV_DC") is None:
+            self.final_data["PV_DC"] = 0
+            missing_data.append("PV_DC")
+
+        if missing_data:
+            self._logger.log.debug(f"Missing data: {', '.join(missing_data)}")
+            return False
+
+        return True
 
     def process_data(self):
-        """Berechnungen mit vollständigen Daten durchführen"""
-        total_consumption = self.final_data["current_power"]
+        """Perform calculations with complete data."""
 
-        if self.final_data["P_DC_consumption_Battery"] < 0:  # Batterie entlädt
-            total_consumption -= abs(self.final_data["P_DC_consumption_Battery"]) + self.final_data["current_grid_power"]
-            if total_consumption > 0:
-                total_consumption = (self.last_value + total_consumption) / 2
-            else:
-                self.last_value = total_consumption
-        else:  # Batterie lädt
-            total_consumption -= self.final_data["P_DC_consumption_Battery"] + self.final_data["current_grid_power"]
+        # Calculate total energy input (DC + positive grid + PV)
+        energy_input = (
+                abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
+                + max(self.final_data.get("AC_GRID_POWER", 0), 0)  # Only positive grid power (import)
+                + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
+        )
 
-        if self.final_data["P_DC_inverter_Charger"] < 0:
-            self.total_consumption = total_consumption
+        # Calculate usable energy (AC power + exported grid power)
+        usable_energy = (
+                self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
+                + min(self.final_data.get("AC_GRID_POWER", 0), 0)  # Negative grid power (exported energy)
+        )
+
+        # Debugging output for intermediate values
+        print(f"Energy Input: {energy_input} W")
+        print(f"Usable Energy: {usable_energy} W")
+
+        # Calculate losses (negative values shouldn't count as losses, so use max())
+        loss = max(energy_input - usable_energy, 0)
+
+        self.total_loss = loss
+
+        # Debugging output for loss
+        print(f"Loss: {loss} W")
+
+        self.last_value = loss
+
+        # Calculate efficiency and ensure it doesn't exceed 100%
+        efficiency = (usable_energy / energy_input) * 100 if energy_input > 0 else 100
+
+        # Clamp efficiency to 100% if necessary
+        efficiency = min(efficiency, 100)
+
+        # Debugging output for efficiency
+        print(f"Efficiency: {efficiency} %")
+
+        return loss, efficiency
+
+    def is_complete(self, phase_set, num_phases):
+        """Überprüft, ob alle Phasen im Set aktualisiert wurden."""
+        required_phases = {f"L{i + 1}" for i in range(num_phases)}
+        return required_phases.issubset(phase_set)
+
+    def reset(self, phase_set):
+        """Setzt das Phase-Set zurück, nachdem die Berechnung abgeschlossen ist."""
+        phase_set.clear()  # Alle Phasen in diesem Set zurücksetzen
+
+    def get_power(self, power_type):
+        """
+        Gibt den aggregierten Power-Wert für den angegebenen Typ zurück:
+          - "PV_POWER": Summe aus PV_DC und allen PV_AC-Werten
+          - "AC_GRID_POWER": Aggregierte Grid-Leistung
+          - "AC_POWER": Aggregierte AC-Leistung
+          - "BATTERY_POWER": Den Batterieverbrauchswert (P_DC_consumption_Battery)
+          - "TOTAL_POWER": Der berechnete Gesamtverbrauch (total_consumption)
+        """
+        if power_type == "PV_POWER":
+            pv = self.final_data.get("PV_POWER", 0)
+            return pv
+
+        elif power_type == "AC_GRID_POWER":
+            return self.final_data.get("AC_GRID_POWER", 0)
+
+        elif power_type == "AC_POWER":
+            return self.final_data.get("AC_POWER", 0)
+
+        elif power_type == "BATTERY_POWER":
+            return self.final_data.get("DC_POWER", 0)
+
+        elif power_type == "TOTAL_POWER":
+            return self.total_loss
+
+        elif power_type == "EFFICIENCY":
+            return self.final_data.get("EFFICIENCY", 0)
+
         else:
-            self.total_consumption = total_consumption - self.final_data["P_DC_inverter_Charger"]
-        # Debugging-Ausgabe
-        print(f"Processed Data -> Consumption: {total_consumption} W")
-        print(f"Processed Data -> Consumption: {self.final_data['current_power']} W")
-        print(f"Processed Data -> Consumption: {self.final_data['current_grid_power'] - self.final_data['P_DC_consumption_Battery']} W")
+            return None
 
-    def get_value(self):
-        return self.total_consumption
 
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
@@ -265,6 +453,8 @@ class PowerConsumptionBase:
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
 
         self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
+        print(f"current costs: price({self.current_price}) {(self.hour_grid_wh / 1000) * float(self.current_price)}")
+        print(f"current costs fix: price(15.0) {(self.hour_grid_wh / 1000) * float(15.0)}")
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
@@ -295,38 +485,6 @@ class PowerConsumptionBase:
         self.last_grid_value = grid_power
         self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
-
-    def check_for_data(self):
-        missing_data = []
-
-        if self.P_AC_consumption_L1 is None:
-            missing_data.append("P_AC_consumption_L1")
-        if self.number_of_phases is None:
-            missing_data.append("number_of_phases")
-
-        # Only for 2 or 3 phases:
-        if self.number_of_phases >= 2 and self.P_AC_consumption_L2 is None:
-            missing_data.append("P_AC_consumption_L2")
-        if self.number_of_phases == 3 and self.P_AC_consumption_L3 is None:
-            missing_data.append("P_AC_consumption_L3")
-
-        #### grid
-        if self.G_AC_consumption_L1 is None:
-            missing_data.append("G_AC_consumption_L1")
-        if self.number_of_grid_phases is None:
-            missing_data.append("number_of_phases")
-
-        # Only for 2 or 3 phases:
-        if self.number_of_grid_phases >= 2 and self.G_AC_consumption_L2 is None:
-            missing_data.append("G_AC_consumption_L2")
-        if self.number_of_grid_phases == 3 and self.G_AC_consumption_L3 is None:
-            missing_data.append("G_AC_consumption_L3")
-
-        if missing_data:
-            self.logger.log.debug(f"Missing data: {', '.join(missing_data)}")
-            return False
-
-        return True
 
     def get_hourly_average(self):
         """Calculates the projected hourly average."""

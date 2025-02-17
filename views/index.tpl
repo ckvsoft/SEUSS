@@ -38,13 +38,15 @@
                         <div id="power">Power: -</div>
                         <div id="grid_power">Gridpower: -</div>
                         <div id="battery_power">Batterypower: -</div>
-                        <div id="test">Test: -</div>
+                        <div id="pv">Pv: -</div>
                     </div>
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
                         <div id="consumptionD">Consumption today: -</div>
                         <div id="costs">Costs: -</div>
                         <div id="total_costs_today">Total Costs Today: -</div>
+                        <div id="loss">Loss: -</div>
+                        <div id="efficiency">Efficiency: -</div>
                     </div>
                 </div>
             </div>
@@ -123,9 +125,16 @@
                     if (data.total_costs_today !== undefined) {
                         document.getElementById("total_costs_today").textContent = `Total Costs Today: ${data.total_costs_today.toFixed(2)} \u00A2`;
                     }
-                    if (data.test !== undefined) {
-                        document.getElementById("test").textContent = `Test: ${data.test.toFixed(2)} W`;
+                    if (data.loss !== undefined) {
+                        document.getElementById("loss").textContent = `Loss: ${data.loss.toFixed(2)} W`;
                     }
+                    if (data.efficiency !== undefined) {
+                        document.getElementById("efficiency").textContent = `Efficiency: ${data.efficiency.toFixed(2)} %`;
+                    }
+                    if (data.pv !== undefined) {
+                        document.getElementById("pv").textContent = `PV: ${data.pv.toFixed(2)} W`;
+                    }
+
                     if (data.consumptionD !== undefined) {
                         document.getElementById("consumptionD").textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
                     }
