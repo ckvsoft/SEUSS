@@ -205,15 +205,16 @@ class PowerDataHandler:
 
         # Calculate total energy input (DC + positive grid + PV)
         energy_input = (
-                abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
-                + max(self.final_data.get("AC_GRID_POWER", 0), 0)  # Only positive grid power (import)
-                + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
+            -min(self.final_data.get("DC_POWER", 0), 0)  # Nur negative Werte von DC-Power (Entladung)
+            # abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
+            + max(self.final_data.get("AC_GRID_POWER", 0), 0)  # Only positive grid power (import)
+            + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
         )
 
         # Calculate usable energy (AC power + exported grid power)
         usable_energy = (
-                self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
-                + min(self.final_data.get("AC_GRID_POWER", 0), 0)  # Negative grid power (exported energy)
+            self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
+            + min(self.final_data.get("AC_GRID_POWER", 0), 0)  # Negative grid power (exported energy)
         )
 
         # Debugging output for intermediate values
