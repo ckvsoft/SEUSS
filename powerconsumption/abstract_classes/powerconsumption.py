@@ -121,30 +121,15 @@ class PowerDataHandler:
         if self.dc_data.get("Battery"):
             self.final_data["DC_POWER"] = self.dc_data.get("Battery")
 
-        # Überprüfe, ob der PV_DC-Wert verfügbar ist
-        if self.pv_data.get("PV_AC_OUT_L1") is not None and \
-                self.pv_data.get("PV_AC_OUT_L2") is not None and \
-                self.pv_data.get("PV_AC_OUT_L3") is not None and \
-                self.pv_data.get("PV_AC_GRID_L1") is not None and \
-                self.pv_data.get("PV_AC_GRID_L2") is not None and \
-                self.pv_data.get("PV_AC_GRID_L3") is not None and \
-                self.pv_data.get("PV_AC_GENSET_L1") is not None and \
-                self.pv_data.get("PV_AC_GENSET_L2") is not None and \
-                self.pv_data.get("PV_AC_GENSET_L3") is not None and \
-                self.pv_data.get("PV_DC") is not None:
-            # Summiere alle Phasenwerte
-            self.final_data["PV_POWER"] = sum([
-                self.pv_data["PV_AC_OUT_L1"],
-                self.pv_data["PV_AC_OUT_L2"],
-                self.pv_data["PV_AC_OUT_L3"],
-                self.pv_data["PV_AC_GRID_L1"],
-                self.pv_data["PV_AC_GRID_L2"],
-                self.pv_data["PV_AC_GRID_L3"],
-                self.pv_data["PV_AC_GENSET_L1"],
-                self.pv_data["PV_AC_GENSET_L2"],
-                self.pv_data["PV_AC_GENSET_L3"],
-                self.pv_data["PV_DC"]
-            ])
+        keys = [
+            "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
+            "PV_AC_GRID_L1", "PV_AC_GRID_L2", "PV_AC_GRID_L3",
+            "PV_AC_GENSET_L1", "PV_AC_GENSET_L2", "PV_AC_GENSET_L3",
+            "PV_DC"
+        ]
+
+        if all(self.pv_data.get(key) is not None for key in keys):
+            self.final_data["PV_POWER"] = sum(self.pv_data.values())
             print(f"Final PV_POWER: {self.final_data['PV_POWER']}")
             self.reset(self.pv_data)
 
@@ -204,9 +189,10 @@ class PowerDataHandler:
         """Perform calculations with complete data."""
 
         ac_grid_power = self.final_data.get("AC_GRID_POWER", 0)
+        dc_power = self.final_data.get("DC_POWER", 0)
         # Calculate total energy input (DC + positive grid + PV)
         energy_input = (
-            -min(self.final_data.get("DC_POWER", 0), 0)  # Nur negative Werte von DC-Power (Entladung)
+            -min(dc_power, 0)  # Nur negative Werte von DC-Power (Entladung)
             # abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
             + max(ac_grid_power, 0)  # Only positive grid power (import)
             + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
@@ -216,6 +202,7 @@ class PowerDataHandler:
         usable_energy = (
             self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
             + min(ac_grid_power, 0)  # Negative grid power (exported energy)
+            + max(dc_power, 0)
         )
 
         # Debugging output for intermediate values
