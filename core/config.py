@@ -119,6 +119,7 @@ class Config(Singleton):
             {
                 "name": "Awattar",
                 "country": "AT",
+                "fee": "3% + 1.5",
                 "primary": True,
                 "enabled": True
             },
@@ -127,6 +128,7 @@ class Config(Singleton):
                 "api_token": "enter_your_entsoe_apikey_here",
                 "in_domain": "10YAT-APG------L",
                 "out_domain": "10YAT-APG------L",
+                "fee": "",
                 "primary": False,
                 "enabled": False
             },
@@ -134,6 +136,7 @@ class Config(Singleton):
                 "name": "Tibber",
                 "api_token": "enter_your_tibber_apikey_here",
                 "price_unit": "energy",
+                "fee": "",
                 "primary": False,
                 "enabled": False
             }

@@ -54,6 +54,7 @@ class SEUSSWeb:
         self.config = Config()
         self.logger = CustomLogger()
         self.market_items = Itemlist()
+        self.fee = ""
 
         # Routen einrichten
         self.setup_routes()
@@ -108,6 +109,11 @@ class SEUSSWeb:
 
     def set_item_list(self, items):
         self.market_items = items
+        self.fee = next(
+            (entry['fee'] for entry in self.config.config_data['markets']
+             if entry.get('name', '').lower() == self.market_items.current_market_name.lower()),
+            ""
+        )
 
     def get_charts(self, as_json=True):
 
@@ -388,6 +394,16 @@ class SEUSSWeb:
         svg += f"""
         <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
         """
+
+        if self.fee != "":
+            # Berechne den x-Wert, um den Text zu zentrieren
+            x_center = width * 12  # Mitte des SVG (Breite / 2)
+
+            svg += f"""
+            <text x="{x_center}" y="410" text-anchor="middle" font-size="12" fill="yellow">
+            "Prices exclude tax and include fees. Formula: Final price = Base price + {self.fee}"
+            </text>
+            """
 
         # Schließe die Gruppe und SVG-Code
         svg += """

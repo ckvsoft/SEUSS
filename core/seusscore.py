@@ -74,6 +74,7 @@ class SEUSS:
     def handle_config_update(self, config_data):
         self.logger.log.info("Run checks while configuration was changed")
         self.load_configuration()
+        self.items.remove_all_items()
         self.smartswitches = SmartSwitchesManager()
         self.run_markets()
 

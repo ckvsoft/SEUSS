@@ -76,8 +76,11 @@ class Awattar(MarketData):
             data = json.loads(json_data)
             items = []
             for entry in data.get('data', []):
+                current_price = entry.get('marketprice')
+                fee = self._calculate_fee(current_price)
+                current_price += fee
                 awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'),
-                                           entry.get('marketprice'))
+                                           current_price)
                 items.append(awattar_item)
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:

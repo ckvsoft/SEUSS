@@ -369,6 +369,9 @@ class Itemlist:
     def remove_expired_items(self):
         self._item_list = [item for item in self._item_list if not item.is_expired()]
 
+    def remove_all_items(self):
+        self._item_list.clear()
+
     def log_items(self):
         for item in self.get_current_list():
             self._logger.log.debug(

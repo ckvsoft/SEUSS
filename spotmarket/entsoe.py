@@ -122,7 +122,8 @@ class Entsoe(MarketData):
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            fee = self._calculate_fee(last_price)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price + fee)
                             self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     period_count += 1  # Zähler inkrementieren
@@ -150,7 +151,8 @@ class Entsoe(MarketData):
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price)
+                            fee = self._calculate_fee(last_price)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price) + fee)
                             self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     last_pos = current_pos
@@ -160,7 +162,8 @@ class Entsoe(MarketData):
                     current_price = price.group(1)
                     dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=current_pos)
                     dt_end = dt_start + timedelta(hours=1)
-                    entsoe_item = EntsoeItem(dt_start, dt_end, current_price)
+                    fee = self._calculate_fee(current_price)
+                    entsoe_item = EntsoeItem(dt_start, dt_end, float(current_price) + fee)
                     items.append(entsoe_item)
                     last_price = current_price  # Preis der aktuellen Position speichern
 

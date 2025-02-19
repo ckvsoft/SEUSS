@@ -26,6 +26,7 @@
 #
 from datetime import datetime, timedelta
 from core.log import CustomLogger
+import re, operator
 
 
 class MarketData:
@@ -34,6 +35,7 @@ class MarketData:
         self.getdata_end_datetime = None
         self.logger = CustomLogger()
         self.use_second_day = False
+        self.fee = kwargs.get("fee", "")
 
     def load_data(self, use_second_day: bool):
         error_message = "Error: The abstract method 'load_data(self, use_second_day)' must be implemented in your derived class."
@@ -60,3 +62,43 @@ class MarketData:
             self.getdata_end_datetime = str(int(self.getdata_end_datetime.timestamp())) + "000"
             self.logger.log.debug(
                 f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")
+
+    def _calculate_fee(self, base_value):
+        if self.fee == "": return 0.0
+        expr = self.fee
+        OPS = {
+            "+": operator.add,
+            "-": operator.sub,
+            "*": operator.mul,
+            "/": operator.truediv
+        }
+
+        try:
+            # If the fee is just a number (e.g., + 2.5 or - 2.5), return that value
+            if re.match(r"^[\+\-]?\s*\d+(\.\d+)?$", expr):
+                return float(expr)
+
+            # Handle percentage calculation first (e.g., 3% + 2.5)
+            if "%" in expr:
+                percentage_value = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
+                if percentage_value:
+                    percentage = float(percentage_value.group(1)) / 100
+                    base_value += base_value * percentage  # Apply percentage to base_value
+                    expr = expr.replace(percentage_value.group(0), "")  # Remove the percentage part
+
+            # Now handle the rest of the expression
+            matches = re.findall(r"([\+\-\*/])\s*(-?\d+\.?\d*)", expr)
+
+            if not matches:
+                raise ValueError("No valid expression found.")
+
+            result = float(base_value)
+            for op, num in matches:
+                num = float(num)
+                result = OPS[op](result, num)
+
+            return result
+
+        except Exception as e:
+            self.logger.log.warning(f"Error in calculate_fee: {e}. Returning 0.0")
+            return 0.0
