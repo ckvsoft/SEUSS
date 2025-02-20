@@ -107,7 +107,7 @@ class SEUSS:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
 
                 if check_limit is not None:
-                    if soc > active_soc_limit:
+                    if soc and active_soc_limit and soc > active_soc_limit:
                         t_soc = soc # (soc // 5) * 5
                         if t_soc < check_limit:
                             essunit.set_active_soc_limit(t_soc)

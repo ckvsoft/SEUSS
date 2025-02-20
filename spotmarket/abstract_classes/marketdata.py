@@ -100,5 +100,7 @@ class MarketData:
             return result
 
         except Exception as e:
-            self.logger.log.warning(f"Error in calculate_fee: {e}. Returning 0.0")
+            self.logger.log.warning(f"Warning in calculate_fee: {e}. Returning 0.0. fee: {self.fee}")
+            self.logger.log.debug(f"Base Value: {base_value} (Type: {type(base_value)})")
+            self.logger.log.debug(f"Fee Expression: {self.fee} (Type: {type(self.fee)})")
             return 0.0
