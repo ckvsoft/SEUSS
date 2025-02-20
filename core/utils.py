@@ -31,6 +31,8 @@ from typing import Dict, List
 import json
 import random
 
+from core.log import CustomLogger
+
 
 class Utils:
     @staticmethod
@@ -97,3 +99,23 @@ class Utils:
     def generate_random_hex(length):
         random_hex = ''.join(random.choices('0123456789abcdef', k=length))
         return random_hex
+
+    @staticmethod
+    def create_ssl_context(certificate):
+        """Create an SSL context for the MQTT connection."""
+        try:
+            import ssl
+        except ImportError:
+            CustomLogger().log.error("SSL support not available.")
+            return None
+
+        try:
+            # Use PROTOCOL_TLS_CLIENT instead of deprecated PROTOCOL_TLS
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_verify_locations(certificate)
+            context.check_hostname = True
+            return context
+        except Exception as e:
+            CustomLogger().log.error(f"Failed to create SSL context: {e}")
+            return None

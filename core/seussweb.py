@@ -301,7 +301,7 @@ class SEUSSWeb:
         # SVG-Code für das Balkendiagramm
         current_time = datetime.now()
         current_hour = current_time.hour
-        width = 35
+        width = 37
         factor = 12
 
         # Wenn keine Preise vorhanden sind, initialisiere mit 24 Preisen von 0.00

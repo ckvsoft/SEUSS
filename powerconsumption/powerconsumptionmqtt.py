@@ -62,7 +62,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         if port == 8883:
-            ssl_context = self._create_ssl_context(certificate)
+            ssl_context = Utils.create_ssl_context(certificate)
             if ssl_context:
                 self.client.tls_set_context(ssl_context)
 
@@ -179,16 +179,3 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         except KeyboardInterrupt:
             print("Exiting program...")
 
-    def _create_ssl_context(self, certificate):
-        """Create an SSL context for the MQTT connection."""
-        context = None
-        try:
-            import ssl
-            # Use PROTOCOL_TLS_CLIENT instead of deprecated PROTOCOL_TLS
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.verify_mode = ssl.CERT_REQUIRED
-            context.load_verify_locations(certificate)
-            context.check_hostname = True
-        except ImportError:
-            self.logger.log.error("SSL support not available.")
-        return context

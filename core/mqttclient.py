@@ -294,7 +294,7 @@ class MqttClient:
         if self.mqtt_port == 8883:
             self.ssl_context = None
             if self.mqtt_port == 8883:
-                self.ssl_context = self._create_ssl_context()
+                self.ssl_context = Utils.create_ssl_context(self.certificate)
 
             if self.ssl_context:
                 self.client.tls_set_context(self.ssl_context)
@@ -304,20 +304,6 @@ class MqttClient:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.disconnect()
-
-    def _create_ssl_context(self):
-        """Create an SSL context for the MQTT connection."""
-        context = None
-        try:
-            import ssl
-            # Use PROTOCOL_TLS_CLIENT instead of deprecated PROTOCOL_TLS
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.verify_mode = ssl.CERT_REQUIRED
-            context.load_verify_locations(self.certificate)
-            context.check_hostname = True
-        except ImportError:
-            self.logger.log.error("SSL support not available.")
-        return context
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
