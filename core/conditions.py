@@ -249,6 +249,10 @@ class Conditions:
                 if now <= item.get_start_datetime() < tomorrow_start
             ]
 
+            discharging_abort_conditions[
+                "Abort discharge while charging is allowed"
+            ] = lambda: any(condition() for condition in self.conditions_by_operation_mode.get("charging", {}).values())
+
             # Wenn current_price nicht in der Liste der höchsten Preise ist, wird die Bedingung überprüft
             discharging_abort_conditions[
                 "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: (

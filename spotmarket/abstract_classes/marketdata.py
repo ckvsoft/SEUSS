@@ -84,7 +84,7 @@ class MarketData:
 
         try:
             # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
-            if re.match(r"^[\+\-]?\s*\d+(\.\d+)?$", expr):
+            if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
                 return float(expr)
 
             # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
