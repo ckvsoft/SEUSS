@@ -123,7 +123,7 @@ class Entsoe(MarketData):
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
                             fee = self._calculate_fee(last_price)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, last_price + fee)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price) + fee)
                             self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     period_count += 1  # Zähler inkrementieren

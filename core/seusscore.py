@@ -107,21 +107,22 @@ class SEUSS:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
 
                 if check_limit is not None:
-                    if soc and active_soc_limit and soc > active_soc_limit:
-                        t_soc = soc # (soc // 5) * 5
-                        if t_soc < check_limit:
-                            essunit.set_active_soc_limit(t_soc)
+                    if soc and active_soc_limit:
+                        if soc > active_soc_limit:
+                            t_soc = soc # (soc // 5) * 5
+                            if t_soc < check_limit:
+                                essunit.set_active_soc_limit(t_soc)
 
-                    if active_soc_limit > check_limit:
-                        self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
-                        self.logger.log.info(f"Update Active Soc Limit Status: {active_soc_limit}")
+                        if active_soc_limit > check_limit:
+                            self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                            self.logger.log.info(f"Update Active Soc Limit Status: {active_soc_limit}")
 
-                    if abs(soc - check_limit) <= 1:
-                            # Auf gespeicherten Wert zurücksetzen und Delay beenden
-                            essunit.set_active_soc_limit(check_limit)
-                            self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
-                            self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
-                            self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
+                        if abs(soc - check_limit) <= 1:
+                                # Auf gespeicherten Wert zurücksetzen und Delay beenden
+                                essunit.set_active_soc_limit(check_limit)
+                                self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
+                                self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
+                                self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
 
             self.power_consumption_manager.update_instance(unit_config)
             if self.ws_server:

@@ -94,10 +94,11 @@ class Tibber(MarketData):
             data = json.loads(json_data)
             for entry in data.get('data', {}).get('viewer', {}).get('homes', [])[0].get('currentSubscription', {}).get(
                     'priceInfo', {}).get('today', []):
-                fee = self.price_unit
-                if self.price_unit:
-                    self.price_unit += fee
-                tibber_item = TibberItem(entry.get('startsAt'), entry.get(self.price_unit))
+                current_price = float(entry.get(self.price_unit))
+                fee = self._calculate_fee(self.price_unit)
+                if current_price:
+                    current_price += fee
+                tibber_item = TibberItem(entry.get('startsAt'), current_price)
                 tibber_item.extend_endtime()
                 items.append(tibber_item)
 
@@ -105,10 +106,11 @@ class Tibber(MarketData):
                 for entry in data.get('data', {}).get('viewer', {}).get('homes', [])[0].get('currentSubscription',
                                                                                             {}).get(
                     'priceInfo', {}).get('tomorrow', []):
-                    fee = self.price_unit
-                    if self.price_unit:
-                        self.price_unit += fee
-                    tibber_item = TibberItem(entry.get('startsAt'), entry.get(self.price_unit))
+                    current_price = float(entry.get(self.price_unit))
+                    fee = self._calculate_fee(self.price_unit)
+                    if current_price:
+                        current_price += fee
+                    tibber_item = TibberItem(entry.get('startsAt'), current_price)
                     tibber_item.extend_endtime()
                     items.append(tibber_item)
 

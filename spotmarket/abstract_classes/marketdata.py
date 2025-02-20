@@ -66,6 +66,13 @@ class MarketData:
     def _calculate_fee(self, base_value):
         if self.fee == "": return 0.0
         expr = self.fee
+
+        try:
+            base_value = float(base_value)
+        except ValueError:
+            self.logger.log.warning(f"Invalid base value: {base_value}, defaulting to 0.0")
+            base_value = 0.0
+
         OPS = {
             "+": operator.add,
             "-": operator.sub,
@@ -83,7 +90,7 @@ class MarketData:
                 percentage_value = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
                 if percentage_value:
                     percentage = float(percentage_value.group(1)) / 100
-                    base_value += base_value * percentage  # Apply percentage to base_value
+                    base_value += float(base_value) * percentage  # Apply percentage to base_value
                     expr = expr.replace(percentage_value.group(0), "")  # Remove the percentage part
 
             # Now handle the rest of the expression
