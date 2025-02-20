@@ -64,14 +64,16 @@ class MarketData:
                 f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")
 
     def _calculate_fee(self, base_value):
-        if self.fee == "": return 0.0
-        expr = self.fee
+        if self.fee == "":
+            return 0.0
+
+        expr = self.fee.strip()
 
         try:
             base_value = float(base_value)
         except ValueError:
             self.logger.log.warning(f"Invalid base value: {base_value}, defaulting to 0.0")
-            base_value = 0.0
+            return 0.0
 
         OPS = {
             "+": operator.add,
@@ -81,30 +83,28 @@ class MarketData:
         }
 
         try:
-            # If the fee is just a number (e.g., + 2.5 or - 2.5), return that value
+            # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
             if re.match(r"^[\+\-]?\s*\d+(\.\d+)?$", expr):
                 return float(expr)
 
-            # Handle percentage calculation first (e.g., 3% + 2.5)
+            # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
+            percentage_fee = 0.0
+            fixed_fee = 0.0
+
             if "%" in expr:
-                percentage_value = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
-                if percentage_value:
-                    percentage = float(percentage_value.group(1)) / 100
-                    base_value = float(base_value) * percentage  # Apply percentage to base_value
-                    expr = expr.replace(percentage_value.group(0), "")  # Remove the percentage part
+                percentage_match = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
+                if percentage_match:
+                    percentage_fee = base_value * (float(percentage_match.group(1)) / 100)
+                    expr = expr.replace(percentage_match.group(0), "")  # Prozent-Anteil entfernen
 
-            # Now handle the rest of the expression
-            matches = re.findall(r"([\+\-\*/])\s*(-?\d+\.?\d*)", expr)
+            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5")
+            matches = re.findall(r"([\+\-])\s*(\d+\.?\d*)", expr)
 
-            if not matches:
-                raise ValueError("No valid expression found.")
-
-            result = float(base_value)
             for op, num in matches:
                 num = float(num)
-                result = OPS[op](result, num)
+                fixed_fee = OPS[op](fixed_fee, num)
 
-            return result
+            return percentage_fee + fixed_fee
 
         except Exception as e:
             self.logger.log.warning(f"Warning in calculate_fee: {e}. Returning 0.0. fee: {self.fee}")
