@@ -90,7 +90,7 @@ class MarketData:
                 percentage_value = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
                 if percentage_value:
                     percentage = float(percentage_value.group(1)) / 100
-                    base_value += float(base_value) * percentage  # Apply percentage to base_value
+                    base_value = float(base_value) * percentage  # Apply percentage to base_value
                     expr = expr.replace(percentage_value.group(0), "")  # Remove the percentage part
 
             # Now handle the rest of the expression
