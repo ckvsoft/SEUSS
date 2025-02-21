@@ -120,6 +120,7 @@ class PowerDataHandler:
         # DC-Werte nur einmal speichern (es gibt nur einen DC-Wert, keinen Phasen-Mehrwert)
         if self.dc_data.get("Battery"):
             self.final_data["DC_POWER"] = self.dc_data.get("Battery")
+            self.dc_data.clear()
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
