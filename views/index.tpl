@@ -43,7 +43,7 @@
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
                         <div id="consumptionD">Consumption today: -</div>
-                        <div id="costs">Costs: -</div>
+                        <div id="costs">Current Hour Costs: -</div>
                         <div id="total_costs_today">Total Costs Today: -</div>
                         <div id="loss">Loss: -</div>
                         <div id="efficiency">Efficiency: -</div>
@@ -120,7 +120,7 @@
                         document.getElementById("battery_power").textContent = `Batterypower: ${data.battery_power.toFixed(2)} W`;
                     }
                     if (data.costs !== undefined) {
-                        document.getElementById("costs").textContent = `Costs: ${data.costs.toFixed(2)} \u00A2`;
+                        document.getElementById("costs").textContent = `Current Hour Costs: ${data.costs.toFixed(2)} \u00A2`;
                     }
                     if (data.total_costs_today !== undefined) {
                         document.getElementById("total_costs_today").textContent = `Total Costs Today: ${data.total_costs_today.toFixed(2)} \u00A2`;
