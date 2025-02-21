@@ -124,7 +124,6 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     loss = value if value else 0
                     pv = self.handler.get_power("PV_POWER")
                     efficiency = self.handler.get_power("EFFICIENCY")
-                    self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
