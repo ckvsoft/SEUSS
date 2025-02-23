@@ -99,11 +99,10 @@ class SolarBatteryCalculator:
             full_voltage = 57.6  # self.solardata.battery_current_voltage / (self.solardata.soc/ 100)
             full_battery_capacity_wh = self.calculate_full_capacity() * full_voltage
 
-            available_battery_capacity = ((
-                                                  full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
+            available_battery_capacity = ((full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
 
             self.logger.log.info(
-                f"Current Battery state: {self.solardata.battery_capacity} Ah, maximum: {round(full_battery_capacity_wh, 2)} Wh")
+                f"Current Battery state: {actual_battery_capacity_wh} Wh, maximum: {round(full_battery_capacity_wh, 2)} Wh")
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= average_consumption:
