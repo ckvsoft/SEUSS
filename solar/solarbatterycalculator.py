@@ -102,7 +102,7 @@ class SolarBatteryCalculator:
             available_battery_capacity = ((full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
 
             self.logger.log.info(
-                f"Current Battery state: {actual_battery_capacity_wh} Wh, maximum: {round(full_battery_capacity_wh, 2)} Wh")
+                f"Current Battery state: {round(actual_battery_capacity_wh, 2):.2} Wh, maximum: {round(full_battery_capacity_wh, 2):.2} Wh")
 
             # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
             if actual_solar_during_daylight >= average_consumption:

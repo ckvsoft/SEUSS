@@ -31,6 +31,7 @@ from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
 from datetime import datetime, timedelta, timezone
 from core.timeutilities import TimeUtilities
+from core.utils import Utils
 
 class Itemlist:
     def __init__(self, items=None):
@@ -377,7 +378,7 @@ class Itemlist:
             self._logger.log.debug(
                 f"Starttime: {item.get_start_datetime(True)}, Endtime: {item.get_end_datetime(True)}, "
                 f"Price: {item.price} Millicents pro kWh, "
-                f"Price: {item.millicent_to_cent(item.price)} Cent pro kWh."
+                f"Price: {Utils.millicent_to_cent(item.price)} Cent pro kWh."
             )
 
     def perform_update(self, items):
