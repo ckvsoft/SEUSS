@@ -54,6 +54,8 @@ class PowerDataHandler:
         value = payload.get("value", 0)
         self.checked_data[topic] = True
 
+        print(f"topic: {topic} payload: {payload}")
+
         if topic == "number_of_phases":
             self.num_ac_phases = int(value)
         elif topic == "number_of_grid_phases":
@@ -430,8 +432,6 @@ class PowerConsumptionBase:
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
 
         self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
-        print(f"current costs: price({self.current_price}) {(self.hour_grid_wh / 1000) * float(self.current_price)}")
-        print(f"current costs fix: price(15.0) {(self.hour_grid_wh / 1000) * float(15.0)}")
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
