@@ -51,8 +51,9 @@ class PowerDataHandler:
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
-        value = payload.get("value", 0)
-        self.checked_data[topic] = True
+        value = payload.get("value")
+        if value is not None:
+            self.checked_data[topic] = True
 
         if topic == "number_of_phases":
             self.num_ac_phases = int(value)
@@ -98,7 +99,8 @@ class PowerDataHandler:
 
         # Batterie-Verbrauch
         elif topic == "P_DC_consumption_Battery":
-            self.dc_data["Battery"] = value
+            if value:
+                self.dc_data["Battery"] = value
 
         # Berechnungen ausführen
         self.calculate_power()
@@ -115,12 +117,10 @@ class PowerDataHandler:
             self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
             self.reset(self.updated_grid_phases)
 
-        battery_value = self.dc_data.get("Battery", 0)
-        if battery_value is None:
-            print (f"Battery value is None")
-            battery_value = 0
-        self.final_data["DC_POWER"] = battery_value
-        self.dc_data.clear()
+        battery_value = self.dc_data.get("Battery")
+        if battery_value is not None:
+            self.final_data["DC_POWER"] = battery_value
+            self.dc_data.clear()
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
@@ -145,8 +145,7 @@ class PowerDataHandler:
 
     def all_required_data_complete(self):
         """Prüft, ob alle relevanten Werte für die Berechnung vorhanden sind."""
-        # return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
-        return True
+        return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
 
     def check_for_data(self):
         missing_data = []
@@ -158,9 +157,11 @@ class PowerDataHandler:
             missing_data.append("number_of_phases")
 
         # Nur für 2 oder 3 Phasen:
-        if self.num_ac_phases >= 2 and self.checked_data.get("P_AC_consumption_L2") is None:
+        if self.num_ac_phases is not None and self.num_ac_phases >= 2 and self.checked_data.get(
+                "P_AC_consumption_L2") is None:
             missing_data.append("P_AC_consumption_L2")
-        if self.num_ac_phases == 3 and self.checked_data.get("P_AC_consumption_L3") is None:
+        if self.num_ac_phases is not None and self.num_ac_phases == 3 and self.checked_data.get(
+                "P_AC_consumption_L3") is None:
             missing_data.append("P_AC_consumption_L3")
 
         # Grid-Daten
@@ -170,15 +171,17 @@ class PowerDataHandler:
             missing_data.append("number_of_grid_phases")
 
         # Nur für 2 oder 3 Phasen:
-        if self.num_grid_phases >= 2 and self.checked_data.get("G_AC_consumption_L2") is None:
+        if self.num_grid_phases is not None and self.num_grid_phases >= 2 and self.checked_data.get(
+                "G_AC_consumption_L2") is None:
             missing_data.append("G_AC_consumption_L2")
-        if self.num_grid_phases == 3 and self.checked_data.get("G_AC_consumption_L3") is None:
+        if self.num_grid_phases is not None and self.num_grid_phases == 3 and self.checked_data.get(
+                "G_AC_consumption_L3") is None:
             missing_data.append("G_AC_consumption_L3")
 
         # Hier auch die PV_DC-Überprüfung und ggf. Initialisierung:
         if self.checked_data.get("PV_DC") is None:
             self.final_data["PV_DC"] = 0
-            missing_data.append("PV_DC")
+            # missing_data.append("PV_DC")
 
         if missing_data:
             self._logger.log.debug(f"Missing data: {', '.join(missing_data)}")
