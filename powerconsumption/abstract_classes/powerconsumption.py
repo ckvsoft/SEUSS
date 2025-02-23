@@ -117,14 +117,12 @@ class PowerDataHandler:
             self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
             self.reset(self.updated_grid_phases)
 
-        # DC-Werte nur einmal speichern (es gibt nur einen DC-Wert, keinen Phasen-Mehrwert)
-        if self.dc_data.get("Battery"):
-            batery_value = self.dc_data.get("Battery", 0)
-            if batery_value is None:
-                print (f"Battery value is None")
-                batery_value = 0
-            self.final_data["DC_POWER"] = batery_value
-            self.dc_data.clear()
+        battery_value = self.dc_data.get("Battery", 0)
+        if battery_value is None:
+            print (f"Battery value is None")
+            battery_value = 0
+        self.final_data["DC_POWER"] = battery_value
+        self.dc_data.clear()
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
