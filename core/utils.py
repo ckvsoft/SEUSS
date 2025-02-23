@@ -176,7 +176,7 @@ class Utils:
     @staticmethod
     def convert_to_millicents(euro, potency=14):
         try:
-            # Ersetzen Sie Kommas durch Punkte
+            # Replace commas with dots
             euro = str(euro).replace(',', '.')
 
             getcontext().prec = 30
@@ -184,7 +184,7 @@ class Utils:
             millicents = int(Decimal(euro) * Decimal(10) ** potency)
             return int(millicents)
         except ValueError:
-            print(f"Fehler beim Umrechnen des Preises: {euro}")
+            CustomLogger().log.error(f"Error converting price: {euro}")
             return None
 
     @staticmethod
@@ -196,5 +196,5 @@ class Utils:
             cent = Decimal(price) / Decimal(10 ** potency)
             return "{:.4f}".format(cent)
         except (TypeError, ValueError):
-            print(f"Fehler beim Umrechnen des Preises: {price}")
+            CustomLogger().log.error(f"Error converting price: {price}")
             return None
