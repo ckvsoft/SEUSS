@@ -100,7 +100,6 @@ class PowerDataHandler:
 
         # Batterie-Verbrauch
         elif topic == "P_DC_consumption_Battery":
-            print(f"topic: {topic} value: {value}")
             self.dc_data["Battery"] = value
 
         # Berechnungen ausführen
@@ -120,8 +119,12 @@ class PowerDataHandler:
 
         # DC-Werte nur einmal speichern (es gibt nur einen DC-Wert, keinen Phasen-Mehrwert)
         if self.dc_data.get("Battery"):
-            self.final_data["DC_POWER"] = self.dc_data.get("Battery", 0)
-            # self.dc_data.clear()
+            batery_value = self.dc_data.get("Battery", 0)
+            if batery_value is None:
+                print (f"Battery value is None")
+                batery_value = 0
+            self.final_data["DC_POWER"] = batery_value
+            self.dc_data.clear()
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
