@@ -90,6 +90,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
         if topic in self.data_topics.values():
             topic_key = next((k for k, v in self.data_topics.items() if v == topic), None)
+            self.logger.log.debug(f"topic_key {topic_key} payload: {payload}")
             self.handler.update_values(topic_key, payload)
 
             if self.handler.all_required_data_complete() and self.handler.check_for_data():
@@ -154,6 +155,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
     def run(self):
         """Main thread logic"""
         for topic in self.data_topics.values():
+            self.logger.log.debug(f"subscipbe topic {topic}")
             self.client.subscribe(topic)
 
         # Start the keep-alive thread
