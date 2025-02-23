@@ -25,8 +25,6 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-import json
-import os
 import threading
 import time
 import calendar
@@ -131,7 +129,6 @@ class PowerDataHandler:
 
         if all(self.pv_data.get(key) is not None for key in keys):
             self.final_data["PV_POWER"] = sum(self.pv_data.values())
-            print(f"Final PV_POWER: {self.final_data['PV_POWER']}")
             self.reset(self.pv_data)
 
         if len([value for value in self.final_data.values() if value is not None]) >= 3:
@@ -206,18 +203,11 @@ class PowerDataHandler:
             + max(dc_power, 0)
         )
 
-        # Debugging output for intermediate values
-        print(f"Energy Input: {energy_input} W")
-        print(f"Usable Energy: {usable_energy} W")
-
         # Calculate losses (negative values shouldn't count as losses, so use max())
         loss = max(energy_input - usable_energy, 0)
         # loss = abs(energy_input - usable_energy)
 
         self.total_loss = loss
-
-        # Debugging output for loss
-        print(f"Loss: {loss} W")
 
         self.last_value = loss
 
@@ -226,9 +216,6 @@ class PowerDataHandler:
 
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 99)
-
-        # Debugging output for efficiency
-        print(f"Efficiency: {efficiency} %")
 
         return loss, efficiency
 
@@ -408,7 +395,6 @@ class PowerConsumptionBase:
         self.save_data()
 
     def save_day(self):
-        print(f"Daily consumption: {self.daily_wh:.4f} Wh")
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
         total_cost = sum(self.energy_costs_by_hour.values())
