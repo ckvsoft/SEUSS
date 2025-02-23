@@ -52,6 +52,8 @@ class PowerDataHandler:
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
         value = payload.get("value", 0)
+        if value is None: value = 0
+
         self.checked_data[topic] = True
 
         print(f"topic: {topic} payload: {payload}")
