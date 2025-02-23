@@ -29,9 +29,9 @@ from core.config import Config
 from core.statsmanager import StatsManager
 from core.log import CustomLogger
 from core.timeutilities import TimeUtilities
+from core.utils import Utils
 from spotmarket.abstract_classes.item import Item
 from datetime import datetime, timedelta, timezone
-from essunit.abstract_classes.essunit import ESSUnit
 
 class ConditionResult:
     def __init__(self):
@@ -49,8 +49,8 @@ class Conditions:
         self.statsmanager = StatsManager()
         self.available_surplus = 0.0
         self.current_price = itemlist.get_current_price()
-        self.charging_price_limit = Item.convert_to_millicents(self.config.charging_price_limit)
-        self.charging_price_hard_cap = Item.convert_to_millicents(self.config.charging_price_hard_cap)
+        self.charging_price_limit = Utils.convert_to_millicents(self.config.charging_price_limit)
+        self.charging_price_hard_cap = Utils.convert_to_millicents(self.config.charging_price_hard_cap)
         self.available_operation_modes = ["charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
         self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
