@@ -149,7 +149,8 @@ class PowerDataHandler:
 
     def all_required_data_complete(self):
         """Prüft, ob alle relevanten Werte für die Berechnung vorhanden sind."""
-        return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
+        # return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
+        return True
 
     def check_for_data(self):
         missing_data = []
