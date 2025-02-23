@@ -155,7 +155,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
     def run(self):
         """Main thread logic"""
         for topic in self.data_topics.values():
-            self.logger.log.debug(f"subscipbe topic {topic}")
+            self.logger.log.debug(f"subscibe topic {topic}")
             self.client.subscribe(topic)
 
         # Start the keep-alive thread
