@@ -56,8 +56,6 @@ class PowerDataHandler:
 
         self.checked_data[topic] = True
 
-        print(f"topic: {topic} payload: {payload}")
-
         if topic == "number_of_phases":
             self.num_ac_phases = int(value)
         elif topic == "number_of_grid_phases":
@@ -102,6 +100,7 @@ class PowerDataHandler:
 
         # Batterie-Verbrauch
         elif topic == "P_DC_consumption_Battery":
+            print(f"topic: {topic} value: {value}")
             self.dc_data["Battery"] = value
 
         # Berechnungen ausführen
