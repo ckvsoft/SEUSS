@@ -149,7 +149,7 @@ class Conditions:
     def add_additional_charging_conditions(self):
         # Weitere Bedingungen für Aufladung hinzufügen
         additional_conditions = {
-            f"charging_price_limit ({Item.millicent_to_cent(self.charging_price_limit)}) > {Item.millicent_to_cent(self.current_price)}": self.create_condition_function(
+            f"charging_price_limit ({Utils.millicent_to_cent(self.charging_price_limit)}) > {Utils.millicent_to_cent(self.current_price)}": self.create_condition_function(
                 self.charging_price_limit, lambda x, y: x > y),
             # Füge weitere Bedingungen hier hinzu
         }
@@ -160,7 +160,7 @@ class Conditions:
         for i, item in enumerate(additional_prices):
             price = item.get_price(False)
             start_time = item.get_start_datetime(True)
-            key = f"lowestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {item.millicent_to_cent(self.current_price)} Cent/kWh"
+            key = f"lowestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
             condition_function = self.create_condition_function(price, lambda x, y: x == y)
             self.conditions_by_operation_mode["charging"][key] = condition_function
 
@@ -178,7 +178,7 @@ class Conditions:
         for i, item in enumerate(additional_prices):
             price = item.get_price(False)
             start_time = item.get_start_datetime(True)
-            key = f"highestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {item.millicent_to_cent(self.current_price)} Cent/kWh"
+            key = f"highestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
             condition_function = self.create_condition_function(price, lambda x, y: x == y)
             self.conditions_by_operation_mode["discharging"][key] = condition_function
 
