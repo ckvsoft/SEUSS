@@ -38,10 +38,10 @@ from spotmarket.abstract_classes.marketdata import MarketData
 
 
 class AwattarItem(Item):
-    def __init__(self, start_timestamp, end_timestamp, price):
+    def __init__(self, start_timestamp, end_timestamp, price, fee_str):
         starttime = datetime.fromtimestamp(start_timestamp / 1000).astimezone(timezone.utc)
         endtime = datetime.fromtimestamp(end_timestamp / 1000).astimezone(timezone.utc)
-        super().__init__(starttime, endtime, price, 13)
+        super().__init__(starttime, endtime, price, fee_str, 13)
 
 
 class Awattar(MarketData):
@@ -77,10 +77,7 @@ class Awattar(MarketData):
             items = []
             for entry in data.get('data', []):
                 current_price = float(entry.get('marketprice'))
-                fee = self._calculate_fee(current_price)
-                current_price += fee
-                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'),
-                                           current_price)
+                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'), current_price, self.fee)
                 items.append(awattar_item)
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:

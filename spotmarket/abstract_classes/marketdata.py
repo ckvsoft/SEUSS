@@ -26,7 +26,6 @@
 #
 from datetime import datetime, timedelta
 from core.log import CustomLogger
-import re, operator
 
 
 class MarketData:
@@ -62,52 +61,3 @@ class MarketData:
             self.getdata_end_datetime = str(int(self.getdata_end_datetime.timestamp())) + "000"
             self.logger.log.debug(
                 f"starttime: timestamp {self.getdata_start_datetime}, endtime: timestamp {self.getdata_end_datetime}")
-
-    def _calculate_fee(self, base_value):
-        if self.fee == "":
-            return 0.0
-
-        expr = self.fee.strip()
-
-        try:
-            base_value = float(base_value)
-        except ValueError:
-            self.logger.log.warning(f"Invalid base value: {base_value}, defaulting to 0.0")
-            return 0.0
-
-        OPS = {
-            "+": operator.add,
-            "-": operator.sub,
-            "*": operator.mul,
-            "/": operator.truediv
-        }
-
-        try:
-            # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
-            if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
-                return float(expr)
-
-            # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
-            percentage_fee = 0.0
-            fixed_fee = 0.0
-
-            if "%" in expr:
-                percentage_match = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
-                if percentage_match:
-                    percentage_fee = base_value * (float(percentage_match.group(1)) / 100)
-                    expr = expr.replace(percentage_match.group(0), "")  # Prozent-Anteil entfernen
-
-            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5")
-            matches = re.findall(r"([\+\-])\s*(\d+\.?\d*)", expr)
-
-            for op, num in matches:
-                num = float(num)
-                fixed_fee = OPS[op](fixed_fee, num)
-
-            return percentage_fee + fixed_fee
-
-        except Exception as e:
-            self.logger.log.warning(f"Warning in calculate_fee: {e}. Returning 0.0. fee: {self.fee}")
-            self.logger.log.debug(f"Base Value: {base_value} (Type: {type(base_value)})")
-            self.logger.log.debug(f"Fee Expression: {self.fee} (Type: {type(self.fee)})")
-            return 0.0

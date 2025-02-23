@@ -26,47 +26,19 @@
 #
 
 # item.py
-from decimal import Decimal, getcontext
 from datetime import datetime, timedelta, timezone
 from core.timeutilities import TimeUtilities
 from core.log import CustomLogger
-from core.config import Config
-import operator
-import re
-
+from core.utils import Utils
 
 class Item:
-    def __init__(self, starttime, endtime, price, potency=14):
+    def __init__(self, starttime, endtime, price, fee_str, potency=14):
         self.starttime = starttime
         self.endtime = endtime - timedelta(seconds=1) if endtime is not None else None
-        self.price = self.convert_to_millicents(price, potency)
+        self.price = Utils.convert_to_millicents(price, potency)
+        fee = Utils.calculate_fee(self.price,fee_str)
+        self.price += fee
         self.logger = CustomLogger()
-
-    @staticmethod
-    def convert_to_millicents(euro, potency=14):
-        try:
-            # Ersetzen Sie Kommas durch Punkte
-            euro = str(euro).replace(',', '.')
-
-            getcontext().prec = 30
-
-            millicents = int(Decimal(euro) * Decimal(10) ** potency)
-            return int(millicents)
-        except ValueError:
-            print(f"Fehler beim Umrechnen des Preises: {euro}")
-            return None
-
-    @staticmethod
-    def millicent_to_cent(price):
-        potency = 14
-        try:
-            getcontext().prec = 30
-
-            cent = Decimal(price) / Decimal(10 ** potency)
-            return "{:.4f}".format(cent)
-        except (TypeError, ValueError):
-            print(f"Fehler beim Umrechnen des Preises: {price}")
-            return None
 
     def is_expired(self, check_time=False):
         now = datetime.utcnow().replace(tzinfo=timezone.utc)
@@ -87,7 +59,7 @@ class Item:
 
     def get_price(self, convert=True):
         if convert:
-            return self.millicent_to_cent(self.price)
+            return Utils.millicent_to_cent(self.price)
         return self.price
 
     def get_start_datetime(self, localtime=False):

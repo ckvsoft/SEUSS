@@ -104,52 +104,37 @@
                 try {
                     const data = JSON.parse(event.data);
 
-                    if (data.averageWh !== undefined) {
-                        document.getElementById("averageWh").textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
-                    }
-                    if (data.averageWhD !== undefined) {
-                        document.getElementById("averageWhD").textContent = `Average now: ${data.averageWhD.toFixed(2)} Wh`;
-                    }
-                    if (data.power !== undefined) {
-                        document.getElementById("power").textContent = `Power: ${data.power.toFixed(2)} W`;
-                    }
-                    if (data.grid_power !== undefined) {
-                        document.getElementById("grid_power").textContent = `Gridpower: ${data.grid_power.toFixed(2)} W`;
-                    }
-                    if (data.battery_power !== undefined) {
-                        document.getElementById("battery_power").textContent = `Batterypower: ${data.battery_power.toFixed(2)} W`;
-                    }
-                    if (data.costs !== undefined) {
-                        document.getElementById("costs").textContent = `Current Hour Costs: ${data.costs.toFixed(2)} \u00A2`;
-                    }
-                    if (data.total_costs_today !== undefined) {
-                        document.getElementById("total_costs_today").textContent = `Total Costs Today: ${data.total_costs_today.toFixed(2)} \u00A2`;
-                    }
-                    if (data.loss !== undefined) {
-                        document.getElementById("loss").textContent = `Loss: ${data.loss.toFixed(2)} W`;
-                    }
-                    if (data.efficiency !== undefined) {
-                        document.getElementById("efficiency").textContent = `Efficiency: ${data.efficiency.toFixed(2)} %`;
-                    }
-                    if (data.pv !== undefined) {
-                        document.getElementById("pv").textContent = `PV: ${data.pv.toFixed(2)} W`;
+                    function updateValue(id, label, value, unit = "") {
+                        const element = document.getElementById(id);
+                        if (element && typeof value === "number") {
+                            element.textContent = `${label}: ${value.toFixed(2)} ${unit}`;
+                        }
                     }
 
-                    if (data.consumptionD !== undefined) {
-                        document.getElementById("consumptionD").textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
-                    }
+                    updateValue("averageWh", "Average", data.averageWh, "Wh");
+                    updateValue("averageWhD", "Average Now", data.averageWhD, "Wh");
+                    updateValue("power", "Power", data.power, "W");
+                    updateValue("grid_power", "Gridpower", data.grid_power, "W");
+                    updateValue("battery_power", "Batterypower", data.battery_power, "W");
+                    updateValue("costs", "Current Hour Costs", data.costs, "¢");
+                    updateValue("total_costs_today", "Total Costs Today", data.total_costs_today, "¢");
+                    updateValue("loss", "Loss", data.loss, "W");
+                    updateValue("efficiency", "Efficiency", data.efficiency, "%");
+                    updateValue("pv", "PV", data.pv, "W");
+                    updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
 
-                    // 🔄 Induktionskreis aktivieren
+                    // 🔄 Ladeanimation aktivieren
                     const loadingCircle = document.getElementById("loadingCircle");
-                    loadingCircle.classList.add("active");
+                    if (loadingCircle) {
+                        loadingCircle.classList.add("active");
 
-                    // Nach 1.5 Sekunden die Animation wieder entfernen
-                    setTimeout(() => {
-                        loadingCircle.classList.remove("active");
-                    }, 1500);
-
+                        // Nach 1.5 Sekunden die Animation wieder entfernen
+                        setTimeout(() => {
+                            loadingCircle.classList.remove("active");
+                        }, 1500);
+                    }
                 } catch (error) {
-                    console.error('Error processing server message:', error);
+                    console.error("Error processing server message:", error);
                 }
             };
 

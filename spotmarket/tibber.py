@@ -38,10 +38,10 @@ from spotmarket.abstract_classes.marketdata import MarketData
 
 
 class TibberItem(Item):
-    def __init__(self, starts_at, price_unit):
+    def __init__(self, starts_at, price_unit, fee_str):
         start_time = datetime.strptime(starts_at, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone(timezone.utc)
         if price_unit is not None:
-            super().__init__(start_time, None, price_unit, 15)
+            super().__init__(start_time, None, price_unit, fee_str, 15)
         else:
             raise ValueError("Ungültige Tibber-Preisdaten. 'price_unit' muss gesetzt sein.")
 
@@ -95,10 +95,7 @@ class Tibber(MarketData):
             for entry in data.get('data', {}).get('viewer', {}).get('homes', [])[0].get('currentSubscription', {}).get(
                     'priceInfo', {}).get('today', []):
                 current_price = float(entry.get(self.price_unit))
-                fee = self._calculate_fee(self.price_unit)
-                if current_price:
-                    current_price += fee
-                tibber_item = TibberItem(entry.get('startsAt'), current_price)
+                tibber_item = TibberItem(entry.get('startsAt'), current_price, self.fee)
                 tibber_item.extend_endtime()
                 items.append(tibber_item)
 
@@ -107,10 +104,7 @@ class Tibber(MarketData):
                                                                                             {}).get(
                     'priceInfo', {}).get('tomorrow', []):
                     current_price = float(entry.get(self.price_unit))
-                    fee = self._calculate_fee(self.price_unit)
-                    if current_price:
-                        current_price += fee
-                    tibber_item = TibberItem(entry.get('startsAt'), current_price)
+                    tibber_item = TibberItem(entry.get('startsAt'), current_price, self.fee)
                     tibber_item.extend_endtime()
                     items.append(tibber_item)
 

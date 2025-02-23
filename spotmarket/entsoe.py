@@ -39,11 +39,11 @@ from core.statsmanager import StatsManager
 
 
 class EntsoeItem(Item):
-    def __init__(self, start_datetime, end_datetime, price):
+    def __init__(self, start_datetime, end_datetime, price, fee_str):
         start_time = start_datetime.replace(tzinfo=timezone.utc)  # .astimezone(timezone.utc)
         end_time = end_datetime.replace(tzinfo=timezone.utc)  # .astimezone(timezone.utc)
 
-        super().__init__(start_time, end_time, price, 13)
+        super().__init__(start_time, end_time, price, fee_str, 13)
 
 
 class Entsoe(MarketData):
@@ -122,8 +122,7 @@ class Entsoe(MarketData):
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
-                            fee = self._calculate_fee(last_price)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price) + fee)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
                             self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     period_count += 1  # Zähler inkrementieren
@@ -151,8 +150,7 @@ class Entsoe(MarketData):
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
                                 hours=missing_pos)
                             dt_end = dt_start + timedelta(hours=1)
-                            fee = self._calculate_fee(last_price)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price) + fee)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
                             self.logger.log.warning(f"Missing position {missing_pos} in the XML, using the last price ({entsoe_item.get_price(True)}).")
                             items.append(entsoe_item)
                     last_pos = current_pos
@@ -162,8 +160,7 @@ class Entsoe(MarketData):
                     current_price = price.group(1)
                     dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=current_pos)
                     dt_end = dt_start + timedelta(hours=1)
-                    fee = self._calculate_fee(current_price)
-                    entsoe_item = EntsoeItem(dt_start, dt_end, float(current_price) + fee)
+                    entsoe_item = EntsoeItem(dt_start, dt_end, float(current_price), self.fee)
                     items.append(entsoe_item)
                     last_price = current_price  # Preis der aktuellen Position speichern
 
