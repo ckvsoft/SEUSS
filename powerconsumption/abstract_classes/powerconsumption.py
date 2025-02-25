@@ -99,7 +99,7 @@ class PowerDataHandler:
 
         # Batterie-Verbrauch
         elif topic == "P_DC_consumption_Battery":
-            if value:
+            if value is not None:
                 self.dc_data["Battery"] = value
 
         # Berechnungen ausführen
