@@ -71,7 +71,7 @@ class WebSocketServer:
         """Sends a message to all connected WebSocket clients synchronously."""
         self.last_message = message
         if not self.clients:
-            self.logger.log.debug("No connected clients")
+            # self.logger.log.debug("No connected clients")
             return
         for client in list(self.clients):
             try:
