@@ -325,7 +325,8 @@ class SEUSS:
             essunit.set_charge("on")
             self.smartswitches.turn_on_all()
 
-            if self.statsmanager.get_data('energy', "initial_charge_state_wh") is None:
+            initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
+            if initial_data is not None and initial_data == 0.0:
                 self.statsmanager.set_status_data('energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
 
             self.update_charging_statistics(essunit)
@@ -356,7 +357,7 @@ class SEUSS:
 
     def update_charging_statistics(self, essunit):
         """Speichert die Ladeleistung als gleitenden Durchschnitt."""
-        current_wh = essunit.get_soc()
+        current_wh = essunit.get_battery_current_wh()
         initial_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0
         last_average_wh_per_min = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or 0.0
 
