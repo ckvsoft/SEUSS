@@ -375,7 +375,7 @@ class SEUSS:
 
         current_wh_per_min = (current_wh - initial_wh) / minutes_passed
 
-        self.statsmanager.set_status_data('energy', "average_charge_wh_per_min", current_wh_per_min)
+        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", current_wh_per_min)
         self.logger.log.debug(f"Updated charge average: {current_wh_per_min:.2f} Wh/min over {minutes_passed:.1f} min")
 
     def handle_no_data(self, essunit):
