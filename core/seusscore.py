@@ -326,8 +326,8 @@ class SEUSS:
             self.smartswitches.turn_on_all()
 
             initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
-            if initial_data is not None and initial_data == 0.0:
-                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
+            if not initial_data:
+                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (essunit.get_battery_current_wh() , TimeUtilities.get_now()))
 
             self.update_charging_statistics(essunit)
 
@@ -335,13 +335,13 @@ class SEUSS:
             self.logger.log.info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
             self.smartswitches.turn_off_all()
-            self.statsmanager.set_status_data('energy', "initial_charge_state_wh", 0.0)
+            self.statsmanager.set_status_data('energy', "initial_charge_state_wh",None)
 
         elif essunit is not None:
             self.logger.log.info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
             self.smartswitches.turn_off_all()
-            self.statsmanager.set_status_data('energy', "initial_charge_state_wh", 0.0)
+            self.statsmanager.set_status_data('energy', "initial_charge_state_wh",None)
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:
@@ -356,24 +356,27 @@ class SEUSS:
             essunit.set_discharge("off")
 
     def update_charging_statistics(self, essunit):
-        """Speichert die Ladeleistung als gleitenden Durchschnitt."""
         current_wh = essunit.get_battery_current_wh()
-        initial_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0
-        last_average_wh_per_min, _ = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or (0.0, 1)
 
-        if initial_wh == 0.0 or current_wh <= initial_wh:
+        stored_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
+        if not stored_data:
             return
 
+        initial_wh, start_time = stored_data
+
         now = TimeUtilities.get_now()
-        minutes_passed = now.minute if now.minute > 0 else 60
+
+        if start_time is None or start_time == 0 or current_wh <= initial_wh:
+            return
+
+        minutes_passed = (now - start_time).total_seconds() / 60
+        if minutes_passed <= 0:
+            return
+
         current_wh_per_min = (current_wh - initial_wh) / minutes_passed
 
-        smoothed_wh_per_min = (0.8 * last_average_wh_per_min) + (0.2 * current_wh_per_min)
-
-        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", smoothed_wh_per_min, save_data=False)
-        self.statsmanager.set_status_data('energy', "initial_charge_state_wh", current_wh)
-
-        self.logger.log.debug(f"Updated charge average: {smoothed_wh_per_min:.2f} Wh/min")
+        self.statsmanager.set_status_data('energy', "average_charge_wh_per_min", current_wh_per_min)
+        self.logger.log.debug(f"Updated charge average: {current_wh_per_min:.2f} Wh/min over {minutes_passed:.1f} min")
 
     def handle_no_data(self, essunit):
         self.logger.log.warning("No data available")
