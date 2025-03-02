@@ -327,7 +327,7 @@ class SEUSS:
 
             initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
             if not initial_data:
-                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (essunit.get_battery_current_wh() , TimeUtilities.get_now()))
+                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (essunit.get_battery_current_wh(), TimeUtilities.get_now().isoformat()))
 
             self.update_charging_statistics(essunit)
 
@@ -362,8 +362,8 @@ class SEUSS:
         if not stored_data:
             return
 
-        initial_wh, start_time = stored_data
-
+        initial_wh, timestamp_str = stored_data
+        start_time = datetime.fromisoformat(timestamp_str)
         now = TimeUtilities.get_now()
 
         if start_time is None or start_time == 0 or current_wh <= initial_wh:
