@@ -307,7 +307,7 @@ class Conditions:
                     f"Evaluating abort condition: {condition_key} - Result: {result}")
             except Exception as e:
                 self.logger.log.error(
-                    f"Error while evaluating abort condition: {e}")
+                    f"Error while evaluating abort condition: {e} key: {condition_key}")
 
             if result:
                 condition_result.execute = not result
