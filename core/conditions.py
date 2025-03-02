@@ -548,16 +548,22 @@ class Conditions:
         ]
 
         # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
-        initial_charge_state_wh = self.statsmanager.get_data('energy', "initial_charge_state_wh") or 0.0  # Umbenannt
+        stored_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
+        initial_charge_state_wh = 0.0
+        if stored_data:
+            initial_charge_state_wh, timestamp_str = stored_data
+            start_time = datetime.fromisoformat(timestamp_str)
+
         self.logger.log.debug(f"Initial charge state wh: {initial_charge_state_wh:.2f} Wh")
-        average_charge_wh_per_min = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or 0.0
+        average_charge_wh_per_min, _ = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or (0.0, 1)
         hourly_loaded_wh = average_charge_wh_per_min * 60
 
         if initial_charge_state_wh > 0.0:
             minute = now.minute
             if minute == 0:
                 minute = 60  # Wenn genau zu Beginn der Stunde, setze Minute auf 60
-                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", self.essunit.get_battery_current_wh())
+                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (self.essunit.get_battery_current_wh(), TimeUtilities.get_now().isoformat()))
+
 
             current_loaded_wh = (self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minute
             hourly_loaded_wh = current_loaded_wh * 60
