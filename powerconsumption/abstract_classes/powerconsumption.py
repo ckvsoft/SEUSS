@@ -47,7 +47,6 @@ class PowerDataHandler:
         self.final_data = {}
         self.checked_data = {}
         self.total_loss = 0
-        self.last_value = 0
         self.last_loss_efficiency = (0, 100)
 
     def update_values(self, topic, payload):
@@ -214,9 +213,6 @@ class PowerDataHandler:
         loss = max(energy_input - usable_energy, 0)
         # loss = abs(energy_input - usable_energy)
 
-        self.total_loss = loss
-
-        self.last_value = loss
 
         # Calculate efficiency and ensure it doesn't exceed 100%
         efficiency = (usable_energy / energy_input) * 100 if energy_input > 0 else 100
@@ -225,6 +221,7 @@ class PowerDataHandler:
         efficiency = min(efficiency, 100)
 
         if efficiency < 100.0 and loss > 0.0:
+            self.total_loss = loss
             self.last_loss_efficiency = (loss, efficiency)
 
         return self.last_loss_efficiency
