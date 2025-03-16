@@ -224,9 +224,8 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 100)
 
-        if efficiency < 100 and loss > 0.0:
+        if efficiency < 100.0 and loss > 0.0:
             self.last_loss_efficiency = (loss, efficiency)
-            return loss, efficiency
 
         return self.last_loss_efficiency
 
