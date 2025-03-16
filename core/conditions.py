@@ -33,6 +33,7 @@ from core.utils import Utils
 from spotmarket.abstract_classes.item import Item
 from datetime import datetime, timedelta, timezone
 
+
 class ConditionResult:
     def __init__(self):
         self.execute = False
@@ -571,10 +572,9 @@ class Conditions:
             self.logger.log.debug(f"Projected loaded Wh per hour: {hourly_loaded_wh:.2f} Wh")
 
         # Schritt 3: Berechne, wie viel Kapazität benötigt wird
-        max_soc = self.essunit.get_scheduler_soc() / 100
-        installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
-        required_capacity_wh = max(0, (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh())
-        self.logger.log.debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
+        required_consumption_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
+        if required_consumption_wh_list is None:
+            return False
 
         # Schritt 4: Prüfe auf aufeinanderfolgende Stunden und berechne mögliche Kapazität
         consecutive_hours = []
@@ -589,6 +589,12 @@ class Conditions:
                 break  # Unterbrechung gefunden, stoppe die Prüfung
 
             last_hour_start = start_time
+
+        required_consumption_wh = required_consumption_wh_list[0] * len(consecutive_hours)
+        max_soc = self.essunit.get_scheduler_soc() / 100
+        installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
+        required_capacity_wh = max(0, (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh()) + required_consumption_wh
+        self.logger.log.debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
 
         # Berechne die mögliche Ladekapazität basierend auf aufeinanderfolgenden Stunden
         max_energy_possible = len(consecutive_hours) * hourly_loaded_wh
