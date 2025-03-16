@@ -599,6 +599,7 @@ class Conditions:
         # Berechne die mögliche Ladekapazität basierend auf aufeinanderfolgenden Stunden
         max_energy_possible = len(consecutive_hours) * hourly_loaded_wh
         self.logger.log.debug(f"Max energy possible with consecutive hours: {max_energy_possible:.2f} Wh")
+        self.logger.log.debug(f"Hourly loaded Wh: {hourly_loaded_wh:.2f} Wh, consecutive hours: {len(consecutive_hours)}")
 
         # Schritt 5: Überprüfe Abbruchbedingung
         if max_energy_possible >= required_capacity_wh:
