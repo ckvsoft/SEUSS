@@ -25,4 +25,4 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-__version__ = "0.6.68"
+__version__ = "0.6.69"
