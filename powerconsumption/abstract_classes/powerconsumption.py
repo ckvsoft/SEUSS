@@ -48,6 +48,7 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_value = 0
+        self.last_loss_efficiency = (0, 100)
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -223,7 +224,11 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 99)
 
-        return loss, efficiency
+        if efficiency < 100:
+            self.last_loss_efficiency = (loss, efficiency)
+            return loss, efficiency
+
+        return self.last_loss_efficiency
 
     def is_complete(self, phase_set, num_phases):
         """Überprüft, ob alle Phasen im Set aktualisiert wurden."""
