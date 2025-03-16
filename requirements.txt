@@ -3,4 +3,3 @@ requests~=2.32.1
 pytz>=2024.1
 paho-mqtt~=2.1.0
 bottle>=0.12.25
-waitress>=3.0.0

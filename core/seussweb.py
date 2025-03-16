@@ -35,7 +35,6 @@ import os, sys, glob
 import zipfile
 import threading
 import core.version as version
-from waitress import serve
 
 from core.config import Config
 from core.logreader import LogReader
@@ -505,9 +504,9 @@ class SEUSSWeb:
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
         self.logger.log.info(f"start bottle host:{host}, port:{port}")
-        serve(self.app, host=host, port=port)
+        # serve(self.app, host=host, port=port)
 
-        # self.app.run(host=host, port=port, debug=debug)
+        self.app.run(host=host, port=port, debug=debug)
 
     def stop(self):
         self.logger.log.debug(f"Bottle has stopped.")
