@@ -219,10 +219,10 @@ class PowerDataHandler:
         self.last_value = loss
 
         # Calculate efficiency and ensure it doesn't exceed 100%
-        efficiency = (usable_energy / energy_input) * 99 if energy_input > 0 else 99
+        efficiency = (usable_energy / energy_input) * 100 if energy_input > 0 else 100
 
         # Clamp efficiency to 100% if necessary
-        efficiency = min(efficiency, 99)
+        efficiency = min(efficiency, 100)
 
         if efficiency < 100:
             self.last_loss_efficiency = (loss, efficiency)
