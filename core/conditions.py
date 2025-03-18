@@ -607,10 +607,12 @@ class Conditions:
 
         # Schritt 5: Überprüfe Abbruchbedingung
         if max_energy_possible >= required_capacity_wh:
-            # Prüfe, ob genügend Energie vorhanden ist, um bis zur nächsten günstigen Stunde zu warten
+            # Finde den Index der nächsten Stunde, die auf die letzte Stunde in consecutive_hours folgt
             next_hour_index = len(consecutive_hours)
+
             if next_hour_index < len(valid_lowest_items):
                 next_hour = valid_lowest_items[next_hour_index]
+
                 if next_hour.price < valid_lowest_items[0].price:
                     # Wenn die verbleibende Energie nicht ausreicht, um bis zur günstigeren Stunde zu warten,
                     # darf das Laden nicht gestoppt werden
