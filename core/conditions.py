@@ -593,6 +593,10 @@ class Conditions:
         required_consumption_wh = required_consumption_wh_list[0] * len(consecutive_hours)
         max_soc = self.essunit.get_scheduler_soc() / 100
         installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
+        min_soc = self.essunit.get_min_soc() / 100
+        min_required_energy_wh = installed_capacity_wh * min_soc
+        available_energy_wh = self.essunit.get_battery_current_wh()
+        available_energy_wh -= min_required_energy_wh
         required_capacity_wh = max(0, (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh()) + required_consumption_wh
         self.logger.log.debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
 
@@ -603,11 +607,16 @@ class Conditions:
 
         # Schritt 5: Überprüfe Abbruchbedingung
         if max_energy_possible >= required_capacity_wh:
-            # Prüfe die Stunde danach, ob sie billiger ist
+            # Prüfe, ob genügend Energie vorhanden ist, um bis zur nächsten günstigen Stunde zu warten
             next_hour_index = len(consecutive_hours)
             if next_hour_index < len(valid_lowest_items):
                 next_hour = valid_lowest_items[next_hour_index]
                 if next_hour.price < valid_lowest_items[0].price:
+                    # Wenn die verbleibende Energie nicht ausreicht, um bis zur günstigeren Stunde zu warten,
+                    # darf das Laden nicht gestoppt werden
+                    if available_energy_wh < required_capacity_wh:
+                        self.logger.log.debug("Not enough energy to wait for cheaper hour, continue charging.")
+                        return False  # Lade weiter, da die Energie nicht ausreicht, um zu warten
                     self.logger.log.debug("Abort charging: Cheaper hour follows.")
                     return True
             self.logger.log.debug("Do not abort charging: No cheaper hour follows.")
