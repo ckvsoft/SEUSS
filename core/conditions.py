@@ -593,7 +593,7 @@ class Conditions:
         required_consumption_wh = required_consumption_wh_list[0] * len(consecutive_hours)
         max_soc = self.essunit.get_scheduler_soc() / 100
         installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
-        min_soc = self.essunit.get_min_soc() / 100
+        min_soc = self.essunit.get_battery_minimum_soc_limit() / 100
         min_required_energy_wh = installed_capacity_wh * min_soc
         available_energy_wh = self.essunit.get_battery_current_wh()
         available_energy_wh -= min_required_energy_wh
