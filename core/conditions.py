@@ -606,7 +606,7 @@ class Conditions:
 
                 if next_hour.price < valid_lowest_items[0].price:
                     remaining_hours = (next_hour.get_start_datetime() - now).total_seconds() / 3600
-                    expected_solar_energy = self.essunit.get_expected_solar_energy_for_period(remaining_hours)
+                    expected_solar_energy = self.get_expected_solar_energy_for_period(remaining_hours)
 
                     self.logger.log.debug(f"Remaining hours until next cheaper hour: {remaining_hours:.2f}")
                     self.logger.log.debug(f"Expected solar energy: {expected_solar_energy:.2f} Wh")
@@ -637,3 +637,24 @@ class Conditions:
 
         self.logger.log.debug("Do not abort charging: Not enough consecutive hours.")
         return False
+
+    def get_expected_solar_energy_for_period(self, hours):
+        now = TimeUtilities.get_now()
+        sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(
+            tzinfo=TimeUtilities.TZ)
+
+        if now >= sunset:
+            # Nach Sonnenuntergang → Keine Solarenergie mehr zu erwarten
+            return 0
+
+        # Anteil der täglichen Solarproduktion auf die verbleibenden Stunden umrechnen
+        total_daily_production = self.solardata.total_current_day
+        remaining_production = total_daily_production * (hours / 24)
+
+        # Begrenzen auf die Zeit bis Sonnenuntergang
+        remaining_hours_until_sunset = (sunset - now).total_seconds() / 3600
+        if hours > remaining_hours_until_sunset:
+            hours = remaining_hours_until_sunset
+
+        expected_solar_energy = (total_daily_production / 24) * hours
+        return max(0, expected_solar_energy)
