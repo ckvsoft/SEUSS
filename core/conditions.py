@@ -530,97 +530,108 @@ class Conditions:
         current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
         current_soc = self.essunit.get_soc()
-
         if current_soc >= 99.0:
             self.logger.log.debug(f"SoC is {current_soc:.2f}%, charging is unnecessary.")
-            return False
+            return True
 
         #        additional_prices = [
-#            Item(now + timedelta(hours=0), now + timedelta(hours=1), 30),  # Preis für aktuelle Stunde
-#            Item(now + timedelta(hours=1), now + timedelta(hours=2), 28),  # Günstiger
-#            Item(now + timedelta(hours=2), now + timedelta(hours=3), 32),  # Teurer
-#            Item(now + timedelta(hours=3), now + timedelta(hours=4), 25),  # Wieder günstiger
-#            Item(now + timedelta(hours=4), now + timedelta(hours=5), 40),  # Sehr teuer
-#            Item(now + timedelta(hours=5), now + timedelta(hours=6), 26),  # Wieder günstiger
-#        ]
-        # Schritt 1: Filtere gültige Stunden ab der aktuellen Stunde
+        #            Item(now + timedelta(hours=0), now + timedelta(hours=1), 30),  # Preis für aktuelle Stunde
+        #            Item(now + timedelta(hours=1), now + timedelta(hours=2), 28),  # Günstiger
+        #            Item(now + timedelta(hours=2), now + timedelta(hours=3), 32),  # Teurer
+        #            Item(now + timedelta(hours=3), now + timedelta(hours=4), 25),  # Wieder günstiger
+        #            Item(now + timedelta(hours=4), now + timedelta(hours=5), 40),  # Sehr teuer
+        #            Item(now + timedelta(hours=5), now + timedelta(hours=6), 26),  # Wieder günstiger
+        #        ]
+
+        # 1. Filtere gültige Stunden ab der aktuellen Stunde
         valid_lowest_items = [
             item for item in additional_prices if item.get_start_datetime() >= current_hour_start
         ]
+        if not valid_lowest_items:
+            return False
 
-        # Schritt 2: Berechne aktuelle Ladegeschwindigkeit
-        stored_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
-        initial_charge_state_wh = 0.0
-        if stored_data:
-            initial_charge_state_wh, timestamp_str = stored_data
-            start_time = datetime.fromisoformat(timestamp_str)
-
-        self.logger.log.debug(f"Initial charge state wh: {initial_charge_state_wh:.2f} Wh")
+        # 2. Ladegeschwindigkeit berechnen
+        initial_charge_state_wh, _ = self.statsmanager.get_data('energy', "initial_charge_state_wh") or (0.0, None)
         average_charge_wh_per_min, _ = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or (0.0, 1)
         hourly_loaded_wh = average_charge_wh_per_min * 60
 
         if initial_charge_state_wh > 0.0:
-            minute = now.minute
-            if minute == 0:
-                minute = 60  # Wenn genau zu Beginn der Stunde, setze Minute auf 60
-                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (self.essunit.get_battery_current_wh(), TimeUtilities.get_now().isoformat()))
-
-
-            current_loaded_wh = (self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minute
+            minutes_since_start_of_hour = max(1, now.minute)  # mindestens 1 Minute
+            current_loaded_wh = (
+                                            self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minutes_since_start_of_hour
             hourly_loaded_wh = current_loaded_wh * 60
-            self.logger.log.debug(f"Current loaded Wh per minute: {current_loaded_wh:.2f} Wh")
-            self.logger.log.debug(f"Projected loaded Wh per hour: {hourly_loaded_wh:.2f} Wh")
 
-        # Schritt 3: Berechne, wie viel Kapazität benötigt wird
-        required_consumption_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
-        if required_consumption_wh_list is None:
-            return False
+        self.logger.log.debug(f"Hourly loaded Wh: {hourly_loaded_wh:.2f} Wh")
 
-        # Schritt 4: Prüfe auf aufeinanderfolgende Stunden und berechne mögliche Kapazität
-        consecutive_hours = []
-        last_hour_start = None
-        for item in valid_lowest_items:
-            start_time = item.get_start_datetime()
-
-            # Check auf aufeinanderfolgende Stunden
-            if last_hour_start is None or start_time == last_hour_start + timedelta(hours=1):
-                consecutive_hours.append(item)
-            else:
-                break  # Unterbrechung gefunden, stoppe die Prüfung
-
-            last_hour_start = start_time
-
-        required_consumption_wh = required_consumption_wh_list[0] * len(consecutive_hours)
-        max_soc = self.essunit.get_scheduler_soc() / 100
+        # 3. Verfügbare Energie mit min. SOC berechnen
         installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
         min_soc = self.essunit.get_battery_minimum_soc_limit() / 100
+        max_soc = self.essunit.get_scheduler_soc() / 100
+
         min_required_energy_wh = installed_capacity_wh * min_soc
-        available_energy_wh = self.essunit.get_battery_current_wh()
-        available_energy_wh -= min_required_energy_wh
-        required_capacity_wh = max(0, (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh()) + required_consumption_wh
+        available_energy_wh = max(0, self.essunit.get_battery_current_wh() - min_required_energy_wh)
+
+        self.logger.log.debug(f"Available energy after considering min_soc: {available_energy_wh:.2f} Wh")
+
+        # 4. Notwendige Kapazität für geplanten Zeitraum
+        required_consumption_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
+        if not required_consumption_wh_list:
+            return False
+
+        consecutive_hours = []
+        last_hour_start = None
+
+        for item in valid_lowest_items:
+            if last_hour_start is None or item.get_start_datetime() == last_hour_start + timedelta(hours=1):
+                consecutive_hours.append(item)
+            else:
+                break
+            last_hour_start = item.get_start_datetime()
+
+        required_capacity_wh = (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh()
+
         self.logger.log.debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
 
-        # Berechne die mögliche Ladekapazität basierend auf aufeinanderfolgenden Stunden
+        # 5. Mögliche Ladekapazität berechnen
         max_energy_possible = len(consecutive_hours) * hourly_loaded_wh
-        self.logger.log.debug(f"Max energy possible with consecutive hours: {max_energy_possible:.2f} Wh")
-        self.logger.log.debug(f"Hourly loaded Wh: {hourly_loaded_wh:.2f} Wh, consecutive hours: {len(consecutive_hours)}")
+        self.logger.log.debug(f"Max energy possible: {max_energy_possible:.2f} Wh")
 
-        # Schritt 5: Überprüfe Abbruchbedingung
+        # 6. Abbruchbedingung prüfen
         if max_energy_possible >= required_capacity_wh:
-            # Finde den Index der nächsten Stunde, die auf die letzte Stunde in consecutive_hours folgt
+            # Index der nächsten Stunde nach den aufeinanderfolgenden Stunden finden
             next_hour_index = len(consecutive_hours)
 
             if next_hour_index < len(valid_lowest_items):
                 next_hour = valid_lowest_items[next_hour_index]
 
                 if next_hour.price < valid_lowest_items[0].price:
-                    # Wenn die verbleibende Energie nicht ausreicht, um bis zur günstigeren Stunde zu warten,
-                    # darf das Laden nicht gestoppt werden
-                    if available_energy_wh < required_capacity_wh:
+                    remaining_hours = (next_hour.get_start_datetime() - now).total_seconds() / 3600
+                    expected_solar_energy = self.essunit.get_expected_solar_energy_for_period(remaining_hours)
+
+                    self.logger.log.debug(f"Remaining hours until next cheaper hour: {remaining_hours:.2f}")
+                    self.logger.log.debug(f"Expected solar energy: {expected_solar_energy:.2f} Wh")
+
+                    # ✅ Erwarteter Verbrauch bis zur nächsten günstigen Stunde
+                    required_energy_until_next_hour = sum(
+                        required_consumption_wh_list[:int(remaining_hours) + 1]
+                    )
+
+                    self.logger.log.debug(
+                        f"Expected consumption until next cheaper hour: {required_energy_until_next_hour:.2f} Wh")
+
+                    adjusted_required_capacity_wh = required_capacity_wh + required_energy_until_next_hour
+
+                    self.logger.log.debug(
+                        f"Adjusted required capacity (incl. consumption until next cheaper hour): {adjusted_required_capacity_wh:.2f} Wh")
+
+                    # Wenn nicht genug Energie vorhanden ist, darf nicht abgebrochen werden
+                    if available_energy_wh + expected_solar_energy < adjusted_required_capacity_wh:
                         self.logger.log.debug("Not enough energy to wait for cheaper hour, continue charging.")
-                        return False  # Lade weiter, da die Energie nicht ausreicht, um zu warten
+                        return False
+
                     self.logger.log.debug("Abort charging: Cheaper hour follows.")
                     return True
+
             self.logger.log.debug("Do not abort charging: No cheaper hour follows.")
             return False
 
