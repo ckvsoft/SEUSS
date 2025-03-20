@@ -29,7 +29,7 @@ from core.config import Config
 from core.log import CustomLogger
 from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from core.timeutilities import TimeUtilities
 from core.utils import Utils
 
@@ -171,7 +171,8 @@ class Itemlist:
         return today_data, list(today_data.keys()), tomorrow_data, list(tomorrow_data.keys())
 
     def get_current_price(self, convert=False):
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        # now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        now = datetime.now(UTC)
 
         for item in self._item_list:
             start_datetime = item.get_start_datetime().replace(tzinfo=timezone.utc)

@@ -271,10 +271,9 @@ class Subscribers(MqttResult):
 class MqttClient:
     def __init__(self, mqtt_config):
         self.logger = CustomLogger()
-        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
+        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
-        self.client.on_publish = self.on_publish
         self.client.on_log = self.on_log
         self.client.on_disconnect = self.on_disconnect
         self.flag_connected = False
@@ -305,7 +304,7 @@ class MqttClient:
     def __exit__(self, exc_type, exc_value, traceback):
         self.disconnect()
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, rc, properties):
         if rc == 0:
             self.logger.log.debug(f"Connected with result code {rc}")
             query_message = ""
@@ -325,13 +324,10 @@ class MqttClient:
         self.subscribers_instance.add_value(topic, payload)
         self.response_payload = payload
 
-    def on_publish(self, client, userdata, mid):
-        self.logger.log.debug(f"Message published {mid}")
-
     def on_log(self, client, userdata, level, buf):
         self.logger.log.debug(buf)
 
-    def on_disconnect(self, client, userdata, rc):
+    def on_disconnect(self, client, userdata, rc, properties):
         self.logger.log.debug("Client disconnected")
         self.flag_connected = False
 

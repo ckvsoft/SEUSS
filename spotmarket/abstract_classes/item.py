@@ -26,7 +26,7 @@
 #
 
 # item.py
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from core.timeutilities import TimeUtilities
 from core.log import CustomLogger
 from core.utils import Utils
@@ -41,7 +41,8 @@ class Item:
         self.logger = CustomLogger()
 
     def is_expired(self, check_time=False):
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        # now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        now = datetime.now(UTC)
         now_local = TimeUtilities.convert_utc_to_local(now, False)
         item_local = TimeUtilities.convert_utc_to_local(self.starttime, False)
 

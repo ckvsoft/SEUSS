@@ -58,7 +58,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         self.data_topics = mqtt_config.get("topics")
 
         # Initialize the new MQTT client
-        self.client = mqtt.Client(client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}, protocol={mqtt.MQTTv5}")
+        self.client = mqtt.Client(client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         if port == 8883:
@@ -99,7 +99,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 timestamp = time.time()
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
-    def on_disconnect(self, client, userdata, rc):
+    def on_disconnect(self, client, userdata, flags, rc, properties):
         self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
 
     def send_keep_alive(self):
