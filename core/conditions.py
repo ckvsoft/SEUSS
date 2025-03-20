@@ -530,7 +530,7 @@ class Conditions:
         current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
         current_soc = self.essunit.get_soc()
-        if current_soc >= 99.0:
+        if current_soc > 99.0:
             self.logger.log.debug(f"SoC is {current_soc:.2f}%, charging is unnecessary.")
             return True
 
