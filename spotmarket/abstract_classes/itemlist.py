@@ -171,7 +171,7 @@ class Itemlist:
         return today_data, list(today_data.keys()), tomorrow_data, list(tomorrow_data.keys())
 
     def get_current_price(self, convert=False):
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
 
         for item in self._item_list:
             start_datetime = item.get_start_datetime().replace(tzinfo=timezone.utc)

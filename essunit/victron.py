@@ -104,12 +104,24 @@ class Victron(ESSUnit):
             return currentvoltage
 
     def get_battery_current_wh(self):
-        soc = self.get_soc()
+        soc = self.get_soc() or 0
         full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
         battery_capacity_wh = full_capacity * 55.20
         battery_current_wh = ((soc or 0) / 100) * battery_capacity_wh
         self.logger.log.debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
         return battery_current_wh
+
+    def get_battery_full_wh(self):
+        soc = self.get_soc() or 0
+        full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
+        battery_capacity_wh = full_capacity * 55.20
+        self.logger.log.debug(f"{self._name} Batterie Full wh: {battery_capacity_wh}Wh")
+        return battery_capacity_wh
+
+    def get_battery_min_wh(self):
+        min_soc_limit = self.get_battery_minimum_soc_limit() or 0
+        battery_capacity_wh = self.get_battery_full_wh()
+        return min_soc_limit / 100 * battery_capacity_wh
 
     def get_battery_minimum_soc_limit(self):
         minimumsoclimit = self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))
@@ -128,12 +140,12 @@ class Victron(ESSUnit):
 
     def get_soc(self):
         soc = self._process_result(self.subsribers.get('Battery', 'Soc'))
-        self.logger.log.info(f"{self._name} SOC: {soc}%")
+        self.logger.log.debug(f"{self._name} SOC: {soc}%")
         return soc
 
     def get_active_soc_limit(self):
         soc = self._process_result(self.subsribers.get('Control', 'ActiveSocLimit'))
-        self.logger.log.info(f"{self._name} ActiveSocLimit: {soc}%")
+        self.logger.log.debug(f"{self._name} ActiveSocLimit: {soc}%")
         return soc
 
     def get_scheduler_soc(self):
@@ -190,19 +202,15 @@ class Victron(ESSUnit):
         version = self._process_result(self.subsribers.get('Firmware', 'Version'))
         return version
 
-    def _gridmeters(self):
-        with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
-            base_topic = f'N/{self.unit_id}/grid'
-            discovery_topic = f"{base_topic}/#"
-            mqtt.subscribe(self.gridmeters, discovery_topic)
+    def _gridmeters(self, mqtt):
+        base_topic = f'N/{self.unit_id}/grid'
+        discovery_topic = f"{base_topic}/#"
+        mqtt.subscribe(self.gridmeters, discovery_topic)
 
-    def _inverters(self):
-        with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
-            base_topic = f'N/{self.unit_id}/pvinverter'
-            discovery_topic = f"{base_topic}/#"
-            mqtt.subscribe(self.inverters, discovery_topic)
+    def _inverters(self, mqtt):
+        base_topic = f'N/{self.unit_id}/pvinverter'
+        discovery_topic = f"{base_topic}/#"
+        mqtt.subscribe(self.inverters, discovery_topic)
 
     def _get_battery_instance(self, mqtt):
         try:
@@ -269,10 +277,16 @@ class Victron(ESSUnit):
         return "mqtt{}.victronenergy.com".format(broker_index)
 
     def _get_data(self):
-        self._inverters()
-        self._gridmeters()
         with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                self.mqtt_config) as mqtt:
+            self._gridmeters(mqtt)
+        with MqttClient(
+                self.mqtt_config) as mqtt:
+            self._inverters(mqtt)
+
+        with MqttClient(
+                self.mqtt_config) as mqtt:
+
             instance = self._get_battery_instance(mqtt)
             topics_to_subscribe = [
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",

@@ -41,7 +41,7 @@ class Item:
         self.logger = CustomLogger()
 
     def is_expired(self, check_time=False):
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
         now_local = TimeUtilities.convert_utc_to_local(now, False)
         item_local = TimeUtilities.convert_utc_to_local(self.starttime, False)
 

@@ -58,7 +58,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         self.data_topics = mqtt_config.get("topics")
 
         # Initialize the new MQTT client
-        self.client = mqtt.Client(client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         if port == 8883:

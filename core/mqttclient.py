@@ -346,7 +346,7 @@ class MqttClient:
                 self.logger.log.error("Failed to connect to the MQTT broker.")
                 return 1
 
-            self.client.loop_start()
+            # self.client.loop_start()
 
             # Abonnements für die angegebenen Themen einrichten
             for query_topic in query_topics:
@@ -390,7 +390,7 @@ class MqttClient:
             self.logger.log.debug("Finish subcribe ...")
             # Ressourcen freigeben
             self.client.unsubscribe("#")
-            self.client.loop_stop()
+            # self.client.loop_stop()
             # self.disconnect()
 
         return result
@@ -408,7 +408,7 @@ class MqttClient:
             if not self.connect():
                 return 1
 
-            self.client.loop_start()
+            # self.client.loop_start()
 
             start_time = time.time()
             while not self.flag_connected:
@@ -443,7 +443,7 @@ class MqttClient:
         finally:
             self.logger.log.debug("Finish subcribe ...")
             self.client.unsubscribe("#")
-            self.client.loop_stop()
+            # self.client.loop_stop()
             # self.disconnect()
 
         return result
@@ -459,7 +459,7 @@ class MqttClient:
             if not self.connect():
                 return 1
 
-            self.client.loop_start()
+            # self.client.loop_start()
 
             start_time = time.time()
 
@@ -482,7 +482,7 @@ class MqttClient:
 
         finally:
             self.logger.log.debug("Finish subcribe ...")
-            self.client.loop_stop()
+            # self.client.loop_stop()
             # self.disconnect()
 
         return result
@@ -492,6 +492,7 @@ class MqttClient:
             self.logger.log.debug(f"connect to: {self.mqtt_broker}:{self.mqtt_port}")
             if self.client.is_connected(): return True
             self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
+            self.client.loop_start()
             return True
         except ConnectionRefusedError:
             self.logger.log.error(
@@ -503,4 +504,5 @@ class MqttClient:
 
     def disconnect(self):
         if self.client:
+            self.client.loop_stop()
             self.client.disconnect()

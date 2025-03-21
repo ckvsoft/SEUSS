@@ -215,7 +215,9 @@ class Conditions:
     def add_abort_conditions(self):
 
         required_capacity = self._calculate_required_capacity_for_period()
-        available_soc_wh, _, min_soc_wh = self._calculate_current_soc_wh()
+        available_soc_wh = self.essunit.get_battery_current_wh()
+        min_soc_wh = self.essunit.get_battery_min_wh()
+
         available_soc_wh -= min_soc_wh
         additional_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
 
@@ -327,43 +329,9 @@ class Conditions:
         self.logger.log.debug(f"Required capacity: {required_capacity:.2f} Wh")
         return required_capacity
 
-    def _calculate_current_soc_wh(self):
-        try:
-            # Check if the relevant data is present and valid
-            if self.solardata.soc is None or self.solardata.soc < 0:
-                raise ValueError("SOC value is missing or invalid.")
-            if self.solardata.battery_capacity is None or self.solardata.battery_capacity <= 0:
-                raise ValueError("Battery capacity is missing or invalid.")
-            if self.solardata.battery_minimum_soc_limit is None or self.solardata.battery_minimum_soc_limit < 0:
-                raise ValueError("Minimum SOC limit is missing or invalid.")
-
-            efficiency = self.config.converter_efficiency[0]
-
-            # Calculate the full capacity
-            full_capacity = (
-                                    self.solardata.battery_capacity / self.solardata.soc) * 100 * efficiency if self.solardata.soc > 0 else 0.0
-            battery_capacity_wh = full_capacity * 54.20 * efficiency # Battery capacity in Wh
-
-            # Calculate the current SOC in Wh
-            current_soc_wh = ((self.solardata.soc or 0) / 100) * battery_capacity_wh
-
-            # Calculate the minimum SOC in Wh (including the minimum SOC limit)
-            min_soc_wh = (self.solardata.battery_minimum_soc_limit / 100) * battery_capacity_wh
-
-            return current_soc_wh, battery_capacity_wh, min_soc_wh
-
-        except ZeroDivisionError:
-            # Error handling for division by zero when SOC is 0
-            self.logger.log.error("Division by zero during the calculation of full capacity.")
-            return 0.0, 0.0, 0.0
-
-        except ValueError as e:
-            # Error handling for invalid or missing inputs
-            self.logger.log.error(f"Error during SOC calculation: {str(e)}")
-            return 0.0, 0.0, 0.0
-
     def _calculate_available_surplus(self, upcoming_high_prices):
-        current_soc_wh, akkukapazitaet_wh, min_soc_wh = self._calculate_current_soc_wh()
+        current_soc_wh = self.essunit.get_battery_current_wh()
+        min_soc_wh = self.essunit.get_battery_min_wh()
 
         required_capacity = self._calculate_required_capacity(len(upcoming_high_prices))
 
@@ -497,7 +465,7 @@ class Conditions:
 
         self.logger.log.info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} "
                              f"/ current SOC {self.solardata.soc}% "
-                             f"({self._calculate_current_soc_wh()[0]:.2f} Wh)")
+                             f"({self.essunit.get_battery_current_wh():.2f} Wh)")
 
         return required_capacity
 
@@ -530,8 +498,9 @@ class Conditions:
         current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
         current_soc = self.essunit.get_soc()
-        if current_soc > 99.0:
-            self.logger.log.debug(f"SoC is {current_soc:.2f}%, charging is unnecessary.")
+        scheduler_soc = self.essunit.get_scheduler_soc()
+        if current_soc >= scheduler_soc:
+            self.logger.log.debug(f"SoC is {current_soc:.2f}%, Sheduler Soc is {scheduler_soc}, charging is unnecessary.")
             return True
 
         #        additional_prices = [
