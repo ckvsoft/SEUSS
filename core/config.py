@@ -163,7 +163,16 @@ class Config(Singleton):
                 "user": "admin",
                 "password": "YWRtaW4",
                 "enabled": False
+            },
+            {
+                "name": "RemoteGPIO",
+                "ips": "192.168.1.10 | 192.168.1.11 | !192.168.1.12",
+                "pins": "17,18 | 21 | 20",
+                "user": "",
+                "password": "",
+                "enabled": False
             }
+
         ]
     }
 
