@@ -52,11 +52,13 @@ class Conditions:
         self.current_price = itemlist.get_current_price()
         self.charging_price_limit = Utils.convert_to_millicents(self.config.charging_price_limit)
         self.charging_price_hard_cap = Utils.convert_to_millicents(self.config.charging_price_hard_cap)
-        self.available_operation_modes = ["charging", "discharging"]
+        self.available_operation_modes = ["switching", "charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
         self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
+        self.switching_conditions = {}
         self.charging_conditions = {}
         self.discharge_conditions = {}
+        self.switching_descriptions = ""
         self.charging_descriptions = ""
         self.discharge_descriptions = ""
         self.add_additional_charging_conditions()
@@ -164,6 +166,7 @@ class Conditions:
             key = f"lowestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
             condition_function = self.create_condition_function(price, lambda x, y: x == y)
             self.conditions_by_operation_mode["charging"][key] = condition_function
+            self.conditions_by_operation_mode["switching"][key] = condition_function
 
         count = self.items.get_valid_items_count_until_midnight(additional_prices, True)
         message = f"There {'is' if count == 1 else 'are'} still {count} {'cheap price' if count == 1 else 'cheap prices'} available today."
@@ -172,6 +175,9 @@ class Conditions:
         # Aktualisieren der Beschreibungen
         self.charging_descriptions = [condition["description"] for condition in
                                       self.conditions_by_operation_mode["charging"].values() if
+                                      isinstance(condition, dict)]
+        self.switching_descriptions = [condition["description"] for condition in
+                                      self.conditions_by_operation_mode["switching"].values() if
                                       isinstance(condition, dict)]
 
     def add_additional_discharging_conditions(self):

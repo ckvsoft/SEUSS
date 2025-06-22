@@ -307,16 +307,36 @@ class SEUSS:
         if not only_observation:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
+            condition_switching_result = ConditionResult()
             conditions_instance = Conditions(self.items, self.solardata, essunit)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+            conditions_instance.evaluate_conditions(condition_switching_result, "switching")
 
             self.control_charging(essunit, condition_charging_result)
             self.control_discharging(essunit, condition_discharging_result)
+            self.control_switching(condition_switching_result)
 
         self.items.log_items()
         self.no_data[0] = 0
+
+    def control_switching(self, condition_switching_result):
+        if condition_switching_result.execute and essunit is not None:
+            self.logger.log.info(
+                f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
+            )
+            self.smartswitches.turn_on_all()
+
+        elif condition_switching_result.condition and essunit is not None:
+            self.logger.log.info(
+                f"{condition_switching_result.condition}, switching mode is turned off."
+            )
+            self.smartswitches.turn_off_all()
+
+        elif essunit is not None:
+            self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
+            self.smartswitches.turn_off_all()
 
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:
