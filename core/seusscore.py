@@ -322,19 +322,19 @@ class SEUSS:
         self.no_data[0] = 0
 
     def control_switching(self, condition_switching_result):
-        if condition_switching_result.execute and essunit is not None:
+        if condition_switching_result.execute:
             self.logger.log.info(
                 f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
             )
             self.smartswitches.turn_on_all()
 
-        elif condition_switching_result.condition and essunit is not None:
+        elif condition_switching_result.condition:
             self.logger.log.info(
                 f"{condition_switching_result.condition}, switching mode is turned off."
             )
             self.smartswitches.turn_off_all()
 
-        elif essunit is not None:
+        else:
             self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
             self.smartswitches.turn_off_all()
 
