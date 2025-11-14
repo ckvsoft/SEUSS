@@ -55,6 +55,7 @@ from core.statsmanager import StatsManager
 class PvInverterResults(MqttResult):
     def __init__(self):
         super().__init__()
+        self.logger = CustomLogger()
         self.results = {}
         self.inverters = {}
         # self.status = StatsManager()
@@ -103,11 +104,24 @@ class PvInverterResults(MqttResult):
     def get_value(self, device_id, key, default=0.0):
         if device_id in self.inverters and key in self.inverters[device_id]:
             value_str = self.inverters[device_id][key]
-            value = json.loads(value_str)['value']
-            return value if value is not None else default
+
+            if not isinstance(value_str, str) or not value_str.strip():
+                self.logger.log.warning(f"Empty or non-string value for {device_id}/{key}. Returning default.")
+                return default
+
+            try:
+                value = json.loads(value_str)['value']
+                return value if value is not None else default
+            except json.JSONDecodeError as e:
+                self.logger.log.error(
+                    f"JSONDecodeError for {device_id}/{key}. String: '{value_str[:50]}...' Error: {e}")
+                return default
+            except KeyError:
+                self.logger.log.error(
+                    f"KeyError: 'value' missing in JSON for {device_id}/{key}. String: '{value_str[:50]}...'")
+                return default
         else:
             return default
-
 
 class GridMetersResults(MqttResult):
     def __init__(self):
