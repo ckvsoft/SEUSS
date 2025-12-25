@@ -32,13 +32,7 @@ import sys
 from typing import Tuple
 
 from core.log import CustomLogger
-from core.mqttclient import (
-    MqttClient,
-    MqttResult,
-    Subscribers,
-    PvInverterResults,
-    GridMetersResults,
-)
+from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus
 from core.config import Config
 
@@ -121,8 +115,8 @@ class Victron(ESSUnit):
         return self._safe_float(self.subsribers.get("Battery", "Voltage"))
 
     def get_battery_current_wh(self):
-        soc = self.get_soc()
-        capacity_ah = self.get_battery_capacity()
+        soc = self.get_soc() or 0
+        capacity_ah = self.get_battery_capacity() or 0
 
         if soc <= 0 or capacity_ah <= 0:
             return 0.0
@@ -131,15 +125,11 @@ class Victron(ESSUnit):
         return (soc / 100.0) * full_wh
 
     def get_battery_full_wh(self):
-        capacity_ah = self.get_battery_capacity()
-        if capacity_ah <= 0:
-            return 0.0
+        capacity_ah = self.get_battery_capacity() or 0
         return capacity_ah * self.NOMINAL_BATTERY_VOLTAGE
 
     def get_battery_min_wh(self):
-        min_soc = self.get_battery_minimum_soc_limit()
-        if min_soc <= 0:
-            return 0.0
+        min_soc = self.get_battery_minimum_soc_limit() or 0
         return (min_soc / 100.0) * self.get_battery_full_wh()
 
     def get_battery_minimum_soc_limit(self):
@@ -260,15 +250,15 @@ class Victron(ESSUnit):
 
     def _get_data(self):
         with MqttClient(self.mqtt_config) as mqtt:
+            # Subscribe to grid meters and PV inverters
             self._gridmeters(mqtt)
             self._inverters(mqtt)
 
+            # Try to get active battery instance
             instance = self._get_battery_instance(mqtt)
-            if instance is None:
-                self.logger.log.error(f"ESS Unit {self._name}: No active battery instance found")
-                return
 
-            topics = [
+            # Always subscribe to system-wide battery topics
+            topics_to_subscribe = [
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Duration",
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
@@ -276,13 +266,23 @@ class Victron(ESSUnit):
                 f"Control:N/{self.unit_id}/system/0/Control/ActiveSocLimit",
                 f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
-                f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
-                f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
-                f"Battery:N/{self.unit_id}/battery/{instance}/InstalledCapacity",
                 f"Firmware:N/{self.unit_id}/platform/0/Firmware/Installed/Version",
             ]
 
-            mqtt.subscribe_multiple(self.subsribers, topics)
+            # Add instance-specific topics if active battery exists
+            if instance is not None:
+                topics_to_subscribe += [
+                    f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
+                    f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
+                    f"Battery:N/{self.unit_id}/battery/{instance}/InstalledCapacity",
+                ]
+            else:
+                self.logger.log.warning(f"ESS Unit {self._name}: No active battery instance found, instance-specific topics skipped.")
+
+            # Subscribe all at once
+            rc = mqtt.subscribe_multiple(self.subsribers, topics_to_subscribe)
+            if rc != 0:
+                self.logger.log.error(f"Error subscribing to Victron topics, rc={rc}")
 
     # ------------------------------------------------------------------
     # Misc
@@ -305,8 +305,12 @@ class Victron(ESSUnit):
             )
 
     def _is_resolvable(self, ip_address):
-        socket.gethostbyname(ip_address)
-        return True
+        try:
+            socket.gethostbyname(ip_address)
+            return True
+        except Exception as e:
+            self.logger.log.error(f"Cannot resolve {ip_address}: {e}")
+            return False
 
     def _get_vrm_broker_url(self):
         s = sum(ord(c) for c in self.unit_id.lower().strip())
