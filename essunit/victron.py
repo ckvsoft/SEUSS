@@ -130,8 +130,17 @@ class Victron(ESSUnit):
 
     def get_battery_capacity(self):
         capacity = self._process_result(self.subsribers.get('Battery', 'Capacity'))
-        self.logger.log.debug(f"{self._name} Batterie capacity: {capacity} Ah")
-        return capacity
+
+        if capacity is None:
+            self.logger.log.warning(f"{self._name} Battery capacity not available")
+            return 0.0  # or raise a controlled exception
+
+        try:
+            self.logger.log.debug(f"{self._name} Batterie capacity: {capacity} Ah")
+            return float(capacity)
+        except (TypeError, ValueError):
+            self.logger.log.error(f"{self._name} Invalid battery capacity: {capacity}")
+            return 0.0
 
     def get_battery_installed_capacity(self):
         installed_capacity = self._process_result(self.subsribers.get('Battery', 'InstalledCapacity'))
