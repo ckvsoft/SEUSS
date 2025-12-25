@@ -285,7 +285,7 @@ class Subscribers(MqttResult):
 class MqttClient:
     def __init__(self, mqtt_config):
         self.logger = CustomLogger()
-        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
+        self.client = mqtt.Client(client_id=f"seuss-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.on_log = self.on_log
@@ -341,8 +341,10 @@ class MqttClient:
     def on_log(self, client, userdata, level, buf):
         self.logger.log.debug(buf)
 
-    def on_disconnect(self, client, userdata, rc, properties):
-        self.logger.log.debug("Client disconnected")
+    def on_disconnect(self, client, userdata, reason_code, properties, packet_from_broker):
+        self.logger.log.debug(
+            f"Client disconnected (reason_code={reason_code}, from_broker={packet_from_broker})"
+        )
         self.flag_connected = False
 
     def subscribe_multiple(self, subscribers_instance, query_topics):
