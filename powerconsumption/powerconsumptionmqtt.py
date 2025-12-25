@@ -1,7 +1,7 @@
+
 import socket
 import time
 import threading
-
 import paho.mqtt.client as mqtt
 import json
 
@@ -38,15 +38,16 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         if self.client:
             # If a client exists, compare the current and new configuration
             if broker == self.broker and port == self.port and unit_id == self.unit_id:
-                self.logger.log.debug("The new MQTT configuration matches the current one. No changes required.")
+                self.logger.log.debug("MQTT config unchanged. No reconnection needed.")
                 return
 
-            self.logger.log.debug("MQTT configuration has changed. Reconnecting client...")
+            self.logger.log.debug("MQTT config changed. Reconnecting client...")
             self.client.disconnect()
             self.client = None
 
-        # Save the new configuration
-        if broker == "": return
+        # Save new configuration
+        if not broker:
+            return
 
         self.broker = broker
         self.port = port
@@ -54,13 +55,15 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
         # Set topics based on the new unit_id
         self.keep_alive_topic = mqtt_config.get("keep_alive_topic", "")
-
         self.data_topics = mqtt_config.get("topics")
 
-        # Initialize the new MQTT client
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}", protocol=mqtt.MQTTv5)
+        # Initialize MQTT client
+        self.client = mqtt.Client(client_id=f"seuss-power-consumption-{Utils.generate_random_hex(8)}",
+                                  protocol=mqtt.MQTTv5,
+                                  callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
+
         if port == 8883:
             ssl_context = Utils.create_ssl_context(certificate)
             if ssl_context:
@@ -72,20 +75,21 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.client.username_pw_set(user, password=plain_password)
 
             self.client.connect(self.broker, self.port, keepalive=60)
-            self.logger.log.debug("Connected to the broker.")
+            self.logger.log.debug("Connected to MQTT broker.")
         except socket.gaierror as e:
-            self.logger.log.error(f"Network error: {e}. The broker hostname could not be resolved.")
+            self.logger.log.error(f"Network error: {e}. Broker hostname could not be resolved.")
         except ConnectionRefusedError as e:
             self.logger.log.error(f"Connection refused: {e}. Is the broker online?")
         except Exception as e:
-            self.logger.log.error(f"An unexpected error occurred: {e}")
+            self.logger.log.error(f"Unexpected error: {e}")
 
     def on_message(self, client, userdata, msg):
+        """Callback for incoming MQTT messages"""
         topic = msg.topic
         try:
             payload = json.loads(msg.payload.decode())
         except json.JSONDecodeError:
-            self.logger.log.error(f"Error decoding the payload: {msg.payload}")
+            self.logger.log.error(f"JSON decoding error for payload: {msg.payload}")
             return
 
         if topic in self.data_topics.values():
@@ -99,29 +103,22 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 timestamp = time.time()
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
-    def on_disconnect(self, client, userdata, flags, rc, properties):
-        self.logger.log.debug(f"Disconnected from MQTT server. Code {rc}")
+    def on_disconnect(self, client, userdata, *args):
+        """Universal disconnect callback compatible with all Paho versions"""
+        self.logger.log.debug(f"Disconnected from MQTT broker. Args: {args}")
 
     def send_keep_alive(self):
-        """Sends periodic keep-alive messages to the broker."""
+        """Send periodic keep-alive messages to the broker"""
         while self.keep_alive_running:
-            time.sleep(self.interval_duration)  # Wait for the interval
+            time.sleep(self.interval_duration)
             if self.client and self.keep_alive_running:
-                if self.client and self.client.is_connected():
-                    self.current_power = self.current_power or 0
-                    #print(f"Current power: {self.current_power:.2f} W")
-                    #print(f"Daily consumption: {self.get_daily_wh():.4f} Wh")
-                    #print(f"Current grid power: {self.current_grid_power:.2f} W")
-                    #print(f"Current DC power: {self.P_DC_consumption_Battery:.2f} W")
+                if self.client.is_connected():
                     cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
-                    # print(f"Current Hour Grid Cost: {cost:.2f} \u00A2")
                     total_cost = sum(self.energy_costs_by_hour.values())
-                    # print(f"Today Grid Costs: {total_cost:.2f} \u00A2")
                     self.energy_costs_by_day[str(self.current_day)] = total_cost
 
-                    value = self.handler.get_power("TOTAL_POWER")
-                    # Abziehen des Stroms, der aus dem Netz bezogen wird
-                    loss = value if value else 0
+                    value = self.handler.get_power("TOTAL_POWER") or 0
+                    loss = value
                     pv = self.handler.get_power("PV_POWER")
                     efficiency = self.handler.get_power("EFFICIENCY")
 
@@ -132,18 +129,28 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         value *= count
                         count += 1
                         value = (value + self.get_hourly_average()) / count
-                        # print(f"Average Stats: {value:.4f} Wh")
-                        # print(f"Forcast Day Stats: {value * 24:.4f} Wh")
 
                     if self.ws_server:
-                        self.ws_server.emit_ws({'averageWh': value, 'averageWhD': self.get_daily_average(), 'power': self.current_power, 'grid_power': self.current_grid_power, 'battery_power': self.P_DC_consumption_Battery,'costs': cost, 'total_costs_today': total_cost, 'pv': pv, 'loss': loss, 'efficiency': efficiency, 'consumptionD': self.get_daily_wh()})
+                        self.ws_server.emit_ws({
+                            'averageWh': value,
+                            'averageWhD': self.get_daily_average(),
+                            'power': self.current_power,
+                            'grid_power': self.current_grid_power,
+                            'battery_power': self.P_DC_consumption_Battery,
+                            'costs': cost,
+                            'total_costs_today': total_cost,
+                            'pv': pv,
+                            'loss': loss,
+                            'efficiency': efficiency,
+                            'consumptionD': self.get_daily_wh()
+                        })
 
                     try:
                         self.client.publish(self.keep_alive_topic, payload="1", qos=1)
                     except Exception as e:
-                        self.logger.log.error(f"Error sending the keep-alive message: {e}")
+                        self.logger.log.error(f"Error sending keep-alive: {e}")
                 else:
-                    self.logger.log.debug("No connection to MQTT server. Attempting to reconnect.")
+                    self.logger.log.debug("MQTT connection lost. Reconnecting...")
                     self.client = None
                     self.update_config(self.mqtt_config)
 
@@ -155,29 +162,27 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
         """Main thread logic"""
         self.client.unsubscribe("#")
         for topic in self.data_topics.values():
-            self.logger.log.debug(f"subscibe topic {topic}")
+            self.logger.log.debug(f"Subscribing to topic: {topic}")
             self.client.subscribe(topic)
 
-        # Start the keep-alive thread
+        # Start keep-alive thread
         self.keep_alive_running = True
-        keep_alive_thread = threading.Thread(target=self.send_keep_alive, daemon=True)
-        keep_alive_thread.start()
+        threading.Thread(target=self.send_keep_alive, daemon=True).start()
 
-        # Start the MQTT loop in a non-blocking thread
-        mqtt_thread = threading.Thread(target=self.mqtt_loop)
-        mqtt_thread.start()
+        # Start MQTT loop in a separate thread
+        threading.Thread(target=self.mqtt_loop, daemon=True).start()
 
         # Wait until stop_event is set
-        self.stop_event.wait()  # Blocks until the stop_event is set
+        self.stop_event.wait()
 
-        # Cleanup once the thread is stopped
-        self.client.disconnect()
-        self.save_data()  # Save data on exit
+        # Cleanup
+        if self.client:
+            self.client.disconnect()
+        self.save_data()
 
     def mqtt_loop(self):
-        """MQTT loop to keep receiving messages."""
+        """Non-blocking MQTT loop to handle incoming messages"""
         try:
             self.client.loop_forever()
         except KeyboardInterrupt:
-            print("Exiting program...")
-
+            print("Exiting MQTT loop...")
