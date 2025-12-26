@@ -95,9 +95,10 @@ class PvInverterResults(MqttResult):
         if forward is None:
             return 0.0
 
+        custom_name = self.get_value(device_id, 'CustomName')
         stats_manager_instance = StatsManager()
-        stats_manager_instance.insert_new_daily_status_data("pvinverters", "forward_start", forward)
-        forward_start = stats_manager_instance.get_data("pvinverters", "forward_start")
+        stats_manager_instance.insert_new_daily_status_data("pvinverters", f"{custom_name}_forward_start", forward)
+        forward_start = stats_manager_instance.get_data("pvinverters", f"{custom_name}_forward_start")
         forward = forward - forward_start
         return float(forward * pi)
 
