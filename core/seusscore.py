@@ -308,7 +308,7 @@ class SEUSS:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
             condition_switching_result = ConditionResult()
-            conditions_instance = Conditions(self.items, self.solardata, essunit)
+            conditions_instance = Conditions(self.items, essunit)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")

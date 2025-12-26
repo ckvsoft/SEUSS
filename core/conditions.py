@@ -41,9 +41,8 @@ class ConditionResult:
 
 
 class Conditions:
-    def __init__(self, itemlist, solardata, essunit):
+    def __init__(self, itemlist, essunit):
         self.items = itemlist
-        self.solardata = solardata
         self.essunit = essunit
         self.config = Config()
         self.logger = CustomLogger()
@@ -55,9 +54,6 @@ class Conditions:
         self.available_operation_modes = ["switching", "charging", "discharging"]
         self.conditions_by_operation_mode = {mode: {} for mode in self.available_operation_modes}
         self.abort_conditions_by_operation_mode = {mode + "_abort": {} for mode in self.available_operation_modes}
-        self.switching_conditions = {}
-        self.charging_conditions = {}
-        self.discharge_conditions = {}
         self.switching_descriptions = ""
         self.charging_descriptions = ""
         self.discharge_descriptions = ""
@@ -67,569 +63,129 @@ class Conditions:
 
     def info(self):
         self.logger.log.info(f"Current price: {self.items.get_current_price(True)} Cent/kWh")
-        average_price_today, average_price_tomorrow = self.items.get_average_price_by_date(True)
-        self.logger.log.info(f"Average price Today: {average_price_today} Cent/kWh")
-        if average_price_tomorrow:
-            self.logger.log.info(f"Average price Tomorrow: {average_price_tomorrow} Cent/kWh")
+        avg_today, avg_tomorrow = self.items.get_average_price_by_date(True)
+        self.logger.log.info(f"Average price Today: {avg_today} Cent/kWh")
+        if avg_tomorrow:
+            self.logger.log.info(f"Average price Tomorrow: {avg_tomorrow} Cent/kWh")
 
-        result = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
-        if result:
-            lowest_prices_count = self.config.number_of_lowest_prices_for_charging
-            if isinstance(lowest_prices_count, float):
-                formatted_price = f"{int(round(lowest_prices_count * 100, 0))}%"
-            else:
-                formatted_price = str(lowest_prices_count)
+        lowest_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
+        if lowest_prices:
+            self.logger.log.info("Today's lowest prices for charging:")
+            for item in lowest_prices:
+                self.logger.log.info(f"Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
 
-            # Trenne die Items in "heute" und "morgen"
-            today_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'today']
-            tomorrow_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'tomorrow']
+        highest_prices = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
+        if highest_prices:
+            self.logger.log.info("Today's highest prices for discharging:")
+            for item in highest_prices:
+                self.logger.log.info(f"Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh")
 
-            # Logge die Items für heute
-            if today_items:
-                self.logger.log.info(f"Today's lowest {formatted_price} prices are:")
-                hard_cap = self.config.charging_price_hard_cap
-                for item in today_items:
-                    price = item.get_price(True)
-                    start_time = item.get_start_datetime(True)
-                    if float(price) > hard_cap:
-                        self.logger.log.info(
-                            f"..... Time: {start_time}, Price: {price} Cent/kWh ... exceeds hard cap limit of {hard_cap:.4f} Cent/kWh"
-                        )
-                    else:
-                        self.logger.log.info(
-                            f"..... Time: {start_time}, Price: {price} Cent/kWh"
-                        )
-
-            # Logge die Items für morgen, falls vorhanden
-            if tomorrow_items:
-                self.logger.log.info(f"Tomorrow's lowest {formatted_price} prices are:")
-                for item in tomorrow_items:
-                    self.logger.log.info(
-                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
-                    )
-
-        result = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
-        if result:
-            highest_prices_count = self.config.number_of_highest_prices_for_discharging
-            if isinstance(highest_prices_count, float):
-                formatted_price = f"{int(round(highest_prices_count * 100, 0))}%"
-            else:
-                formatted_price = str(highest_prices_count)
-
-            # Trenne die Items in "heute" und "morgen"
-            today_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'today']
-            tomorrow_items = [item for item in result if self.items.is_today_or_tomorrow(item) == 'tomorrow']
-
-            # Logge die Items für heute
-            if today_items:
-                self.logger.log.info(f"Today's highest {formatted_price} prices are:")
-                for item in today_items:
-                    self.logger.log.info(
-                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
-                    )
-
-            # Logge die Items für morgen, falls vorhanden
-            if tomorrow_items:
-                self.logger.log.info(f"Tomorrow's highest {formatted_price} prices are:")
-                for item in tomorrow_items:
-                    self.logger.log.info(
-                        f"..... Time: {item.get_start_datetime(True)}, Price: {item.get_price(True)} Cent/kWh"
-                    )
+        # Aktueller SOC
+        soc_wh = self.essunit.get_battery_current_wh()
+        min_soc_wh = self.essunit.get_battery_min_wh()
+        self.logger.log.info(f"Current SOC: {soc_wh / 1000:.2f} kWh, Min SOC: {min_soc_wh / 1000:.2f} kWh")
 
     @staticmethod
     def create_condition(description, condition_function):
-        return {
-            "condition": condition_function,
-            "description": f"{description}"
-        }
+        return {"condition": condition_function, "description": description}
 
     def create_condition_function(self, threshold, comparison_operator):
-        def condition():
-            return comparison_operator(threshold, self.current_price)
-
-        return condition
+        return lambda: comparison_operator(threshold, self.current_price)
 
     def add_additional_charging_conditions(self):
-        # Weitere Bedingungen für Aufladung hinzufügen
-        additional_conditions = {
-            f"charging_price_limit ({Utils.millicent_to_cent(self.charging_price_limit)}) > {Utils.millicent_to_cent(self.current_price)}": self.create_condition_function(
-                self.charging_price_limit, lambda x, y: x > y),
-            # Füge weitere Bedingungen hier hinzu
-        }
+        self.conditions_by_operation_mode["charging"].update({
+            f"charging_price_limit ({Utils.millicent_to_cent(self.charging_price_limit)}) > {Utils.millicent_to_cent(self.current_price)}":
+                self.create_condition_function(self.charging_price_limit, lambda x, y: x > y)
+        })
 
-        self.conditions_by_operation_mode["charging"].update(additional_conditions)
-
-        additional_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
-        for i, item in enumerate(additional_prices):
+        lowest_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
+        for i, item in enumerate(lowest_prices):
             price = item.get_price(False)
             start_time = item.get_start_datetime(True)
-            key = f"lowestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
-            condition_function = self.create_condition_function(price, lambda x, y: x == y)
-            self.conditions_by_operation_mode["charging"][key] = condition_function
-            self.conditions_by_operation_mode["switching"][key] = condition_function
-
-        count = self.items.get_valid_items_count_until_midnight(additional_prices, True)
-        message = f"There {'is' if count == 1 else 'are'} still {count} {'cheap price' if count == 1 else 'cheap prices'} available today."
-        self.logger.log.info(message)
-
-        # Aktualisieren der Beschreibungen
-        self.charging_descriptions = [condition["description"] for condition in
-                                      self.conditions_by_operation_mode["charging"].values() if
-                                      isinstance(condition, dict)]
-        self.switching_descriptions = [condition["description"] for condition in
-                                      self.conditions_by_operation_mode["switching"].values() if
-                                      isinstance(condition, dict)]
+            key = f"lowestprice_{i+1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
+            func = self.create_condition_function(price, lambda x, y: x == y)
+            self.conditions_by_operation_mode["charging"][key] = func
+            self.conditions_by_operation_mode["switching"][key] = func
 
     def add_additional_discharging_conditions(self):
-        additional_prices = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
-        for i, item in enumerate(additional_prices):
+        highest_prices = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
+        for i, item in enumerate(highest_prices):
             price = item.get_price(False)
             start_time = item.get_start_datetime(True)
-            key = f"highestprice_{i + 1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
-            condition_function = self.create_condition_function(price, lambda x, y: x == y)
-            self.conditions_by_operation_mode["discharging"][key] = condition_function
+            key = f"highestprice_{i+1} {start_time} ({item.get_price()} Cent/kWh) == {Utils.millicent_to_cent(self.current_price)} Cent/kWh"
+            func = self.create_condition_function(price, lambda x, y: x == y)
+            self.conditions_by_operation_mode["discharging"][key] = func
 
-        count = self.items.get_valid_items_count_until_midnight(additional_prices, False)
-        message = f"There {'is' if count == 1 else 'are'} still {count} {'expensive price' if count == 1 else 'expensive prices'} available today."
-        self.logger.log.info(message)
+        future_high_prices = self.items.get_future_high_prices_until_next_low(highest_prices)
+        current_soc, min_soc, required_capacity = self._calculate_available_surplus(future_high_prices)
 
-        # Weitere Bedingungen für Entladung hinzufügen
-        # additional_conditions = {
-        #     "Soc is greater than the required Soc": lambda: self.solardata.soc is not None and self.solardata.need_soc is not None and self.solardata.soc > self.solardata.need_soc,
-        #     # Füge weitere Bedingungen hier hinzu
-        # }
-
-#        future_high_prices = [item for item in additional_prices if not item.is_expired(True)]
-#        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(future_high_prices)
-        future_high_prices = self.items.get_future_high_prices_until_next_low(additional_prices)
-        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(future_high_prices)
-
-        additional_conditions = {
-            f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh surplus (SOC: {self.solardata.soc or 0:.2f}% ({current_soc_wh / 1000:.2f} kWh), Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity / 1000:.2f} kWh)": lambda: self._calculate_discharge_conditions(
-                future_high_prices)
-
-            #            f"Discharge allowed based on SOC ({self.solardata.soc:.2f}% [{current_soc_wh:.2f} Wh]) and forecasted high prices ({len(future_high_prices)} [{required_capacity:.2f} Wh]). Available surplus: {self.available_surplus:.2f} Wh": lambda: self._calculate_discharge_conditions(
-            #                future_high_prices)
-        }
-        self.conditions_by_operation_mode["discharging"].update(additional_conditions)
-
-        # Aktualisieren der Beschreibungen
-        self.discharge_descriptions = [condition["description"] for condition in
-                                       self.conditions_by_operation_mode["discharging"].values() if
-                                       isinstance(condition, dict)]
+        self.conditions_by_operation_mode["discharging"].update({
+            f"Discharge allowed: {self.available_surplus/1000:.2f} kWh surplus (SOC: {current_soc/1000:.2f} kWh, Expensive hours: {len(future_high_prices)}, Req. Capacity: {required_capacity/1000:.2f} kWh)":
+                lambda: self._calculate_discharge_conditions(future_high_prices)
+        })
 
     def add_abort_conditions(self):
-
-        required_capacity = self._calculate_required_capacity_for_period()
-        available_soc_wh = self.essunit.get_battery_current_wh()
-        min_soc_wh = self.essunit.get_battery_min_wh()
-
-        available_soc_wh -= min_soc_wh
-        additional_prices = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
-
-        # Abbruchbedingungen für das Laden
-        charging_abort_conditions = {
-            "Abort charge condition - Cheaper hours available and sufficient capacity": lambda: self._check_for_cheaper_hours(
-                additional_prices
-            ),
-            "Abort charge condition - Price exceeds hard cap": lambda: (
-                    self.current_price > self.charging_price_hard_cap
-            ),
-            f"Abort charge condition - Required capacity ({required_capacity / 1000:.2f} kWh) is lower than available SOC ({available_soc_wh / 1000:.2f} kWh)": lambda: (
-                    required_capacity < available_soc_wh
-                    and any(
-                item.price < self.current_price
-                and item.starttime > datetime.utcnow().replace(tzinfo=timezone.utc)
-                for item in additional_prices
-            )
-            ) if self.config.config_data.get('use_solar_forecast_to_abort') else False,
-        }
-
-        discharging_abort_conditions = {}
-        if self.solardata.soc is not None and self.solardata.need_soc is not None:
-            additional_prices = self.items.get_highest_prices(self.config.number_of_highest_prices_for_discharging)
-            current_price = self.items.get_current_price()
-            now = TimeUtilities.get_now()
-            tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-
-            # Filtere die Items, um nur solche zu bekommen, die heute starten (>= now und < morgen)
-            valid_items = [
-                item for item in additional_prices
-                if now <= item.get_start_datetime() < tomorrow_start
-            ]
-
-            discharging_abort_conditions[
-                "Abort discharge while charging is allowed"
-            ] = lambda: any(condition() for condition in self.conditions_by_operation_mode.get("charging", {}).values())
-
-            # Wenn current_price nicht in der Liste der höchsten Preise ist, wird die Bedingung überprüft
-            discharging_abort_conditions[
-                "Abort discharge condition - Outside sunshine hours and Soc is lower than the required Soc"] = lambda: (
-                    self.solardata.outside_sun_hours() and self.solardata.soc< self.solardata.need_soc
-                    and all(current_price != item.get_price() for item in valid_items)
-            ) if self.config.config_data.get('use_solar_forecast_to_abort') else False
-
-            discharging_abort_conditions[
-                "Abort discharge condition - Soc is lower or equal the minimum Soc Limit"] = lambda: self.solardata.soc <= self.solardata.battery_minimum_soc_limit
-
-        # Fügen Sie die Abbruchbedingungen den entsprechenden Dictionarys hinzu
-        self.abort_conditions_by_operation_mode["charging_abort"].update(charging_abort_conditions)
-        self.abort_conditions_by_operation_mode["discharging_abort"].update(discharging_abort_conditions)
+        available_soc_wh = self.essunit.get_battery_current_wh() - self.essunit.get_battery_min_wh()
+        self.abort_conditions_by_operation_mode["charging_abort"].update({
+            "Abort charge condition - Price exceeds hard cap": lambda: self.current_price > self.charging_price_hard_cap
+        })
+        self.abort_conditions_by_operation_mode["discharging_abort"].update({
+            "Abort discharge while charging is allowed": lambda: any(c() for c in self.conditions_by_operation_mode.get("charging", {}).values())
+        })
 
     def evaluate_conditions(self, condition_result, operation_mode):
         if operation_mode not in self.available_operation_modes:
             self.logger.log.error(f"Invalid operation mode: {operation_mode}")
             return
 
-        conditions_to_evaluate = self.conditions_by_operation_mode.get(operation_mode, {})
-        condition_matched = False  # Variable, um den Status zu verfolgen
-
-        for condition_key, condition_function in conditions_to_evaluate.items():
-            result = False
+        matched = False
+        for key, func in self.conditions_by_operation_mode.get(operation_mode, {}).items():
             try:
-                result = condition_function()
-                self.logger.log.debug(
-                    f"Evaluating condition: {condition_key} - Result: {result}")
+                result = func()
+                self.logger.log.debug(f"Evaluating condition: {key} - Result: {result}")
+                if result and not condition_result.condition:
+                    condition_result.execute = True
+                    condition_result.condition = key
+                    matched = True
+                    if self.config.log_level != "DEBUG":
+                        break
             except Exception as e:
-                self.logger.log.error(
-                    f"Error while evaluating condition: {e}")
+                self.logger.log.error(f"Error evaluating condition {key}: {e}")
 
-            if result and not condition_result.condition:
-                condition_result.execute = True
-                condition_result.condition = condition_key
-                condition_matched = True  # Bedingung erfolgreich ausgewertet
-                if self.config.log_level != "DEBUG":
-                    break
-
-        # Überspringe die Abbruchbedingungen, wenn keine Bedingung erfolgreich war
-        if not condition_matched:
+        if not matched:
             self.logger.log.debug("No conditions matched. Skipping abort conditions.")
             return
 
-        # Execute abort conditions (set execute to False)
-        abort_conditions = self.abort_conditions_by_operation_mode.get(operation_mode + "_abort", {})
-        for condition_key, condition_function in abort_conditions.items():
-            result = False
+        for key, func in self.abort_conditions_by_operation_mode.get(operation_mode+"_abort", {}).items():
             try:
-                result = condition_function()
-                self.logger.log.debug(
-                    f"Evaluating abort condition: {condition_key} - Result: {result}")
+                if func():
+                    condition_result.execute = False
+                    condition_result.condition = key
+                    break
             except Exception as e:
-                self.logger.log.error(
-                    f"Error while evaluating abort condition: {e} key: {condition_key}")
-
-            if result:
-                condition_result.execute = not result
-                condition_result.condition = condition_key
-                break
+                self.logger.log.error(f"Error evaluating abort condition {key}: {e}")
 
     def _calculate_required_capacity(self, upcoming_hours):
-        average_consumption = 0.0
-        # average_consumption_list = self.statsmanager.get_data('gridmeters', 'forward_hourly')
-        average_consumption_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
-        if average_consumption_list is not None:
-            average_consumption = round(average_consumption_list[0], 2)
-
-        # Calculate the required capacity based on the number of upcoming high-price periods
-        required_capacity = upcoming_hours * average_consumption * 1.10  # Add 10% buffer - Multiply by average hourly consumption
+        avg_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
+        avg_consumption = round(avg_list[0], 2) if avg_list else 0
+        required_capacity = upcoming_hours * avg_consumption * 1.10
         self.logger.log.debug(f"Required capacity: {required_capacity:.2f} Wh")
         return required_capacity
 
     def _calculate_available_surplus(self, upcoming_high_prices):
-        current_soc_wh = self.essunit.get_battery_current_wh()
-        min_soc_wh = self.essunit.get_battery_min_wh()
-
+        current_soc = self.essunit.get_battery_current_wh()
+        min_soc = self.essunit.get_battery_min_wh()
         required_capacity = self._calculate_required_capacity(len(upcoming_high_prices))
-
-        # Add a 10% buffer to the required capacity to maintain a safety margin
-        buffer = 0.10 * current_soc_wh
-
-        # Calculate the available surplus energy with the buffer
-        self.available_surplus = current_soc_wh - min_soc_wh - buffer - required_capacity
-        self.available_surplus = max(0, self.available_surplus)  # Ensure surplus is not negative
-
-        self.logger.log.debug(
-            f"Current SOC: {current_soc_wh:.2f} Wh, Min SOC: {min_soc_wh:.2f} Wh, Buffer: {buffer:.2f} Wh")
-        self.logger.log.debug(f"Available Surplus: {self.available_surplus:.2f} Wh")
-
-        return current_soc_wh, min_soc_wh, required_capacity
+        buffer = 0.10 * current_soc
+        self.available_surplus = max(0, current_soc - min_soc - buffer - required_capacity)
+        self.logger.log.debug(f"Available surplus: {self.available_surplus:.2f} Wh")
+        return current_soc, min_soc, required_capacity
 
     def _calculate_discharge_conditions(self, upcoming_high_prices):
-        """Helper function to encapsulate the discharge calculation logic."""
-
-        current_soc_wh, min_soc_wh, required_capacity = self._calculate_available_surplus(upcoming_high_prices)
-        # Calculate the required capacity based on future high prices
+        current_soc, min_soc, required_capacity = self._calculate_available_surplus(upcoming_high_prices)
         if upcoming_high_prices:
-
-            # Calculate the maximum dischargeable amount without falling below the required capacity
-            max_dischargeable_amount = current_soc_wh - (required_capacity + min_soc_wh)
-            self.logger.log.debug(f"Max Dischargeable Amount: {max_dischargeable_amount:.2f} Wh")
-
-            if max_dischargeable_amount < 0:
-                return False  # Not enough SOC for future high prices, discharging not allowed
-            else:
-                dischargeable_amount = min(self.available_surplus, max_dischargeable_amount)
-                return dischargeable_amount > 0  # Discharge allowed if there's available energy to discharge
-        else:
-            # No future high prices, allow discharge if there's enough available surplus energy
-            dischargeable_amount = self.available_surplus
-            if dischargeable_amount > 0:
-                return True
-            else:
-                return False  # Not enough SOC or surplus energy for discharging
-
-    def _calculate_required_capacity_for_period(self):
-        """
-        Calculates required capacity until the next cheapest hour for charging.
-        Uses solar forecast data and electricity price information.
-        """
-
-        current_time = TimeUtilities.get_now()
-        midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # Attempt to parse sunset and sunrise; fallback to default values if invalid
-        try:
-            sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(
-                tzinfo=TimeUtilities.TZ)
-        except (TypeError, ValueError):
-            self.logger.log.warning("Sunset data is invalid or missing, using default (18:00).")
-            sunset = current_time.replace(hour=18, minute=0, second=0, microsecond=0)
-
-        try:
-            sunrise = datetime.strptime(self.solardata.sunrise_current_day, "%Y-%m-%dT%H:%M").replace(
-                tzinfo=TimeUtilities.TZ)
-        except (TypeError, ValueError):
-            self.logger.log.warning("Sunrise data is invalid or missing, using default (06:00).")
-            sunrise = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
-
-        expected_solar_energy = self.solardata.total_current_day
-        required_capacity = 0.0  # Startwert für die benötigte Kapazität
-
-        # Wenn es vor Sonnenaufgang ist
-        if current_time < sunrise:
-            required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
-
-            # Suche die nächste günstige Stunde nach Sonnenaufgang
-            next_cheap_hour = self._find_next_cheapest_hour()
-
-            if next_cheap_hour:
-                # Berechne die verbleibende Zeit bis zur günstigen Stunde
-                remaining_until_cheap_hour = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
-                required_capacity += self._calculate_required_capacity(remaining_until_cheap_hour)
-
-                # Berechne den verbleibenden Solarertrag bis zur günstigen Stunde
-                if current_time < sunset:
-                    expected_solar_energy_until_cheap_hour = expected_solar_energy - self.solardata.current_hour_solar_yield
-                else:
-                    expected_solar_energy_until_cheap_hour = 0  # Keine Solarenergie nach Sonnenuntergang
-
-                # Subtrahiere den Solarertrag nur bis zur nächsten günstigen Stunde
-                required_capacity -= expected_solar_energy_until_cheap_hour
-                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
-
-                remaining_description = (f"/ remaining until next cheap hour: {remaining_until_cheap_hour:.2f} hours, "
-                                         f"expected solar energy: {expected_solar_energy_until_cheap_hour:.2f} Wh")
-            else:
-                remaining_description = "/ No cheap hour found, fallback to default logic"
-        else:
-            # Wenn nach Sonnenaufgang, finde die nächste günstige Stunde
-            next_cheap_hour = self._find_next_cheapest_hour()
-
-            if next_cheap_hour:
-                remaining_until_cheap_hour = (next_cheap_hour.starttime - current_time).total_seconds() / 3600
-                required_capacity += self._calculate_required_capacity(remaining_until_cheap_hour)
-
-                # Berechne den verbleibenden Solarertrag bis zur nächsten günstigen Stunde
-                if current_time < sunset:
-                    expected_solar_energy = expected_solar_energy - self.solardata.current_hour_solar_yield
-                else:
-                    expected_solar_energy = 0  # Keine Solarenergie nach Sonnenuntergang
-
-                # Subtrahiere den Solarertrag nur bis zur nächsten günstigen Stunde
-                required_capacity -= expected_solar_energy
-                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
-
-                remaining_description = (f"/ remaining until next cheap hour: {remaining_until_cheap_hour:.2f} hours, "
-                                         f"expected solar energy: {expected_solar_energy:.2f} Wh")
-            else:
-                # Wenn keine günstige Stunde vorhanden ist, berücksichtige den gesamten Rest des Tages
-                remaining_until_fallback = (midnight + timedelta(days=1) - current_time).total_seconds() / 3600
-                required_capacity += self._calculate_required_capacity(remaining_until_fallback)
-
-                # Berechne den gesamten Solarertrag für den Rest des Tages
-                if current_time < sunset:
-                    expected_solar_energy_remaining = (remaining_until_fallback / 24) * expected_solar_energy
-                else:
-                    expected_solar_energy_remaining = 0  # Kein Ertrag nach Sonnenuntergang
-
-                required_capacity -= expected_solar_energy_remaining
-                required_capacity = max(0.0, required_capacity)  # Verhindere negative Kapazität
-
-                remaining_description = (f"/ No cheap hour found, fallback to midnight logic "
-                                         f"({remaining_until_fallback:.2f} hours), expected solar energy: "
-                                         f"{expected_solar_energy_remaining:.2f} Wh")
-
-        self.logger.log.info(f"Required capacity for period: {required_capacity:.2f} Wh {remaining_description} "
-                             f"/ current SOC {self.solardata.soc}% "
-                             f"({self.essunit.get_battery_current_wh():.2f} Wh)")
-
-        return required_capacity
-
-    def _find_next_cheapest_hour(self):
-        """
-        Finds the next cheapest hour for charging based on available price data,
-        using get_lowest_prices to determine the cheapest hours.
-        """
-        now = TimeUtilities.get_now()
-
-        # Filter valid hours from now onwards
-        items = self.items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging)
-        cheapest_hours = [
-            item for item in items if item.get_start_datetime() >= now
-        ]
-
-        if not cheapest_hours:
-            self.logger.log.debug("No cheapest hour found.")
-            return None
-
-        cheapest_hour = cheapest_hours[0]
-
-        self.logger.log.debug(
-            f"Next cheapest hour: {cheapest_hour.get_start_datetime()} with price {cheapest_hour.price}")
-
-        return cheapest_hour
-
-    def _check_for_cheaper_hours(self, additional_prices):
-        now = TimeUtilities.get_now()
-        current_hour_start = now.replace(minute=0, second=0, microsecond=0)
-
-        current_soc = self.essunit.get_soc()
-        scheduler_soc = self.essunit.get_scheduler_soc()
-        if current_soc >= scheduler_soc:
-            self.logger.log.debug(f"SoC is {current_soc:.2f}%, Sheduler Soc is {scheduler_soc}, charging is unnecessary.")
-            return True
-
-        #        additional_prices = [
-        #            Item(now + timedelta(hours=0), now + timedelta(hours=1), 30),  # Preis für aktuelle Stunde
-        #            Item(now + timedelta(hours=1), now + timedelta(hours=2), 28),  # Günstiger
-        #            Item(now + timedelta(hours=2), now + timedelta(hours=3), 32),  # Teurer
-        #            Item(now + timedelta(hours=3), now + timedelta(hours=4), 25),  # Wieder günstiger
-        #            Item(now + timedelta(hours=4), now + timedelta(hours=5), 40),  # Sehr teuer
-        #            Item(now + timedelta(hours=5), now + timedelta(hours=6), 26),  # Wieder günstiger
-        #        ]
-
-        # 1. Filtere gültige Stunden ab der aktuellen Stunde
-        valid_lowest_items = [
-            item for item in additional_prices if item.get_start_datetime() >= current_hour_start
-        ]
-        if not valid_lowest_items:
-            return False
-
-        # 2. Ladegeschwindigkeit berechnen
-        initial_charge_state_wh, _ = self.statsmanager.get_data('energy', "initial_charge_state_wh") or (0.0, None)
-        average_charge_wh_per_min, _ = self.statsmanager.get_data('energy', "average_charge_wh_per_min") or (0.0, 1)
-        hourly_loaded_wh = average_charge_wh_per_min * 60
-
-        if initial_charge_state_wh > 0.0:
-            minutes_since_start_of_hour = max(1, now.minute)  # mindestens 1 Minute
-            current_loaded_wh = (
-                                            self.essunit.get_battery_current_wh() - initial_charge_state_wh) / minutes_since_start_of_hour
-            hourly_loaded_wh = current_loaded_wh * 60
-
-        self.logger.log.debug(f"Hourly loaded Wh: {hourly_loaded_wh:.2f} Wh")
-
-        # 3. Verfügbare Energie mit min. SOC berechnen
-        installed_capacity_wh = self.essunit.get_battery_installed_capacity() * 55.2
-        min_soc = self.essunit.get_battery_minimum_soc_limit() / 100
-        max_soc = self.essunit.get_scheduler_soc() / 100
-
-        min_required_energy_wh = installed_capacity_wh * min_soc
-        available_energy_wh = max(0, self.essunit.get_battery_current_wh() - min_required_energy_wh)
-
-        self.logger.log.debug(f"Available energy after considering min_soc: {available_energy_wh:.2f} Wh")
-
-        # 4. Notwendige Kapazität für geplanten Zeitraum
-        required_consumption_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
-        if not required_consumption_wh_list:
-            return False
-
-        consecutive_hours = []
-        last_hour_start = None
-
-        for item in valid_lowest_items:
-            if last_hour_start is None or item.get_start_datetime() == last_hour_start + timedelta(hours=1):
-                consecutive_hours.append(item)
-            else:
-                break
-            last_hour_start = item.get_start_datetime()
-
-        required_capacity_wh = (installed_capacity_wh * max_soc) - self.essunit.get_battery_current_wh()
-
-        self.logger.log.debug(f"Required capacity: {required_capacity_wh:.2f} Wh")
-
-        # 5. Mögliche Ladekapazität berechnen
-        max_energy_possible = len(consecutive_hours) * hourly_loaded_wh
-        self.logger.log.debug(f"Max energy possible: {max_energy_possible:.2f} Wh")
-
-        # 6. Abbruchbedingung prüfen
-        if max_energy_possible >= required_capacity_wh:
-            # Index der nächsten Stunde nach den aufeinanderfolgenden Stunden finden
-            next_hour_index = len(consecutive_hours)
-
-            if next_hour_index < len(valid_lowest_items):
-                next_hour = valid_lowest_items[next_hour_index]
-
-                if next_hour.price < valid_lowest_items[0].price:
-                    remaining_hours = (next_hour.get_start_datetime() - now).total_seconds() / 3600
-                    expected_solar_energy = self.get_expected_solar_energy_for_period(remaining_hours)
-
-                    self.logger.log.debug(f"Remaining hours until next cheaper hour: {remaining_hours:.2f}")
-                    self.logger.log.debug(f"Expected solar energy: {expected_solar_energy:.2f} Wh")
-
-                    # ✅ Erwarteter Verbrauch bis zur nächsten günstigen Stunde
-                    required_energy_until_next_hour = sum(
-                        required_consumption_wh_list[:int(remaining_hours) + 1]
-                    )
-
-                    self.logger.log.debug(
-                        f"Expected consumption until next cheaper hour: {required_energy_until_next_hour:.2f} Wh")
-
-                    adjusted_required_capacity_wh = required_capacity_wh + required_energy_until_next_hour
-
-                    self.logger.log.debug(
-                        f"Adjusted required capacity (incl. consumption until next cheaper hour): {adjusted_required_capacity_wh:.2f} Wh")
-
-                    # Wenn nicht genug Energie vorhanden ist, darf nicht abgebrochen werden
-                    if available_energy_wh + expected_solar_energy < adjusted_required_capacity_wh:
-                        self.logger.log.debug("Not enough energy to wait for cheaper hour, continue charging.")
-                        return False
-
-                    self.logger.log.debug("Abort charging: Cheaper hour follows.")
-                    return True
-
-            self.logger.log.debug("Do not abort charging: No cheaper hour follows.")
-            return False
-
-        self.logger.log.debug("Do not abort charging: Not enough consecutive hours.")
-        return False
-
-    def get_expected_solar_energy_for_period(self, hours):
-        now = TimeUtilities.get_now()
-        sunset = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").replace(
-            tzinfo=TimeUtilities.TZ)
-
-        if now >= sunset:
-            # Nach Sonnenuntergang → Keine Solarenergie mehr zu erwarten
-            return 0
-
-        # Anteil der täglichen Solarproduktion auf die verbleibenden Stunden umrechnen
-        total_daily_production = self.solardata.total_current_day
-        remaining_production = total_daily_production * (hours / 24)
-
-        # Begrenzen auf die Zeit bis Sonnenuntergang
-        remaining_hours_until_sunset = (sunset - now).total_seconds() / 3600
-        if hours > remaining_hours_until_sunset:
-            hours = remaining_hours_until_sunset
-
-        expected_solar_energy = (total_daily_production / 24) * hours
-        return max(0, expected_solar_energy)
+            max_dischargeable = current_soc - (required_capacity + min_soc)
+            if max_dischargeable < 0:
+                return False
+            return min(self.available_surplus, max_dischargeable) > 0
+        return self.available_surplus > 0
