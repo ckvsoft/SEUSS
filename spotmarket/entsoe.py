@@ -95,9 +95,8 @@ class Entsoe(MarketData):
 
         start_datetime = ""
         current_pos = 0
-        last_pos = -1  # Letzte verarbeitete Position (PT15)
-        last_price = statsmanager.get_data('market', 'last_pt15_price')  # letzter 15-min-Wert aus StatsManager
-        pt15_prices = []  # sammelt 4 Viertelstundenpreise für 1 Stunde
+        last_pos = -1  # letzte verarbeitete Position (-1 wenn noch nichts)
+        last_price = statsmanager.get_data('market', 'price')  # letzte bekannte 15-Min-Periode
         period_count = 0
 
         for line in lines:
@@ -107,22 +106,24 @@ class Entsoe(MarketData):
                 capture_period = True
                 valid_period = False
                 last_pos = -1
-                pt15_prices = []
             elif "</Period>" in line:
                 if capture_period and valid_period:
-                    # letzte fehlende Viertelstunden auffüllen
-                    for missing_pos in range(last_pos + 1, 96):  # 96 Viertelstunden = 24 Stunden
-                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                            minutes=15 * missing_pos)
-                        dt_end = dt_start + timedelta(minutes=15)
-                        pt15_prices.append(last_price)
-                        if len(pt15_prices) == 4:
-                            avg_price = sum(pt15_prices) / 4
-                            items.append(
-                                EntsoeItem(dt_start - timedelta(hours=0, minutes=45), dt_end, avg_price, self.fee))
-                            statsmanager.set_status_data('market', 'price', avg_price)
-                            pt15_prices = []
+                    # fehlende Positionen am Ende füllen
+                    total_positions = 24 * 4  # 24 Stunden * 4 Viertelstunden
+                    if last_pos < total_positions - 1:
+                        for missing_pos in range(last_pos + 1, total_positions):
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                minutes=15 * missing_pos)
+                            dt_end = dt_start + timedelta(minutes=15)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
+                            self.logger.log.warning(
+                                f"Missing position {missing_pos} in the XML, using last price ({entsoe_item.get_price(True)})")
+                            items.append(entsoe_item)
                     period_count += 1
+                    last_price_stored = last_price
+                    statsmanager.set_status_data('market', 'price', float(last_price_stored))
+                    if period_count == 1 and not self.use_second_day:
+                        break
                 capture_period = False
                 valid_period = False
             elif capture_period and "<timeInterval>" in line:
@@ -134,31 +135,30 @@ class Entsoe(MarketData):
             elif capture_period and "<resolution>PT15M</resolution>" in line:
                 valid_period = True
             elif valid_period and "<position>" in line:
-                position = int(re.search(r'<position>(.*?)<\/position>', line).group(1)) - 1
-                # fehlende Viertelstunden zwischen last_pos und position auffüllen
-                for missing_pos in range(last_pos + 1, position):
-                    pt15_prices.append(last_price)
-                    if len(pt15_prices) == 4:
-                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                            minutes=15 * (missing_pos - 3))
-                        dt_end = dt_start + timedelta(hours=1)
-                        avg_price = sum(pt15_prices) / 4
-                        items.append(EntsoeItem(dt_start, dt_end, avg_price, self.fee))
-                        statsmanager.set_status_data('market', 'price', avg_price)
-                        pt15_prices = []
-                last_pos = position
+                position = re.search(r'<position>(.*?)<\/position>', line)
+                if position:
+                    current_pos = int(position.group(1)) - 1
+                    # Lücken zwischen letzter und aktueller Position füllen
+                    if last_pos >= 0 and current_pos > last_pos + 1:
+                        for missing_pos in range(last_pos + 1, current_pos):
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
+                                minutes=15 * missing_pos)
+                            dt_end = dt_start + timedelta(minutes=15)
+                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
+                            self.logger.log.warning(
+                                f"Missing position {missing_pos} in the XML, using last price ({entsoe_item.get_price(True)})")
+                            items.append(entsoe_item)
+                    last_pos = current_pos
             elif valid_period and "<price.amount>" in line:
-                current_price = float(re.search(r'<price.amount>(.*?)<\/price.amount>', line).group(1))
-                pt15_prices.append(current_price)
-                last_price = current_price  # für Lückenfüller merken
-                if len(pt15_prices) == 4:
+                price = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
+                if price:
+                    current_price = price.group(1)
                     dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                        minutes=15 * (last_pos - 3))
-                    dt_end = dt_start + timedelta(hours=1)
-                    avg_price = sum(pt15_prices) / 4
-                    items.append(EntsoeItem(dt_start, dt_end, avg_price, self.fee))
-                    statsmanager.set_status_data('market', 'price', avg_price)
-                    pt15_prices = []
+                        minutes=15 * current_pos)
+                    dt_end = dt_start + timedelta(minutes=15)
+                    entsoe_item = EntsoeItem(dt_start, dt_end, float(current_price), self.fee)
+                    items.append(entsoe_item)
+                    last_price = current_price  # letzte 15-Min-Periode merken
 
             elif "<Reason>" in line:
                 in_reason = True
@@ -171,11 +171,8 @@ class Entsoe(MarketData):
                 in_reason = False
 
         if error_code == 999:
-            self.logger.log.warning(f"Entsoe data retrieval error found in the XML data: {error_message}")
+            self.logger.log.warning(f"Entsoe data retrieval error found in XML: {error_message}")
         elif not items:
-            self.logger.log.warning("No prices found in the XML data.")
-
-        # letzte 15-min Preis im StatsManager speichern
-        statsmanager.set_status_data('market', 'last_pt15_price', last_price)
+            self.logger.log.warning("No prices found in XML data.")
 
         return items
