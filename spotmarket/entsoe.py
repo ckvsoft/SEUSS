@@ -25,8 +25,10 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
+# entsoe.py
 import re
 from datetime import datetime, timedelta, timezone
+
 import socket
 import requests
 from requests.exceptions import ConnectionError
@@ -38,13 +40,14 @@ from core.statsmanager import StatsManager
 
 class EntsoeItem(Item):
     def __init__(self, start_datetime, end_datetime, price, fee_str):
-        start_time = start_datetime.replace(tzinfo=timezone.utc)
-        end_time = end_datetime.replace(tzinfo=timezone.utc)
+        start_time = start_datetime.replace(tzinfo=timezone.utc)  # .astimezone(timezone.utc)
+        end_time = end_datetime.replace(tzinfo=timezone.utc)  # .astimezone(timezone.utc)
+
         super().__init__(start_time, end_time, price, fee_str, 13)
 
 
 class Entsoe(MarketData):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.api_token = kwargs.get("api_token", "")
         self.in_domain = kwargs.get("in_domain", "")
@@ -58,6 +61,7 @@ class Entsoe(MarketData):
             response = requests.get(url)
 
             if response.status_code == 200:
+                # print(response.text)
                 return self._load_data_from_xml(response.text)
             else:
                 self.logger.log.warning(f"Error downloading ENTSO-E prices. Status code: {response.status_code}")
@@ -66,17 +70,19 @@ class Entsoe(MarketData):
 
         except ConnectionError as e:
             if isinstance(e.args[0], socket.gaierror):
-                self.logger.log.error("Error in name resolution for 'api.awattar.com'")
+                self.logger.log.error(f"Error in name resolution for 'api.awattar.com'")
                 self.logger.log.error("Please check your network connection and DNS configuration.")
             else:
                 self.logger.log.error(f"Connection error: {e}")
                 self.logger.log.error("Please check your network connection and server configuration.")
+
             return []
 
     def _make_url(self) -> str:
-        start_date = self.getdata_start_datetime
+        start_date = self.getdata_start_datetime  # - timedelta(hours=1)
         start_date_str = start_date.strftime('%Y%m%d%H00')
         end_date_str = self.getdata_end_datetime.strftime('%Y%m%d%H00')
+
         url = f"https://web-api.tp.entsoe.eu/api?securityToken={self.api_token}&documentType=A44&in_Domain={self.in_domain}&out_Domain={self.out_domain}&periodStart={start_date_str}&periodEnd={end_date_str}"
         self.logger.log.debug(f"entsoe url: {url}")
         return url
@@ -95,9 +101,12 @@ class Entsoe(MarketData):
 
         start_datetime = ""
         current_pos = 0
-        last_pos = -1  # letzte verarbeitete Position (-1 wenn noch nichts)
-        last_price = statsmanager.get_data('market', 'price')  # letzte bekannte 15-Min-Periode
+        last_hour_pos = -1
+        last_price = str(statsmanager.get_data('market', 'price'))
         period_count = 0
+
+        resolution = 60  # Default
+        quarter_prices = []  # Puffer für PT15M
 
         for line in lines:
             if "<Period>" in line:
@@ -105,25 +114,24 @@ class Entsoe(MarketData):
                     break
                 capture_period = True
                 valid_period = False
-                last_pos = -1
+                last_hour_pos = -1
+                last_price = str(statsmanager.get_data('market', 'price'))
+                quarter_prices = []
             elif "</Period>" in line:
                 if capture_period and valid_period:
-                    # fehlende Positionen am Ende füllen
-                    total_positions = 24 * 4  # 24 Stunden * 4 Viertelstunden
-                    if last_pos < total_positions - 1:
-                        for missing_pos in range(last_pos + 1, total_positions):
+                    # Am Ende auffüllen, falls Stunden fehlen
+                    if last_hour_pos < 23:
+                        for missing_pos in range(last_hour_pos + 1, 24):
                             dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                                minutes=15 * missing_pos)
-                            dt_end = dt_start + timedelta(minutes=15)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
-                            self.logger.log.warning(
-                                f"Missing position {missing_pos} in the XML, using last price ({entsoe_item.get_price(True)})")
-                            items.append(entsoe_item)
+                                hours=missing_pos)
+                            dt_end = dt_start + timedelta(hours=1)
+                            items.append(EntsoeItem(dt_start, dt_end, float(last_price), self.fee))
+
                     period_count += 1
-                    last_price_stored = last_price
-                    statsmanager.set_status_data('market', 'price', float(last_price_stored))
-                    if period_count == 1 and not self.use_second_day:
-                        break
+                    if period_count == 1:
+                        statsmanager.set_status_data('market', 'price', float(last_price))
+                        if not self.use_second_day:
+                            break
                 capture_period = False
                 valid_period = False
             elif capture_period and "<timeInterval>" in line:
@@ -132,37 +140,54 @@ class Entsoe(MarketData):
                 capture_time = False
             elif capture_time and "<start>" in line:
                 start_datetime = re.search(r'<start>(.*?)<\/start>', line).group(1)
-            elif capture_period and "<resolution>PT15M</resolution>" in line:
-                valid_period = True
+
+            # Erkennung der Auflösung
+            elif capture_period and "<resolution>" in line:
+                if "PT60M" in line:
+                    resolution = 60
+                    valid_period = True
+                elif "PT15M" in line:
+                    resolution = 15
+                    valid_period = True
+
             elif valid_period and "<position>" in line:
-                position = re.search(r'<position>(.*?)<\/position>', line)
-                if position:
-                    current_pos = int(position.group(1)) - 1
-                    # Lücken zwischen letzter und aktueller Position füllen
-                    if last_pos >= 0 and current_pos > last_pos + 1:
-                        for missing_pos in range(last_pos + 1, current_pos):
-                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                                minutes=15 * missing_pos)
-                            dt_end = dt_start + timedelta(minutes=15)
-                            entsoe_item = EntsoeItem(dt_start, dt_end, float(last_price), self.fee)
-                            self.logger.log.warning(
-                                f"Missing position {missing_pos} in the XML, using last price ({entsoe_item.get_price(True)})")
-                            items.append(entsoe_item)
-                    last_pos = current_pos
+                pos_match = re.search(r'<position>(.*?)<\/position>', line)
+                if pos_match:
+                    current_pos = int(pos_match.group(1))
+
             elif valid_period and "<price.amount>" in line:
-                price = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
-                if price:
-                    current_price = price.group(1)
-                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(
-                        minutes=15 * current_pos)
-                    dt_end = dt_start + timedelta(minutes=15)
-                    entsoe_item = EntsoeItem(dt_start, dt_end, float(current_price), self.fee)
-                    items.append(entsoe_item)
-                    last_price = current_price  # letzte 15-Min-Periode merken
+                price_match = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
+                if price_match:
+                    current_price = float(price_match.group(1))
+
+                    if resolution == 60:
+                        # Standard-Stundenlogik
+                        hour_idx = current_pos - 1
+                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=hour_idx)
+                        dt_end = dt_start + timedelta(hours=1)
+                        items.append(EntsoeItem(dt_start, dt_end, current_price, self.fee))
+                        last_hour_pos = hour_idx
+                        last_price = current_price
+
+                    elif resolution == 15:
+                        # Viertelstunden-Logik
+                        quarter_prices.append(current_price)
+
+                        # Wenn wir 4 Viertelstunden voll haben (eine Stunde)
+                        if len(quarter_prices) == 4:
+                            avg_price = sum(quarter_prices) / 4
+                            hour_idx = (current_pos // 4) - 1
+
+                            dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ") + timedelta(hours=hour_idx)
+                            dt_end = dt_start + timedelta(hours=1)
+
+                            items.append(EntsoeItem(dt_start, dt_end, avg_price, self.fee))
+                            last_hour_pos = hour_idx
+                            last_price = avg_price
+                            quarter_prices = []  # Puffer leeren für nächste Stunde
 
             elif "<Reason>" in line:
                 in_reason = True
-                error_message = ""
             elif in_reason and "<code>" in line:
                 error_code = int(re.search(r'<code>(.*?)<\/code>', line).group(1))
             elif in_reason and "<text>" in line:
@@ -171,8 +196,8 @@ class Entsoe(MarketData):
                 in_reason = False
 
         if error_code == 999:
-            self.logger.log.warning(f"Entsoe data retrieval error found in XML: {error_message}")
+            self.logger.log.warning(f"Entsoe data retrieval error: {error_message}")
         elif not items:
-            self.logger.log.warning("No prices found in XML data.")
+            self.logger.log.warning("No prices found in the XML data.")
 
         return items
