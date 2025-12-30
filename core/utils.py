@@ -205,4 +205,4 @@ class Utils:
         Perform commercial rounding (0.5 rounds up).
         """
         multiplier = 10 ** digits
-        return float(int(value * multiplier + 0.5) / multiplier)
+        return float(int(value * multiplier + 0.5000001) / multiplier)

@@ -36,7 +36,7 @@ from requests.exceptions import ConnectionError
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
 from core.statsmanager import StatsManager
-
+from core.utils import Utils
 
 class EntsoeItem(Item):
     def __init__(self, start_datetime, end_datetime, price, fee_str):
@@ -90,155 +90,111 @@ class Entsoe(MarketData):
     def _load_data_from_xml(self, xml_data: str):
         """
         Parse ENTSO-E XML data and generate EntsoeItems.
-        Optimized for PT15M (Quarter-hourly) resolution.
+        Uses Utils.commercial_round to ensure 0.5 rounds up (matching Awattar).
         """
         statsmanager = StatsManager()
-        error_code = 0
-        error_message = ""
         items = []
-
         lines = xml_data.split('\n')
-        capture_period = False
-        valid_period = False
-        capture_time = False
-        in_reason = False
+        capture_period, valid_period, capture_time = False, False, False
         seen_periods = set()
+        start_datetime, current_pos, last_pos = "", 0, 0
 
-        start_datetime = ""
-        current_pos = 0
-        last_pos = 0
-
-        # 1. Load initial fallback prices from StatsManager
+        # Load fallbacks
         last_price = str(statsmanager.get_data('market', 'price') or "0.0")
         last_q_price = float(statsmanager.get_data('market', 'q_price') or last_price)
-
-        # Default to 15m as it's the most common now
-        resolution = 15
-        quarter_prices = []
+        resolution, quarter_prices = 15, []
 
         for line in lines:
             line = line.strip()
 
             if "<Period>" in line:
-                capture_period = True
-                valid_period = False
-                last_pos = 0
-                quarter_prices = []
-                start_datetime = ""
+                capture_period, valid_period, last_pos, quarter_prices, start_datetime = True, False, 0, [], ""
                 continue
 
             elif "</Period>" in line:
-                if capture_period and valid_period:
-                    # Padding at the end of the period (96 for 15m, 24 for 60m)
+                if capture_period and valid_period and start_datetime:
+                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
                     target_pos = 96 if resolution == 15 else 24
                     while last_pos < target_pos:
                         last_pos += 1
-                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+                        self.logger.log.warning(
+                            f"Missing position {last_pos} at end of period {start_datetime}. Padding.")
                         if resolution == 15:
                             quarter_prices.append(last_q_price)
                             if len(quarter_prices) == 4:
+                                avg_p = Utils.commercial_round(sum(quarter_prices) / 4, 2)
                                 dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
-                                items.append(
-                                    EntsoeItem(dt_s, dt_s + timedelta(hours=1), sum(quarter_prices) / 4, self.fee))
+                                items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), avg_p, self.fee))
                                 quarter_prices = []
                         else:
+                            p = Utils.commercial_round(float(last_price), 2)
                             dt_s = dt_start + timedelta(hours=last_pos - 1)
-                            items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), float(last_price), self.fee))
-
+                            items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), p, self.fee))
                 capture_period = False
-                valid_period = False
                 continue
 
-            elif capture_period and "<timeInterval>" in line:
-                capture_time = True
-                continue
-            elif capture_period and "</timeInterval>" in line:
-                capture_time = False
-                continue
-            elif capture_time and "<start>" in line:
-                start_datetime = re.search(r'<start>(.*?)<\/start>', line).group(1)
+            if capture_period and "<start>" in line:
+                start_match = re.search(r'<start>(.*?)<\/start>', line)
+                if start_match: start_datetime = start_match.group(1)
                 continue
 
-            elif capture_period and "<resolution>" in line:
-                # Check for duplicates before enabling valid_period
+            if capture_period and "<resolution>" in line:
+                if not start_datetime: continue
                 if start_datetime in seen_periods:
-                    self.logger.log.debug(f"Duplicate start time {start_datetime} skipped.")
-                    valid_period = False
-                    capture_period = False
+                    self.logger.log.info(f"Duplicate start time {start_datetime} skipped.")
+                    valid_period, capture_period = False, False
                 else:
                     seen_periods.add(start_datetime)
-                    # Correctly detect resolution from XML
                     resolution = 60 if "PT60M" in line else 15
                     valid_period = True
                 continue
 
-            elif valid_period and "<position>" in line:
-                pos_match = re.search(r'<position>(.*?)<\/position>', line)
-                if pos_match:
-                    current_pos = int(pos_match.group(1))
-                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+            if valid_period and start_datetime:
+                if "<position>" in line:
+                    pos_match = re.search(r'<position>(.*?)<\/position>', line)
+                    if pos_match:
+                        current_pos = int(pos_match.group(1))
+                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+                        while last_pos < current_pos - 1:
+                            last_pos += 1
+                            self.logger.log.warning(f"Gap detected: Position {last_pos} in {start_datetime}.")
+                            if resolution == 15:
+                                quarter_prices.append(last_q_price)
+                                if len(quarter_prices) == 4:
+                                    avg_p = Utils.commercial_round(sum(quarter_prices) / 4, 2)
+                                    dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
+                                    items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), avg_p, self.fee))
+                                    quarter_prices = []
+                            else:
+                                p = Utils.commercial_round(float(last_price), 2)
+                                dt_s = dt_start + timedelta(hours=last_pos - 1)
+                                items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), p, self.fee))
+                        last_pos = current_pos
 
-                    # Fill gaps before current position (e.g. your missing Pos 51)
-                    while last_pos < current_pos - 1:
-                        last_pos += 1
+                elif "<price.amount>" in line:
+                    price_match = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
+                    if price_match:
+                        current_val = float(price_match.group(1))
+                        last_q_price = current_val
+                        dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
                         if resolution == 15:
-                            quarter_prices.append(last_q_price)
+                            quarter_prices.append(current_val)
                             if len(quarter_prices) == 4:
+                                avg_p = Utils.commercial_round(sum(quarter_prices) / 4, 2)
+                                last_price = str(avg_p)
                                 dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
-                                items.append(
-                                    EntsoeItem(dt_s, dt_s + timedelta(hours=1), round(sum(quarter_prices) / 4, 2), self.fee))
+                                items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), avg_p, self.fee))
                                 quarter_prices = []
                         else:
-                            dt_s = dt_start + timedelta(hours=last_pos - 1)
-                            items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), float(last_price), self.fee))
-
-                    last_pos = current_pos
-                continue
-
-            elif valid_period and "<price.amount>" in line:
-                price_match = re.search(r'<price.amount>(.*?)<\/price.amount>', line)
-                if price_match:
-                    # 2. Update current tracking prices
-                    current_val = float(price_match.group(1))
-                    last_q_price = current_val
-                    dt_start = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
-
-                    if resolution == 15:
-                        quarter_prices.append(current_val)
-                        if len(quarter_prices) == 4:
-                            avg_p = round(sum(quarter_prices) / 4, 2)
+                            avg_p = Utils.commercial_round(current_val, 2)
                             last_price = str(avg_p)
-                            dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
+                            dt_s = dt_start + timedelta(hours=last_pos - 1)
                             items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), avg_p, self.fee))
-                            quarter_prices = []
-                    else:
-                        last_price = str(current_val)
-                        dt_s = dt_start + timedelta(hours=last_pos - 1)
-                        items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), current_val, self.fee))
-                continue
 
-            # Error handling blocks...
-            elif "<Reason>" in line:
-                in_reason = True
-            elif in_reason and "<code>" in line:
-                error_code = int(re.search(r'<code>(.*?)<\/code>', line).group(1))
-            elif in_reason and "<text>" in line:
-                error_message = re.search(r'<text>(.*?)<\/text>', line).group(1)
-            elif "</Reason>" in line:
-                in_reason = False
-
-        # 3. Save final prices back to StatsManager
+        # Save prices & return
         if items:
             statsmanager.set_status_data('market', 'price', float(last_price))
             statsmanager.set_status_data('market', 'q_price', float(last_q_price))
-
-        # Respect use_second_day setting
-        if not self.use_second_day and len(items) > 24:
-            items = items[:24]
-
-        if error_code == 999:
-            self.logger.log.warning(f"ENTSO-E API error: {error_message}")
-        elif not items:
-            self.logger.log.warning("No price items were parsed from the XML data.")
+        if not self.use_second_day and len(items) > 24: items = items[:24]
 
         return items
