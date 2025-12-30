@@ -198,3 +198,11 @@ class Utils:
         except (TypeError, ValueError):
             CustomLogger().log.error(f"Error converting price: {price}")
             return None
+
+    @staticmethod
+    def commercial_round(value, digits=2):
+        """
+        Perform commercial rounding (0.5 rounds up).
+        """
+        multiplier = 10 ** digits
+        return float(int(value * multiplier + 0.5) / multiplier)
