@@ -186,7 +186,7 @@ class Entsoe(MarketData):
                             if len(quarter_prices) == 4:
                                 dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
                                 items.append(
-                                    EntsoeItem(dt_s, dt_s + timedelta(hours=1), sum(quarter_prices) / 4, self.fee))
+                                    EntsoeItem(dt_s, dt_s + timedelta(hours=1), round(sum(quarter_prices) / 4, 2), self.fee))
                                 quarter_prices = []
                         else:
                             dt_s = dt_start + timedelta(hours=last_pos - 1)
@@ -206,8 +206,8 @@ class Entsoe(MarketData):
                     if resolution == 15:
                         quarter_prices.append(current_val)
                         if len(quarter_prices) == 4:
-                            avg_p = sum(quarter_prices) / 4
-                            last_price = str(avg_p)  # Update the hourly average
+                            avg_p = round(sum(quarter_prices) / 4, 2)
+                            last_price = str(avg_p)
                             dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
                             items.append(EntsoeItem(dt_s, dt_s + timedelta(hours=1), avg_p, self.fee))
                             quarter_prices = []
