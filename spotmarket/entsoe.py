@@ -137,9 +137,10 @@ class Entsoe(MarketData):
                 continue
 
             if capture_period and "<start>" in line:
-                start_match = re.search(r'<start>(.*?)</start>', line)
+                start_match = re.search(r'<start>(.*?)<\/start>', line)
                 if start_match:
                     start_datetime = start_match.group(1)
+                    self.logger.log.info(f"Processing Period starting at {start_datetime}")
                 continue
 
             if capture_period and "<resolution>" in line:
