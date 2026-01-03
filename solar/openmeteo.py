@@ -25,7 +25,10 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
+#  -*- coding: utf-8 -*-
+
 import requests
+import time
 from datetime import datetime, timedelta
 import pytz
 from requests.exceptions import RequestException
@@ -36,13 +39,6 @@ from solar.solardata import Solardata
 
 
 class OpenMeteo:
-    """
-    PV forecast engine with configurable morning/evening damping.
-    Today forecast = measured_today + remaining hours forecast (dynamic adjustment),
-    Tomorrow forecast = realistic sum of hourly forecast, clamped to max panel capacity
-    and adjusted based on actual today yield.
-    """
-
     def __init__(self):
         self.config = Config()
         self.logger = CustomLogger()
@@ -54,7 +50,6 @@ class OpenMeteo:
         try:
             return dates.index(target_date)
         except ValueError:
-            self.logger.log.error(f"[OpenMeteo] Missing date '{target_date}' for {label}. Available: {dates}")
             return None
 
     def forecast(self, solar_data: Solardata):
@@ -64,152 +59,106 @@ class OpenMeteo:
             today_str = now.strftime('%Y-%m-%d')
             tomorrow_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
 
-            total_today_wh = 0.0
-            total_tomorrow_wh = 0.0
-            total_current_hour_wh = 0.0
+            sum_forecast_rest_today = 0.0
+            sum_forecast_tomorrow = 0.0
+            sum_current_hour_wh = 0.0
             inverter_efficiency = 0.88
 
+            # WICHTIG: Wir holen uns den aktuellen Stand VOR der Berechnung
+            # Falls die Inverter heute schon 2259 Wh geliefert haben, steht das hier drin.
+            measured_today_total = solar_data.total_current_day or 0.0
+
+            solar_data.power_peak = sum(panel['totPower'] for panel in self.panels)
+
             for panel in self.panels:
-                lat, lon = panel['locLat'], panel['locLong']
-                tilt, azimuth = panel['angle'], panel['direction']
-                efficiency = panel.get('efficiency', 20) / 100
-                panel_power_watt = panel['totPower'] * 1000
-                morning_loss = panel.get("tree_loss_morning", 0.0)
-                evening_loss = panel.get("tree_loss_evening", 0.0)
+                if not panel.get('enabled', True): continue
 
                 url = (
                     f"https://api.open-meteo.com/v1/forecast?"
-                    f"latitude={lat}&longitude={lon}"
-                    f"&hourly=global_tilted_irradiance,shortwave_radiation"
+                    f"latitude={panel['locLat']}&longitude={panel['locLong']}"
+                    f"&hourly=global_tilted_irradiance"
                     f"&daily=sunrise,sunset,sunshine_duration"
                     f"&timezone={self.config.time_zone}&forecast_days=2"
-                    f"&tilt={tilt}&azimuth={azimuth}"
+                    f"&tilt={panel['angle']}&azimuth={panel['direction']}"
                 )
 
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        response = requests.get(url)
-                        response.raise_for_status()
-                        data = response.json()
-                        break
-                    except RequestException as e:
-                        self.logger.log.error(f"Can't retrieve PV info: {e}")
-                        if attempt < max_retries - 1:
-                            time.sleep(10)
-                        else:
-                            self.logger.log.error("All retries failed.")
-                            return 0.0
+                try:
+                    r = requests.get(url, timeout=10)
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception as e:
+                    self.logger.log.error(f"API Error: {e}")
+                    continue
 
-                hourly_data = data.get('hourly', {})
-                daily_data = data.get('daily', {})
-                dates = daily_data.get('time', [])
-                today_index = self.safe_date_index(dates, today_str, "today") or 0
-                tomorrow_index = self.safe_date_index(dates, tomorrow_str, "tomorrow") or min(1, len(dates)-1)
+                hourly = data.get('hourly', {})
+                daily = data.get('daily', {})
+                rad_list = hourly.get('global_tilted_irradiance', [])
+                dates = daily.get('time', [])
 
-                sunrise_today = daily_data.get('sunrise', [None])[today_index]
-                sunset_today = daily_data.get('sunset', [None])[today_index]
-                sunrise_tomorrow = daily_data.get('sunrise', [None])[tomorrow_index]
-                sunset_tomorrow = daily_data.get('sunset', [None])[tomorrow_index]
+                t_idx = self.safe_date_index(dates, today_str, "today")
+                tm_idx = self.safe_date_index(dates, tomorrow_str, "tomorrow")
 
-                sun_today_minutes = daily_data.get('sunshine_duration', [0])[today_index] or 0
-                sun_tomorrow_minutes = daily_data.get('sunshine_duration', [0])[tomorrow_index] or 0
+                if t_idx is not None:
+                    # Updates für den Calculator (Zeiten)
+                    solar_data.update_sunrise_current_day(daily['sunrise'][t_idx])
+                    solar_data.update_sunset_current_day(daily['sunset'][t_idx])
+                    solar_data.update_sunrise_tomorrow_day(daily['sunrise'][tm_idx])
+                    solar_data.update_sunset_tomorrow_day(daily['sunset'][tm_idx])
+                    solar_data.update_sun_time_today(daily['sunshine_duration'][t_idx])
+                    solar_data.update_sun_time_tomorrow(daily['sunshine_duration'][tm_idx])
 
-                # Update solar_data
-                solar_data.update_sunrise_current_day(sunrise_today)
-                solar_data.update_sunset_current_day(sunset_today)
-                solar_data.update_sunrise_tomorrow_day(sunrise_tomorrow)
-                solar_data.update_sunset_tomorrow_day(sunset_tomorrow)
-                solar_data.update_sun_time_today(sun_today_minutes)
-                solar_data.update_sun_time_tomorrow(sun_tomorrow_minutes)
-                solar_data.update_power_peak(panel['totPower'] + solar_data.power_peak)
+                    area = panel.get('total_area', 0)
+                    eff = panel.get('efficiency', 20) / 100
+                    p_max_watt = panel.get('totPower', 0) * 1000
+                    h_now = now.hour
 
-                # Stunden definieren
-                start_hour_today = datetime.strptime(sunrise_today, "%Y-%m-%dT%H:%M").hour if sunrise_today else 6
-                end_hour_today = datetime.strptime(sunset_today, "%Y-%m-%dT%H:%M").hour + 1 if sunset_today else 18
-                hour_now = now.hour
+                    # 1. Aktuelle Stunde
+                    if h_now < len(rad_list):
+                        rad = rad_list[h_now] or 0
+                        sum_current_hour_wh += min(rad * area * eff, p_max_watt)
 
-                # Radiation array safety
-                radiation_list = hourly_data.get('global_tilted_irradiance', [])
-                if len(radiation_list) < 24:
-                    radiation_list += [0]*(24 - len(radiation_list))
-                hourly_data['global_tilted_irradiance'] = radiation_list
+                    # 2. Rest Heute (ab h_now + 1)
+                    for h in range(h_now + 1, 24):
+                        if h < len(rad_list):
+                            rad = rad_list[h] or 0
+                            damp = self.calculate_exponential_damping(h, panel)
+                            sum_forecast_rest_today += min(rad * area * eff * damp, p_max_watt)
 
-                # Current hour
-                current_hour_wh = radiation_list[hour_now] * panel['total_area'] * efficiency
-                total_current_hour_wh += current_hour_wh
+                    # 3. Morgen
+                    for h in range(24, 48):
+                        if h < len(rad_list):
+                            rad = rad_list[h] or 0
+                            damp = self.calculate_exponential_damping(h % 24, panel)
+                            sum_forecast_tomorrow += min(rad * area * eff * damp, p_max_watt)
 
-                # Remaining today forecast
-                forecast_remaining_wh = 0.0
-                if hour_now < end_hour_today:
-                    forecast_remaining_wh = self.calculate_shortwave_radiation(
-                        hourly_data, hour_now+1, end_hour_today,
-                        panel['total_area'], efficiency, panel_power_watt,
-                        morning_loss, evening_loss
-                    )
+            # --- LERNFAKTOR ---
+            adj = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
+            if adj > 1.5 or adj < 0.5:
+                adj = 1.0  # Reset bei Mondwerten
+                self.statsmanager.set_status_data("solar", "adjustment_factor", 1.0)
 
-                measured_today_wh = solar_data.total_current_day or 0
-                max_possible_today_wh = panel_power_watt * (sun_today_minutes/60) * efficiency * inverter_efficiency
-                panel_forecast_today = min(measured_today_wh + forecast_remaining_wh, max_possible_today_wh)
-                total_today_wh += panel_forecast_today
+            # --- FINALE SUMME ---
+            # Heute = Das was der Inverter schon gemeldet hat + Rest-Forecast
+            final_today = measured_today_total + (sum_forecast_rest_today * inverter_efficiency * adj)
+            final_tomorrow = sum_forecast_tomorrow * inverter_efficiency * adj
 
-                # Tomorrow forecast
-                start_hour_tomorrow = datetime.strptime(sunrise_tomorrow, "%Y-%m-%dT%H:%M").hour if sunrise_tomorrow else 6
-                end_hour_tomorrow = datetime.strptime(sunset_tomorrow, "%Y-%m-%dT%H:%M").hour + 1 if sunset_tomorrow else 18
+            # Werte zurückschreiben
+            solar_data.update_total_current_day(round(final_today, 2))
+            solar_data.update_total_tomorrow_day(round(final_tomorrow, 2))
+            solar_data.update_total_current_hour(round(sum_current_hour_wh * inverter_efficiency, 2))
 
-                forecast_tomorrow_wh = self.calculate_shortwave_radiation(
-                    hourly_data, start_hour_tomorrow, end_hour_tomorrow,
-                    panel['total_area'], efficiency, panel_power_watt,
-                    morning_loss, evening_loss
-                )
+            self.statsmanager.set_status_data('solar', 'last_calculated_forecast', final_today)
+            self.logger.log.info(
+                f"Forecast today: {solar_data.total_current_day:.2f} Wh (Measured: {measured_today_total:.0f} Wh), tomorrow: {solar_data.total_tomorrow_day:.2f} Wh")
 
-                max_possible_tomorrow_wh = panel_power_watt * (sun_tomorrow_minutes/60) * efficiency * inverter_efficiency
-                panel_forecast_tomorrow = min(forecast_tomorrow_wh, max_possible_tomorrow_wh)
-                total_tomorrow_wh += panel_forecast_tomorrow
-
-            # ---------------- Dynamic Adjustment Factor ----------------
-            previous_adj = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
-            if total_today_wh > 0:
-                adj_factor = (solar_data.total_current_day or 0) / total_today_wh
-            else:
-                adj_factor = 1.0
-
-            # Smooth update to prevent extremes
-            adj_factor = max(0.5, min(1.5, 0.5 * previous_adj + 0.5 * adj_factor))
-            self.statsmanager.set_status_data("solar", "adjustment_factor", adj_factor)
-
-            # Apply adjustment
-            total_today_wh *= adj_factor
-            total_tomorrow_wh *= adj_factor
-
-            # Update Solardata
-            solar_data.update_total_current_day(round(total_today_wh,2))
-            solar_data.update_total_tomorrow_day(round(total_tomorrow_wh,2))
-            solar_data.update_total_current_hour(round(total_current_hour_wh*inverter_efficiency,2))
-
-            self.logger.log.info(f"Forecast today: {solar_data.total_current_day:.2f} Wh, tomorrow: {solar_data.total_tomorrow_day:.2f} Wh")
-            self.logger.log.info(f"Current hour: {solar_data.total_current_hour:.2f} Wh")
             return solar_data.total_current_hour
 
         except Exception as e:
-            self.logger.log.exception(f"Forecast calculation failed: {e}")
+            self.logger.log.exception(f"Forecast failed: {e}")
             return 0.0
 
-    # ------------------------------------------------------------------
-    def calculate_shortwave_radiation(self, hourly_data, from_hour, to_hour, total_area, efficiency, panel_power_watt, morning_loss, evening_loss):
-        total = 0.0
-        for hour in range(from_hour, to_hour+1):
-            try:
-                radiation = hourly_data.get('global_tilted_irradiance', [0])[hour] or 0
-            except IndexError:
-                radiation = 0
-            damping_factor = self.calculate_exponential_damping(hour, morning_loss, evening_loss)
-            total += min(radiation * total_area * efficiency * damping_factor, panel_power_watt)
-        return total
-
-    def calculate_exponential_damping(self, hour, morning_loss, evening_loss):
-        if hour < self.noon_hour:
-            damping = morning_loss
-        else:
-            damping = evening_loss
-        return max(0.0, min(1.0, 1.0 - damping))
+    def calculate_exponential_damping(self, hour, panel):
+        m_loss = panel.get("damping_morning", 0.0)
+        e_loss = panel.get("damping_evening", 0.0)
+        loss = m_loss if hour < self.noon_hour else e_loss
+        return max(0.0, min(1.0, 1.0 - loss))
