@@ -25,8 +25,6 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-#  -*- coding: utf-8 -*-
-
 import requests
 import time
 from datetime import datetime, timedelta
@@ -51,6 +49,12 @@ class OpenMeteo:
             return dates.index(target_date)
         except ValueError:
             return None
+
+    def calculate_exponential_damping(self, hour, panel):
+        m_loss = panel.get("damping_morning", 0.0)
+        e_loss = panel.get("damping_evening", 0.0)
+        loss = m_loss if hour < self.noon_hour else e_loss
+        return max(0.0, min(1.0, 1.0 - loss))
 
     def forecast(self, solar_data: Solardata):
         try:
@@ -78,12 +82,22 @@ class OpenMeteo:
                     f"&tilt={panel['angle']}&azimuth={panel['direction']}"
                 )
 
-                try:
-                    r = requests.get(url, timeout=10)
-                    r.raise_for_status()
-                    data = r.json()
-                except Exception as e:
-                    self.logger.log.error(f"API Error: {e}")
+                # --- RETRY LOGIK BEI NETZWERKFEHLERN ---
+                data = None
+                for attempt in range(3):
+                    try:
+                        r = requests.get(url, timeout=10)
+                        r.raise_for_status()
+                        data = r.json()
+                        break
+                    except (RequestException, Exception) as e:
+                        if attempt < 2:
+                            time.sleep(1)
+                            continue
+                        else:
+                            self.logger.log.error(f"API Error after 3 attempts for panel {panel.get('name')}: {e}")
+
+                if not data:
                     continue
 
                 hourly = data.get('hourly', {})
@@ -93,58 +107,62 @@ class OpenMeteo:
 
                 t_idx = self.safe_date_index(dates, today_str, "today")
                 tm_idx = self.safe_date_index(dates, tomorrow_str, "tomorrow")
-                if t_idx is None: continue
 
-                area = panel.get('total_area', 0)
-                eff = panel.get('efficiency', 20) / 100
-                p_max_watt = panel.get('totPower', 0) * 1000
-                h_now = now.hour
+                if t_idx is not None and tm_idx is not None:
+                    # --- ESSENZIELL FÜR SOC CALCULATOR ---
+                    solar_data.update_sunrise_current_day(daily['sunrise'][t_idx])
+                    solar_data.update_sunset_current_day(daily['sunset'][t_idx])
+                    solar_data.update_sunrise_tomorrow_day(daily['sunrise'][tm_idx])
+                    solar_data.update_sunset_tomorrow_day(daily['sunset'][tm_idx])
+                    solar_data.update_sun_time_today(daily['sunshine_duration'][t_idx])
+                    solar_data.update_sun_time_tomorrow(daily['sunshine_duration'][tm_idx])
 
-                # Roh-Berechnung für dieses Panel
-                p_rest_today = 0.0
-                p_tomorrow = 0.0
+                    area = panel.get('total_area', 0)
+                    eff = panel.get('efficiency', 20) / 100
+                    p_max_watt = panel.get('totPower', 0) * 1000
+                    h_now = now.hour
 
-                for h in range(h_now + 1, 24):
-                    if h < len(rad_list):
-                        damp = self.calculate_exponential_damping(h, panel)
-                        p_rest_today += min(rad_list[h] * area * eff * damp, p_max_watt)
+                    # 1. Aktuelle Stunde
+                    if h_now < len(rad_list):
+                        damp = self.calculate_exponential_damping(h_now, panel)
+                        sum_current_hour_wh += min((rad_list[h_now] or 0) * area * eff * damp, p_max_watt)
 
-                for h in range(24, 48):
-                    if h < len(rad_list):
-                        damp = self.calculate_exponential_damping(h % 24, panel)
-                        p_tomorrow += min(rad_list[h] * area * eff * damp, p_max_watt)
+                    # 2. Rest Heute (Zukunft) mit Dämpfung
+                    for h in range(h_now + 1, 24):
+                        if h < len(rad_list):
+                            rad = rad_list[h] or 0
+                            damp = self.calculate_exponential_damping(h, panel)
+                            sum_forecast_rest_today += min(rad * area * eff * damp, p_max_watt)
 
-                self.logger.log.debug(
-                    f"Panel {panel.get('name')}: Rest Today {p_rest_today:.0f}Wh, Tomorrow {p_tomorrow:.0f}Wh (Raw)")
+                    # 3. Morgen mit Dämpfung
+                    for h in range(24, 48):
+                        if h < len(rad_list):
+                            rad = rad_list[h] or 0
+                            damp = self.calculate_exponential_damping(h % 24, panel)
+                            sum_forecast_tomorrow += min(rad * area * eff * damp, p_max_watt)
 
-                sum_forecast_rest_today += p_rest_today
-                sum_forecast_tomorrow += p_tomorrow
-
-            # --- DEN LERNFAKTOR RESETTEN ---
-            # Wenn der Faktor völlig gaga ist (über 2.0 oder unter 0.2), setzen wir ihn hart zurück
+            # Lernfaktor-Handling
             adj = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
-            if adj > 2.0 or adj < 0.2:
-                self.logger.log.info(f"Resetting crazy adjustment factor: {adj}")
-                adj = 1.0
-                self.statsmanager.set_status_data("solar", "adjustment_factor", 1.0)
+            if adj > 2.0 or adj < 0.2: adj = 1.0
 
-            measured_today_total = solar_data.current_hour_solar_yield or 0.0
+            # Basis: Dein gemessener Ertrag bis zur aktuellen Stunde
+            measured_so_far = solar_data.current_hour_solar_yield or 0.0
 
-            final_today = measured_today_total + (sum_forecast_rest_today * inverter_efficiency * adj)
+            # Berechnung
+            forecast_rest_today = sum_forecast_rest_today * inverter_efficiency * adj
+            final_today = measured_so_far + forecast_rest_today
             final_tomorrow = sum_forecast_tomorrow * inverter_efficiency * adj
 
+            # Zurückschreiben ins Objekt
             solar_data.update_total_current_day(round(final_today, 2))
             solar_data.update_total_tomorrow_day(round(final_tomorrow, 2))
+            solar_data.update_total_current_hour(round(sum_current_hour_wh * inverter_efficiency, 2))
 
-            self.logger.log.info(f"FINAL: Today {final_today:.2f} Wh, Tomorrow {final_tomorrow:.2f} Wh (Adj: {adj})")
+            self.logger.log.info(
+                f"Forecast today: {final_today:.2f} Wh (Measured: {measured_so_far:.0f} Wh + Rest: {forecast_rest_today:.0f} Wh), tomorrow: {final_tomorrow:.2f} Wh (Adj: {adj:.2f})")
 
-            return sum_current_hour_wh
+            return solar_data.total_current_hour
 
         except Exception as e:
             self.logger.log.exception(f"Forecast failed: {e}")
             return 0.0
-
-    def calculate_exponential_damping(self, hour, panel):
-        m_loss = panel.get("damping_morning", 0.0)
-        e_loss = panel.get("damping_evening", 0.0)
-        return 1.0 - (m_loss if hour < self.noon_hour else e_loss)
