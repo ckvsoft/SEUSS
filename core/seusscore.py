@@ -284,7 +284,7 @@ class SEUSS:
 
         # Get the freshly calculated values
         adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
-        efficiency_display = round(adj * 100, 2)
+        efficiency_display = round(adj[0] * 100, 2)
 
         if total_forecast is not None and total_forecast > 0.0:
             # 'total_forecast' is the prediction for the CURRENT HOUR.
