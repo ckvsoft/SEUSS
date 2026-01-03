@@ -59,21 +59,13 @@ class OpenMeteo:
             today_str = now.strftime('%Y-%m-%d')
             tomorrow_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
 
-            sum_forecast_rest_today = 0.0
-            sum_forecast_tomorrow = 0.0
-            sum_current_hour_wh = 0.0
+            # Wir sammeln die Forecast-Werte separat
+            total_today_forecast = 0.0
+            total_tomorrow_forecast = 0.0
+            current_hour_wh = 0.0
             inverter_efficiency = 0.88
 
-            # WICHTIG: Wir retten den realen Ertrag der Inverter, bevor wir irgendwas rechnen
-            # Wir nutzen hier direkt das Attribut, um sicherzugehen.
-            real_measured_so_far = getattr(solar_data, 'total_current_day', 0.0)
-
-            # Falls der Wert im Objekt gekapselt ist, versuchen wir die Getter-Logik
-            if real_measured_so_far == 0 and hasattr(solar_data, 'get_total_current_day'):
-                real_measured_so_far = solar_data.get_total_current_day()
-
-            self.logger.log.info(f"[Debug] Start Forecast. Inverter-Input: {real_measured_so_far} Wh")
-
+            # Peak Power setzen
             solar_data.power_peak = sum(panel['totPower'] for panel in self.panels)
 
             for panel in self.panels:
@@ -98,12 +90,11 @@ class OpenMeteo:
                 hourly = data.get('hourly', {})
                 daily = data.get('daily', {})
                 dates = daily.get('time', [])
-
                 t_idx = self.safe_date_index(dates, today_str, "today")
                 tm_idx = self.safe_date_index(dates, tomorrow_str, "tomorrow")
 
                 if t_idx is not None:
-                    # Meta-Daten für SOC Calculator
+                    # Diese Updates MÜSSEN sein für den SOC Rechner
                     solar_data.update_sunrise_current_day(daily['sunrise'][t_idx])
                     solar_data.update_sunset_current_day(daily['sunset'][t_idx])
                     solar_data.update_sunrise_tomorrow_day(daily['sunrise'][tm_idx])
@@ -115,42 +106,46 @@ class OpenMeteo:
                     eff = panel.get('efficiency', 20) / 100
                     p_max_watt = panel.get('totPower', 0) * 1000
                     rad_list = hourly.get('global_tilted_irradiance', [])
-                    h_now = now.hour
 
-                    # Aktuelle Stunde
-                    if h_now < len(rad_list):
-                        sum_current_hour_wh += min((rad_list[h_now] or 0) * area * eff, p_max_watt)
-
-                    # Rest von heute
-                    for h in range(h_now + 1, 24):
+                    # Berechnung Heute (kompletter Tag aus API Sicht)
+                    for h in range(0, 24):
                         if h < len(rad_list):
+                            rad = rad_list[h] or 0
                             damp = self.calculate_exponential_damping(h, panel)
-                            sum_forecast_rest_today += min((rad_list[h] or 0) * area * eff * damp, p_max_watt)
+                            val = min(rad * area * eff * damp, p_max_watt)
+                            total_today_forecast += val
+                            if h == now.hour:
+                                current_hour_wh += val
 
-                    # Morgen
+                    # Berechnung Morgen
                     for h in range(24, 48):
                         if h < len(rad_list):
+                            rad = rad_list[h] or 0
                             damp = self.calculate_exponential_damping(h % 24, panel)
-                            sum_forecast_tomorrow += min((rad_list[h] or 0) * area * eff * damp, p_max_watt)
+                            total_tomorrow_forecast += min(rad * area * eff * damp, p_max_watt)
 
-            # Korrekturfaktor (Begrenzung auf 0.5 - 1.5 um Ausreißer zu vermeiden)
+            # Lernfaktor
             adj = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
-            adj = max(0.5, min(1.5, adj))
+            if adj > 1.5 or adj < 0.5: adj = 1.0
 
-            # Berechnung
-            forecast_today = real_measured_so_far + (sum_forecast_rest_today * inverter_efficiency * adj)
-            forecast_tomorrow = sum_forecast_tomorrow * inverter_efficiency * adj
+            # Finale Werte berechnen
+            final_today = total_today_forecast * inverter_efficiency * adj
+            final_tomorrow = total_tomorrow_forecast * inverter_efficiency * adj
 
-            # Zuweisung an das Objekt
-            solar_data.update_total_current_day(round(forecast_today, 2))
-            solar_data.update_total_tomorrow_day(round(forecast_tomorrow, 2))
-            solar_data.update_total_current_hour(round(sum_current_hour_wh * inverter_efficiency, 2))
+            # WICHTIG: Wir vergleichen mit dem, was schon in solar_data steht
+            # Wenn die Inverter schon MEHR gemeldet haben (z.B. 3031 Wh),
+            # dann nehmen wir diesen Ist-Wert als Minimum.
+            measured_now = solar_data.total_current_day or 0.0
+            if final_today < measured_now:
+                final_today = measured_now
 
-            # Status für den nächsten Lauf
-            self.statsmanager.set_status_data('solar', 'last_calculated_forecast', forecast_today)
+            # Zurückschreiben in das Objekt
+            solar_data.update_total_current_day(round(final_today, 2))
+            solar_data.update_total_tomorrow_day(round(final_tomorrow, 2))
+            solar_data.update_total_current_hour(round(current_hour_wh * inverter_efficiency, 2))
 
             self.logger.log.info(
-                f"Forecast result: Today {solar_data.total_current_day} Wh (incl. {real_measured_so_far} Wh measured), Tomorrow {solar_data.total_tomorrow_day} Wh")
+                f"Forecast: Today {solar_data.total_current_day} Wh, Tomorrow {solar_data.total_tomorrow_day} Wh")
 
             return solar_data.total_current_hour
 
