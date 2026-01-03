@@ -25,8 +25,6 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-#  -*- coding: utf-8 -*-
-
 import requests
 import time
 from datetime import datetime, timedelta
@@ -92,6 +90,11 @@ class OpenMeteo:
             sum_forecast_rest_today_raw = 0.0
             sum_forecast_tomorrow_raw = 0.0
             sum_current_hour_wh_raw = 0.0
+
+            # For Debugging: Real API values without any filter/damping
+            debug_api_today_raw = 0.0
+            debug_api_tomorrow_raw = 0.0
+
             inverter_efficiency = 0.88
 
             solar_data.power_peak = sum(panel['totPower'] for panel in self.panels)
@@ -117,7 +120,7 @@ class OpenMeteo:
                         break
                     except (RequestException, Exception) as e:
                         if attempt < 2:
-                            time.sleep(1);
+                            time.sleep(1)
                             continue
                         else:
                             self.logger.log.error(f"API Error after 3 attempts: {e}")
@@ -151,24 +154,35 @@ class OpenMeteo:
                     p_max = panel.get('totPower', 0) * 1000
                     h_now = now.hour
 
-                    # 1. Past hours raw forecast
+                    # --- DEBUG CALCULATION (PURE API RAW) ---
+                    # Today raw (0-23h)
+                    for h in range(0, 24):
+                        if h < len(rad_list):
+                            debug_api_today_raw += min((rad_list[h] or 0) * area * eff, p_max)
+                    # Tomorrow raw (24-47h)
+                    for h in range(24, 48):
+                        if h < len(rad_list):
+                            debug_api_tomorrow_raw += min((rad_list[h] or 0) * area * eff, p_max)
+
+                    # --- NORMAL CALCULATION WITH DAMPING ---
+                    # 1. Past hours today
                     for h in range(0, h_now):
                         if h < len(rad_list):
                             damp = self.calculate_exponential_damping(h, panel, sr_t, ss_t)
                             sum_forecast_past_today_raw += min((rad_list[h] or 0) * area * eff * damp, p_max)
 
-                    # 2. Current hour raw
+                    # 2. Current hour
                     if h_now < len(rad_list):
                         damp = self.calculate_exponential_damping(h_now, panel, sr_t, ss_t)
                         sum_current_hour_wh_raw += min((rad_list[h_now] or 0) * area * eff * damp, p_max)
 
-                    # 3. Future hours raw
+                    # 3. Future hours today
                     for h in range(h_now + 1, 24):
                         if h < len(rad_list):
                             damp = self.calculate_exponential_damping(h, panel, sr_t, ss_t)
                             sum_forecast_rest_today_raw += min((rad_list[h] or 0) * area * eff * damp, p_max)
 
-                    # 4. Tomorrow raw
+                    # 4. Tomorrow
                     for h in range(24, 48):
                         if h < len(rad_list):
                             damp = self.calculate_exponential_damping(h % 24, panel, sr_tm, ss_tm)
@@ -178,25 +192,31 @@ class OpenMeteo:
             measured_today = solar_data.current_hour_solar_yield or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * inverter_efficiency
 
-            # Default fallback
-            adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
+            # Get current adj factor
+            adj_data = self.statsmanager.get_data('solar', 'adjustment_factor')
+            if isinstance(adj_data, list) and len(adj_data) > 0:
+                adj = adj_data[0]
+            else:
+                adj = adj_data or 1.0
 
             if theoretical_past_net > 200:
-                # Calculate new adjustment based on theoretical raw vs. measured
                 adj = max(0.2, min(2.0, measured_today / theoretical_past_net))
                 self.statsmanager.update_percent_status_data('solar', 'adjustment_factor', round(adj, 2))
-
-                # Also update the 'efficiency' percentage status for the legacy core display
                 self.statsmanager.update_percent_status_data('solar', 'efficiency', adj * 100)
 
-            # --- Apply Factor ---
+            # --- Apply Factor & Efficiency ---
             rest_today_final = sum_forecast_rest_today_raw * inverter_efficiency * adj
             total_today = measured_today + rest_today_final
             total_tomorrow = sum_forecast_tomorrow_raw * inverter_efficiency * adj
 
             solar_data.update_total_current_day(round(total_today, 2))
             solar_data.update_total_tomorrow_day(round(total_tomorrow, 2))
-            solar_data.update_total_current_hour(round(sum_current_hour_wh_raw * inverter_efficiency, 2))
+            solar_data.update_total_current_hour(round(sum_current_hour_wh_raw * inverter_efficiency * adj, 2))
+
+            # --- DEBUG LOG ---
+            self.logger.log.debug(
+                f"RAW API (No filters): Today {debug_api_today_raw:.0f} Wh, Tomorrow {debug_api_tomorrow_raw:.0f} Wh"
+            )
 
             self.logger.log.info(
                 f"Forecast: Today {total_today:.2f} Wh (Measured: {measured_today:.0f}, Rest: {rest_today_final:.0f}), "
