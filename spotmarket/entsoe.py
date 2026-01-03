@@ -120,8 +120,9 @@ class Entsoe(MarketData):
 
                     while last_pos < 96:
                         last_pos += 1
+                        dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
                         self.logger.log.warning(
-                            f"Missing position {last_pos} at end of period {start_datetime}. Padding."
+                            f"Gap detected: Position {last_pos} at {dt_s.isoformat()}."
                         )
                         quarter_prices.append(last_q_price)
 
@@ -177,8 +178,9 @@ class Entsoe(MarketData):
 
                         while last_pos < current_pos - 1:
                             last_pos += 1
+                            dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
                             self.logger.log.warning(
-                                f"Gap detected: Position {last_pos} in {start_datetime}."
+                                f"Gap detected: Position {last_pos} at {dt_s.isoformat()}."
                             )
                             quarter_prices.append(last_q_price)
 
