@@ -275,27 +275,26 @@ class SEUSS:
 
     def process_solar_forecast(self, total_solar):
         forecast = OpenMeteo()
-        # total_forecast is the current hour prediction including adj
+        # This now updates the adjustment_factor internally
         total_forecast = forecast.forecast(self.solardata)
 
-        # Calculate battery needs based on the updated forecast data
         calculator = SolarBatteryCalculator(self.solardata)
         self.solardata.update_need_soc(calculator.calculate_battery_percentage())
         self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
 
-        # Get the adjustment factor that OpenMeteo just updated/used
+        # Get the freshly calculated values
         adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
-        efficiency_percent = round(adj * 100, 2)
+        efficiency_display = round(adj * 100, 2)
 
         if total_forecast is not None and total_forecast > 0.0:
-            # We don't calculate a new efficiency here anymore to avoid double-correction
-            # Instead, we show how well the current hour matches the prediction
-            current_hour_percent = round((total_solar / total_forecast) * 100, 2)
+            # 'total_forecast' is the prediction for the CURRENT HOUR.
+            # We compare it to 'total_solar' (what actually came in this hour so far)
+            hour_performance = round((total_solar / total_forecast) * 100, 2)
 
-            self.logger.log.info(
-                f"Solar current hour performance: {current_hour_percent}%. Current Adj-Factor (Efficiency): {efficiency_percent}%")
+            self.logger.log.info(f"Solar hour performance: {hour_performance}% of adjusted forecast.")
+            self.logger.log.info(f"Current System Efficiency (Adj-Factor): {efficiency_display}%")
         else:
-            self.logger.log.info(f"Solar forecast is zero or not available. Current Adj-Factor: {efficiency_percent}%")
+            self.logger.log.info(f"Solar forecast is zero. Current Adj-Factor: {efficiency_display}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
         only_observation = False

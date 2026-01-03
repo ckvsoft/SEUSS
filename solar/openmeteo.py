@@ -178,13 +178,16 @@ class OpenMeteo:
             measured_today = solar_data.current_hour_solar_yield or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * inverter_efficiency
 
-            # Load existing adj
-            adj = self.statsmanager.get_data("solar", "adjustment_factor") or 1.0
+            # Default fallback
+            adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
 
             if theoretical_past_net > 200:
+                # Calculate new adjustment based on theoretical raw vs. measured
                 adj = max(0.2, min(2.0, measured_today / theoretical_past_net))
-                # Set the data (assuming statsmanager handles persistence)
-                # self.statsmanager.set_data(...) if needed, otherwise we just use the local adj for calculations
+                self.statsmanager.update_percent_status_data('solar', 'adjustment_factor', round(adj, 2))
+
+                # Also update the 'efficiency' percentage status for the legacy core display
+                self.statsmanager.update_percent_status_data('solar', 'efficiency', adj * 100)
 
             # --- Apply Factor ---
             rest_today_final = sum_forecast_rest_today_raw * inverter_efficiency * adj
