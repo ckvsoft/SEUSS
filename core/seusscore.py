@@ -274,29 +274,28 @@ class SEUSS:
         return total_solar
 
     def process_solar_forecast(self, total_solar):
-        forecast = OpenMeteo()  # Forecastsolar()
-        # self.solardata = Solardata()
+        forecast = OpenMeteo()
+        # total_forecast is the current hour prediction including adj
         total_forecast = forecast.forecast(self.solardata)
+
+        # Calculate battery needs based on the updated forecast data
         calculator = SolarBatteryCalculator(self.solardata)
         self.solardata.update_need_soc(calculator.calculate_battery_percentage())
         self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
 
-        if total_forecast is not None and total_forecast > 0.0:
-            percentage = (total_solar / total_forecast) * 100
-            efficiency = None
-            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
-            current_time = TimeUtilities.get_now().time()
+        # Get the adjustment factor that OpenMeteo just updated/used
+        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
+        efficiency_percent = round(adj * 100, 2)
 
-            if current_time < sunset_time and total_solar > 0.0:
-                efficiency = self.statsmanager.update_percent_status_data('solar', 'efficiency', percentage)
-            else:
-                efficiency_list = self.statsmanager.get_data('solar', 'efficiency')
-                if efficiency_list is not None:
-                    efficiency = round(efficiency_list[0], 2)
-            rounded_percentage = round(percentage, 2)
-            self.logger.log.info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
+        if total_forecast is not None and total_forecast > 0.0:
+            # We don't calculate a new efficiency here anymore to avoid double-correction
+            # Instead, we show how well the current hour matches the prediction
+            current_hour_percent = round((total_solar / total_forecast) * 100, 2)
+
+            self.logger.log.info(
+                f"Solar current hour performance: {current_hour_percent}%. Current Adj-Factor (Efficiency): {efficiency_percent}%")
         else:
-            self.logger.log.info("Solar forecast is zero or not available.")
+            self.logger.log.info(f"Solar forecast is zero or not available. Current Adj-Factor: {efficiency_percent}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
         only_observation = False
