@@ -22,8 +22,15 @@
         <div class="right">
             <p id="datetime">Current date and time: -</p>
             <p>Version: {{ version }}</p>
-            <div id="legend_svg">
-                {{ !legend_svg }}
+            <div class="legend-soc-container">
+                <div id="legend_svg">
+                    {{ !legend_svg }}
+                </div>
+
+                <div id="soc-container">
+                    <div class="soc-label">SOC</div>
+                    <div id="soc-value">-- %</div>
+                </div>
             </div>
             <div>
                 <div>
@@ -122,6 +129,7 @@
                     updateValue("efficiency", "Efficiency", data.efficiency, "%");
                     updateValue("pv", "PV", data.pv, "W");
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
+                    updateValue("soc-value", "SOC", data.soc, "%");
 
                     // 🔄 Ladeanimation aktivieren
                     const loadingCircle = document.getElementById("loadingCircle");

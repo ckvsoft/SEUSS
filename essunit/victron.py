@@ -356,6 +356,7 @@ class Victron(ESSUnit):
             "PV_AC_GENSET_L1": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L1/Power",
             "PV_AC_GENSET_L2": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L2/Power",
             "PV_AC_GENSET_L3": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L3/Power",
-            "PV_DC": f"N/{self.unit_id}/system/0/Dc/Pv/Power"
+            "PV_DC": f"N/{self.unit_id}/system/0/Dc/Pv/Power",
+            "SOC": f"N/{self.unit_id}/system/0/Dc/Battery/Soc"
         }
         return mqtt_config

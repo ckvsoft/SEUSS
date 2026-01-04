@@ -305,6 +305,7 @@ class PowerConsumptionBase:
         self.current_power = 0
         self.current_grid_power = 0
         self.consumption_diff = 0
+        self.soc = None
 
         self.data_file = "consumption_data.json"
         self.load_data()

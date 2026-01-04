@@ -100,6 +100,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.current_power = self.handler.get_power("AC_POWER")
                 self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
                 self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
+                self.soc = self.handler.get_power("SOC")
                 timestamp = time.time()
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
@@ -142,7 +143,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'pv': pv,
                             'loss': loss,
                             'efficiency': efficiency,
-                            'consumptionD': self.get_daily_wh()
+                            'consumptionD': self.get_daily_wh(),
+                            'soc' : self.soc
                         })
 
                     try:
