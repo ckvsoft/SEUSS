@@ -102,6 +102,9 @@ class PowerDataHandler:
             if value is not None:
                 self.dc_data["Battery"] = value
 
+        elif topic == "SOC":
+            self.final_data["SOC"] = value
+
         # Berechnungen ausführen
         self.calculate_power()
 
@@ -262,6 +265,11 @@ class PowerDataHandler:
 
         elif power_type == "EFFICIENCY":
             return self.final_data.get("EFFICIENCY", 0)
+
+        elif power_type == "SOC":
+            soc = self.final_data.get("SOC", 0)
+            return soc
+
 
         else:
             return None
