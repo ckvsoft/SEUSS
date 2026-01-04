@@ -100,7 +100,6 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.current_power = self.handler.get_power("AC_POWER")
                 self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
                 self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
-                self.soc = self.handler.get_power("SOC")
                 timestamp = time.time()
                 self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
 
@@ -122,6 +121,9 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     loss = value
                     pv = self.handler.get_power("PV_POWER")
                     efficiency = self.handler.get_power("EFFICIENCY")
+
+                    self.soc = self.handler.get_power("SOC")
+                    self.logger.log.debug(f"SOC received: {self.soc}")
 
                     average_list = self.statsmanager.get_data("powerconsumption", "hourly_watt_average")
                     value = 0.0
