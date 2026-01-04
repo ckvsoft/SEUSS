@@ -154,21 +154,26 @@ nav a {
     text-decoration: none;
 }
 
-#log-container p {
+#log-container {
     background: black;
 }
 
-#log-container{
+#log-container {
     overflow-y: auto;
+    overflow-x: hidden;
     max-height: 500px;
     border: 1px solid #4dbd59;
     padding: 10px;
     margin-top: 30px;
     font-family: monospace;
-    white-space: normal;
-    font-size: 16px;#
-    line-height: 1;
+    font-size: 14px;
+    line-height: 1.2;
     background: black;
+    color: #0f0;
+
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 #output {
