@@ -129,7 +129,9 @@
                     updateValue("efficiency", "Efficiency", data.efficiency, "%");
                     updateValue("pv", "PV", data.pv, "W");
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
-                    updateValue("soc-value", "SOC", data.soc, "%");
+                    if (data.soc !== undefined && data.soc !== null) {
+                        document.getElementById("soc-value").textContent = data.soc.toFixed(0) + " %";
+                    }
 
                     // 🔄 Ladeanimation aktivieren
                     const loadingCircle = document.getElementById("loadingCircle");
