@@ -299,7 +299,7 @@ body.dark-mode .realtime-right div {
 
 /* SOC Box */
 #soc-container {
-    border: 2px solid #3fff33;
+    border: 1px solid #3fff33;
     border-radius: 10px;
     padding: 12px 18px;
     min-width: 120px;
