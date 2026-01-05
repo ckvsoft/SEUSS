@@ -60,18 +60,18 @@ class Forecastsolar:
                     pv_info.raise_for_status()  # Raise HTTPError for bad responses
                     break  # Break the loop if the request was successful
                 except RequestException as e:
-                    self.logger.log_error(f"Can't retrieve PV info. Error: {e}")
+                    self.logger.log.error(f"Can't retrieve PV info. Error: {e}")
                     if retry < max_retries - 1:
-                        self.logger.log_info(f"Retrying... Attempt {retry + 2}/{max_retries}")
+                        self.logger.log.info(f"Retrying... Attempt {retry + 2}/{max_retries}")
                         time.sleep(20)
                     else:
-                        self.logger.log_error(f"All retry attempts failed. Exiting.")
+                        self.logger.log.error(f"All retry attempts failed. Exiting.")
                         return None
 
             try:
                 data = pv_info.json()
             except Exception as e:
-                self.logger.log_error(f"Can't retrieve PV info. Error: {e}")
+                self.logger.log.error(f"Can't retrieve PV info. Error: {e}")
                 return None
 
             timezone = pytz.timezone(self.config.time_zone)
@@ -122,29 +122,29 @@ class Forecastsolar:
             solardata.update_total_current_day(watt_hours_current_day)
             solardata.update_total_tomorrow_day(watt_hours_tomorrow_day)
 
-            self.logger.log_info(f"Place: {data['message']['info']['place']}")
+            self.logger.log.info(f"Place: {data['message']['info']['place']}")
 
             if watts_current_hour is not None:
-                self.logger.log_info(f"Solar Watts for the current hour: {watts_current_hour}")
+                self.logger.log.info(f"Solar Watts for the current hour: {watts_current_hour}")
 
             if watt_hours_current_hour is not None:
-                self.logger.log_info(f"Solar Watt Hours for the current hour: {watt_hours_current_hour}")
+                self.logger.log.info(f"Solar Watt Hours for the current hour: {watt_hours_current_hour}")
                 total_forcast += float(watt_hours_current_hour)
 
             if watt_hours_current_day is not None:
-                self.logger.log_info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
+                self.logger.log.info(f"Solar Watt Hours for the current day ({current_date}): {watt_hours_current_day}")
 
             if watt_hours_tomorrow_day is not None:
-                self.logger.log_info(
+                self.logger.log.info(
                     f"Solar Watt Hours for the tomorrow day ({tomorrow_date}): {watt_hours_tomorrow_day}")
 
             # Log the results
-            self.logger.log_info(f"Sunrise today: {sunrise_today}")
-            self.logger.log_info(f"Sunset today: {sunset_today}")
-            self.logger.log_info(f"Sun time today (in minutes): {sun_time_today_minutes}")
+            self.logger.log.info(f"Sunrise today: {sunrise_today}")
+            self.logger.log.info(f"Sunset today: {sunset_today}")
+            self.logger.log.info(f"Sun time today (in minutes): {sun_time_today_minutes}")
 
-            self.logger.log_info(f"Sunrise tomorrow: {sunrise_tomorrow}")
-            self.logger.log_info(f"Sunset tomorrow: {sunset_tomorrow}")
-            self.logger.log_info(f"Sun time tomorrow (in minutes): {sun_time_tomorrow_minutes}")
+            self.logger.log.info(f"Sunrise tomorrow: {sunrise_tomorrow}")
+            self.logger.log.info(f"Sunset tomorrow: {sunset_tomorrow}")
+            self.logger.log.info(f"Sun time tomorrow (in minutes): {sun_time_tomorrow_minutes}")
 
         return total_forcast

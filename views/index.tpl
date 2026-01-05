@@ -15,31 +15,53 @@
         <div class="left">
             <!-- SVG-Code oder andere Inhalte -->
             <h1>Today</h1>
-            <div>{{ !chart_svg }}</div>
+            <div id="chart_svg">{{ !chart_svg }}</div>
             <h1>Tomorrow</h1>
-            <div>{{ !next_chart_svg }}</div>
+            <div id="next_chart_svg">{{ !next_chart_svg }}</div>
         </div>
         <div class="right">
-            <p id="datetime"></p>
+            <p id="datetime">Current date and time: -</p>
             <p>Version: {{ version }}</p>
-            <div id="legend">
-                {{ !legend_svg }}
+            <div class="legend-soc-container">
+                <div id="legend_svg">
+                    {{ !legend_svg }}
+                </div>
+
+                <div id="soc-container">
+                    <div class="soc-label">SOC</div>
+                    <div id="soc-value">-- %</div>
+                </div>
             </div>
-            <h1>Realtime Data</h1>
-            <div id="averageWh">Average Wh: -</div>
-            <div id="power">Power: -</div>
-            <div id="consumptionD">Consumption today: -</div>
+            <div>
+                <div>
+                    <div class="realtime-header">
+                        <h1>Realtime Data</h1>
+                        <div class="loading-circle" id="loadingCircle"></div>
+                    </div>
+                </div>
+                <div class="realtime-container">
+                    <div class="realtime-left">
+                        <div id="averageWh">Average: -</div>
+                        <div id="power">Power: -</div>
+                        <div id="grid_power">Gridpower: -</div>
+                        <div id="battery_power">Batterypower: -</div>
+                        <div id="pv">Pv: -</div>
+                    </div>
+                    <div class="realtime-right">
+                        <div id="averageWhD">Average Now: -</div>
+                        <div id="consumptionD">Consumption today: -</div>
+                        <div id="costs">Current Hour Costs: -</div>
+                        <div id="total_costs_today">Total Costs Today: -</div>
+                        <div id="loss">Loss: -</div>
+                        <div id="efficiency">Efficiency: -</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     % include('footer')
 
-    <script>
-        setInterval(function () {
-            var currentDate = new Date();
-            document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
-        }, 1000);
-    </script>
     <script>
         let ws; // Declare WebSocket globally
         let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
@@ -49,9 +71,34 @@
         const host = window.location.hostname; // Get only the hostname, not the port
         const port = 8765; // Desired port
         const wsUrl = `${protocol}//${host}:${port}`;
+        let lastUpdatedHour = -1;  // Flag für die letzte aktualisierte Stunde
+        let lastUpdatedMinute = -1;  // Flag für die letzte aktualisierte Minute
+
+        setInterval(function () {
+            var currentDate = new Date();
+            document.getElementById('datetime').innerHTML = 'Current date and time: ' + currentDate;
+
+            var currentHour = currentDate.getHours();
+            var currentMinute = currentDate.getMinutes();
+
+            // Volle Stunde prüfen (aber nur einmal pro Stunde)
+            if (currentMinute === 0 && currentHour !== lastUpdatedHour) {
+                updateCharts();
+                lastUpdatedHour = currentHour;
+                lastUpdatedMinute = currentMinute;
+            }
+
+            // Zwischen 13:00 und 14:00 Uhr zusätzlich alle 15 Minuten (13:00, 13:15, 13:30, 13:45)
+            if (currentHour === 13 && currentMinute % 15 === 0 && lastUpdatedMinute !== currentMinute) {
+                updateCharts();
+                lastUpdatedMinute = currentMinute;  // Speichert, dass diese Minute schon geupdatet wurde
+            }
+
+        }, 1000); // Jede Sekunde laufen lassen
 
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
+            console.log('Connected to ' + wsUrl);
 
             ws.onopen = function () {
                 console.log('Connected to the WebSocket server');
@@ -64,31 +111,40 @@
                 try {
                     const data = JSON.parse(event.data);
 
-                    if (data.averageWh !== undefined) {
-                        const averageWhElement = document.getElementById("averageWh");
-                        if (averageWhElement) {
-                            averageWhElement.textContent = `Average: ${data.averageWh.toFixed(2)} Wh`;
-                        }
-                    }
-                    if (data.power !== undefined) {
-                        const powerElement = document.getElementById("power");
-                        if (powerElement) {
-                            powerElement.textContent = `Power: ${data.power.toFixed(2)} W`;
-                        }
-                    }
-                    if (data.consumptionD !== undefined) {
-                        const consumptionDElement = document.getElementById("consumptionD");
-                        if (consumptionDElement) {
-                            consumptionDElement.textContent = `Consumption today: ${data.consumptionD.toFixed(2)} Wh`;
+                    function updateValue(id, label, value, unit = "") {
+                        const element = document.getElementById(id);
+                        if (element && typeof value === "number") {
+                            element.textContent = `${label}: ${value.toFixed(2)} ${unit}`;
                         }
                     }
 
-                    const responseElement = document.getElementById("response");
-                    if (responseElement) {
-                        responseElement.textContent = `Server response: ${event.data}`;
+                    updateValue("averageWh", "Average", data.averageWh, "Wh");
+                    updateValue("averageWhD", "Average Now", data.averageWhD, "Wh");
+                    updateValue("power", "Power", data.power, "W");
+                    updateValue("grid_power", "Gridpower", data.grid_power, "W");
+                    updateValue("battery_power", "Batterypower", data.battery_power, "W");
+                    updateValue("costs", "Current Hour Costs", data.costs, "¢");
+                    updateValue("total_costs_today", "Total Costs Today", data.total_costs_today, "¢");
+                    updateValue("loss", "Loss", data.loss, "W");
+                    updateValue("efficiency", "Efficiency", data.efficiency, "%");
+                    updateValue("pv", "PV", data.pv, "W");
+                    updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
+                    if (data.soc !== undefined && data.soc !== null) {
+                        document.getElementById("soc-value").textContent = data.soc.toFixed(0) + " %";
+                    }
+
+                    // 🔄 Ladeanimation aktivieren
+                    const loadingCircle = document.getElementById("loadingCircle");
+                    if (loadingCircle) {
+                        loadingCircle.classList.add("active");
+
+                        // Nach 1.5 Sekunden die Animation wieder entfernen
+                        setTimeout(() => {
+                            loadingCircle.classList.remove("active");
+                        }, 1500);
                     }
                 } catch (error) {
-                    console.error('Error processing server message:', error);
+                    console.error("Error processing server message:", error);
                 }
             };
 
@@ -114,8 +170,34 @@
             }
         }
 
+        function updateCharts() {
+            console.log('fetch /get_charts');
+            fetch('/get_charts')  // Unified API endpoint
+                .then(response => response.json())  // Parse JSON response
+                .then(data => {
+                    if (data.today_chart !== undefined) {
+                        const todayChart = document.getElementById("chart_svg");
+                        if (todayChart) todayChart.innerHTML = data.today_chart;
+                    }
+
+                    if (data.tomorrow_chart !== undefined) {
+                        const tomorrowChart = document.getElementById("next_chart_svg");
+                        if (tomorrowChart) tomorrowChart.innerHTML = data.tomorrow_chart;
+                    }
+
+                    if (data.legend_svg !== undefined) {
+                        const legend_svg = document.getElementById("legend_svg");
+                        if (legend_svg) legend_svg.innerHTML = data.legend_svg;
+                    }
+                })
+                .catch(error => console.error("Error updating charts:", error));
+
+            console.log("Charts updated at full hour");
+        }
+
         // Initialize WebSocket connection
         connectWebSocket();
+
     </script>
 
 </body>

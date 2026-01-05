@@ -60,10 +60,10 @@ class Victron(ESSUnit):
         if self.unit_id and self.use_vrm:
             self.ip_address = self._get_vrm_broker_url()
             self._is_resolvable(self.ip_address)
-            self.logger.log_info(f"ESS Unit {self._name}: Use VRM MQTT Server.")
+            self.logger.log.info(f"ESS Unit {self._name}: Use VRM MQTT Server.")
             self.mqtt_port = 8883
         elif self.unit_id and self.ip_address and self._is_resolvable(self.ip_address):
-            self.logger.log_info(f"ESS Unit {self._name}: Use local MQTT Server, valid local ipaddress found.")
+            self.logger.log.info(f"ESS Unit {self._name}: Use local MQTT Server, valid local ipaddress found.")
         else:
             self.use_vrm = False
 
@@ -85,10 +85,10 @@ class Victron(ESSUnit):
         only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else False
 
         if not enabled_value or only_observation_value:
-            self.logger.log_debug(f"ESS Unit {self._name} handle configuration change.")
-            self.logger.log_info(f"ESS Unit {self._name} has been disabled or in observation mode.")
-            self.logger.log_info(f"Charging mode is deactivated.")
-            self.logger.log_info(f"Discharge mode is activated.")
+            self.logger.log.debug(f"ESS Unit {self._name} handle configuration change.")
+            self.logger.log.info(f"ESS Unit {self._name} has been disabled or in observation mode.")
+            self.logger.log.info(f"Charging mode is deactivated.")
+            self.logger.log.info(f"Discharge mode is activated.")
             self.set_charge('off')
             self.set_discharge('on')
 
@@ -96,45 +96,79 @@ class Victron(ESSUnit):
         try:
             currentvoltage = self._process_result(self.subsribers.get('Battery', 'Voltage'))
             currentvoltage = round(float(currentvoltage), 2)
-            self.logger.log_info(f"{self._name} Batterie Voltage: {currentvoltage} V")
+            self.logger.log.info(f"{self._name} Batterie Voltage: {currentvoltage} V")
             return currentvoltage
         except (TypeError, ValueError) as e:
-            self.logger.log_warning(f"Error converting currentvoltage: {e}")
+            self.logger.log.warning(f"Error converting currentvoltage: {e}")
             currentvoltage = 0.0  # Setze einen Standardwert
             return currentvoltage
 
     def get_battery_current_wh(self):
-        soc = self.get_soc()
+        soc = self.get_soc() or 0
         full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
         battery_capacity_wh = full_capacity * 55.20
         battery_current_wh = ((soc or 0) / 100) * battery_capacity_wh
-        self.logger.log_debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
+        self.logger.log.debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
         return battery_current_wh
+
+    def get_battery_full_wh(self):
+        soc = self.get_soc() or 0
+        full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
+        battery_capacity_wh = full_capacity * 55.20
+        self.logger.log.debug(f"{self._name} Batterie Full wh: {battery_capacity_wh}Wh")
+        return battery_capacity_wh
+
+    def get_battery_min_wh(self):
+        min_soc_limit = self.get_battery_minimum_soc_limit() or 0
+        battery_capacity_wh = self.get_battery_full_wh()
+        return min_soc_limit / 100 * battery_capacity_wh
 
     def get_battery_minimum_soc_limit(self):
         minimumsoclimit = self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))
-        self.logger.log_debug(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}%")
+        self.logger.log.debug(f"{self._name} Batterie MinimumSocLimit: {minimumsoclimit}%")
         return minimumsoclimit
 
     def get_battery_capacity(self):
         capacity = self._process_result(self.subsribers.get('Battery', 'Capacity'))
-        self.logger.log_debug(f"{self._name} Batterie capacity: {capacity} Ah")
-        return capacity
+
+        if capacity is None:
+            self.logger.log.warning(f"{self._name} Battery capacity not available")
+            return 0.0  # or raise a controlled exception
+
+        try:
+            self.logger.log.debug(f"{self._name} Batterie capacity: {capacity} Ah")
+            return float(capacity)
+        except (TypeError, ValueError):
+            self.logger.log.error(f"{self._name} Invalid battery capacity: {capacity}")
+            return 0.0
 
     def get_battery_installed_capacity(self):
         installed_capacity = self._process_result(self.subsribers.get('Battery', 'InstalledCapacity'))
-        self.logger.log_debug(f"{self._name} Batterie installed capacity: {installed_capacity} Ah")
+        self.logger.log.debug(f"{self._name} Batterie installed capacity: {installed_capacity} Ah")
         return installed_capacity
 
     def get_soc(self):
         soc = self._process_result(self.subsribers.get('Battery', 'Soc'))
-        self.logger.log_info(f"{self._name} SOC: {soc}%")
+        self.logger.log.debug(f"{self._name} SOC: {soc}%")
+        return soc
+
+    def get_active_soc_limit(self):
+        soc = self._process_result(self.subsribers.get('Control', 'ActiveSocLimit'))
+        self.logger.log.debug(f"{self._name} ActiveSocLimit: {soc}%")
         return soc
 
     def get_scheduler_soc(self):
         soc = self._process_result(self.subsribers.get('Schedule', 'Soc'))
-        self.logger.log_info(f"{self._name} Scheduler SOC: {soc}%")
+        self.logger.log.info(f"{self._name} Scheduler SOC: {soc}%")
         return soc
+
+    def set_active_soc_limit(self, value):
+        try:
+            current_value = self._process_result(self.subsribers.get('Control', 'ActiveSocLimit'))
+            if value == current_value: return
+            self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit", value)
+        except (TypeError, ValueError) as e:
+            self.logger.log.error(f"Error: {e}")
 
     def set_discharge(self, status):
         try:
@@ -148,7 +182,7 @@ class Victron(ESSUnit):
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower", 0)
 
         except (TypeError, ValueError) as e:
-            self.logger.log_error(f"Error: {e}")
+            self.logger.log.error(f"Error: {e}")
 
     def set_charge(self, status):
         try:
@@ -163,7 +197,7 @@ class Victron(ESSUnit):
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", -7)
 
         except (TypeError, ValueError) as e:
-            self.logger.log_error(f"Error: {e}")
+            self.logger.log.error(f"Error: {e}")
 
     def get_grid_meters(self):
         meters = self.gridmeters
@@ -177,19 +211,15 @@ class Victron(ESSUnit):
         version = self._process_result(self.subsribers.get('Firmware', 'Version'))
         return version
 
-    def _gridmeters(self):
-        with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
-            base_topic = f'N/{self.unit_id}/grid'
-            discovery_topic = f"{base_topic}/#"
-            mqtt.subscribe(self.gridmeters, discovery_topic)
+    def _gridmeters(self, mqtt):
+        base_topic = f'N/{self.unit_id}/grid'
+        discovery_topic = f"{base_topic}/#"
+        mqtt.subscribe(self.gridmeters, discovery_topic)
 
-    def _inverters(self):
-        with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
-            base_topic = f'N/{self.unit_id}/pvinverter'
-            discovery_topic = f"{base_topic}/#"
-            mqtt.subscribe(self.inverters, discovery_topic)
+    def _inverters(self, mqtt):
+        base_topic = f'N/{self.unit_id}/pvinverter'
+        discovery_topic = f"{base_topic}/#"
+        mqtt.subscribe(self.inverters, discovery_topic)
 
     def _get_battery_instance(self, mqtt):
         try:
@@ -208,7 +238,7 @@ class Victron(ESSUnit):
                 # Falls keine aktive Batterie gefunden wurde
                 return None
         except (TypeError, json.JSONDecodeError) as e:
-            self.logger.log_error(f"Error decoding JSON: {e}")
+            self.logger.log.error(f"Error decoding JSON: {e}")
             return None
 
     def _set_scheduler(self):
@@ -227,11 +257,11 @@ class Victron(ESSUnit):
         with MqttClient(self.mqtt_config) as mqtt:
             mqtt_result = MqttResult()
             rc = mqtt.publish(f"W{topic}", json.dumps(data))
-            self.logger.log_debug(f"{self._name} {name}: rc={rc}")
+            self.logger.log.debug(f"{self._name} {name}: rc={rc}")
             if rc == 0:
                 if mqtt.subscribe(mqtt_result, f"N{topic}") == 0:
                     value = self._process_result(mqtt_result.result)
-                    self.logger.log_debug(f"{self._name}: {name} {value}")
+                    self.logger.log.debug(f"{self._name}: {name} {value}")
 
     def _process_result(self, result):
         if result is None: return None
@@ -244,8 +274,8 @@ class Victron(ESSUnit):
             socket.gethostbyname(ip_address)
             return True
         except (socket.error, socket.gaierror) as e:
-            self.logger.log_error(f"Error in name resolution: {e}")
-            self.logger.log_error("Please check your network connection and Mqtt broker configuration.")
+            self.logger.log.error(f"Error in name resolution: {e}")
+            self.logger.log.error("Please check your network connection and Mqtt broker configuration.")
             raise ValueError("Error creating Victron instance: Unable to resolve IP address.")
 
     def _get_vrm_broker_url(self):
@@ -256,10 +286,16 @@ class Victron(ESSUnit):
         return "mqtt{}.victronenergy.com".format(broker_index)
 
     def _get_data(self):
-        self._inverters()
-        self._gridmeters()
         with MqttClient(
-                self.mqtt_config) as mqtt:  # Hier wird die Verbindung hergestellt und im Anschluss automatisch geschlossen
+                self.mqtt_config) as mqtt:
+            self._gridmeters(mqtt)
+        with MqttClient(
+                self.mqtt_config) as mqtt:
+            self._inverters(mqtt)
+
+        with MqttClient(
+                self.mqtt_config) as mqtt:
+
             instance = self._get_battery_instance(mqtt)
             topics_to_subscribe = [
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day",
@@ -267,6 +303,7 @@ class Victron(ESSUnit):
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc",
                 f"Schedule:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Start",
                 f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
+                f"Control:N/{self.unit_id}/system/0/Control/ActiveSocLimit",
                 f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
@@ -279,18 +316,18 @@ class Victron(ESSUnit):
             if rc == 0:
                 if self.subsribers.count_topics(self.subsribers.subscribesValues) != self.subsribers.count_values(
                         self.subsribers.subscribesValues):
-                    self.logger.log_error(f"Error: Not all required values were provided. Check your ESS settings.")
+                    self.logger.log.error(f"Error: Not all required values were provided. Check your ESS settings.")
                     return
 
 #                # Extrahieren des Werts
-#                self.logger.log_info(f"{self._name} Schedule Charge: {self._process_result(self.subsribers.get('Schedule', 'Day'))}")
-#                self.logger.log_info(f"{self._name} DisCharge: {self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))}")
-#                self.logger.log_info(f"{self._name} Battery Voltage: {self._process_result(self.subsribers.get('Battery', 'Voltage'))}")
-#                self.logger.log_info(f"{self._name} Battery Capacity: {self._process_result(self.subsribers.get('Battery', 'Capacity'))}")
-#                self.logger.log_info(f"{self._name} Battery/SOC: {self._process_result(self.subsribers.get('Battery', 'Soc'))}%")
-#                self.logger.log_info(f"{self._name} Schedule/Duration: {self._process_result(self.subsribers.get('Schedule', 'Duration'))}")
-#                self.logger.log_info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
-#                self.logger.log_info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
+#                self.logger.log.info(f"{self._name} Schedule Charge: {self._process_result(self.subsribers.get('Schedule', 'Day'))}")
+#                self.logger.log.info(f"{self._name} DisCharge: {self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))}")
+#                self.logger.log.info(f"{self._name} Battery Voltage: {self._process_result(self.subsribers.get('Battery', 'Voltage'))}")
+#                self.logger.log.info(f"{self._name} Battery Capacity: {self._process_result(self.subsribers.get('Battery', 'Capacity'))}")
+#                self.logger.log.info(f"{self._name} Battery/SOC: {self._process_result(self.subsribers.get('Battery', 'Soc'))}%")
+#                self.logger.log.info(f"{self._name} Schedule/Duration: {self._process_result(self.subsribers.get('Schedule', 'Duration'))}")
+#                self.logger.log.info(f"{self._name} Schedule/Soc: {self._process_result(self.subsribers.get('Schedule', 'Soc'))}")
+#                self.logger.log.info(f"{self._name} Battery/MinimumSocLimit: {self._process_result(self.subsribers.get('Battery', 'MinimumSocLimit'))}")
     def get_converter_efficiency(self) -> Tuple[float, float]:
         return 0.84, 0.90
 
@@ -304,6 +341,22 @@ class Victron(ESSUnit):
             "P_AC_consumption_L1": f"N/{self.unit_id}/system/0/Ac/Consumption/L1/Power",
             "P_AC_consumption_L2": f"N/{self.unit_id}/system/0/Ac/Consumption/L2/Power",
             "P_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Consumption/L3/Power",
-            "number_of_phases": f"N/{self.unit_id}/system/0/Ac/Consumption/NumberOfPhases"
+            "number_of_phases": f"N/{self.unit_id}/system/0/Ac/Consumption/NumberOfPhases",
+            "G_AC_consumption_L1": f"N/{self.unit_id}/system/0/Ac/Grid/L1/Power",
+            "G_AC_consumption_L2": f"N/{self.unit_id}/system/0/Ac/Grid/L2/Power",
+            "G_AC_consumption_L3": f"N/{self.unit_id}/system/0/Ac/Grid/L3/Power",
+            "number_of_grid_phases": f"N/{self.unit_id}/system/0/Ac/Grid/NumberOfPhases",
+            "P_DC_consumption_Battery":f"N/{self.unit_id}/system/0/Dc/Battery/Power",
+            "PV_AC_OUT_L1":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L1/Power",
+            "PV_AC_OUT_L2":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L2/Power",
+            "PV_AC_OUT_L3":f"N/{self.unit_id}/system/0/Ac/PvOnOutput/L3/Power",
+            "PV_AC_GRID_L1": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L1/Power",
+            "PV_AC_GRID_L2": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L2/Power",
+            "PV_AC_GRID_L3": f"N/{self.unit_id}/system/0/Ac/PvOnGrid/L3/Power",
+            "PV_AC_GENSET_L1": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L1/Power",
+            "PV_AC_GENSET_L2": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L2/Power",
+            "PV_AC_GENSET_L3": f"N/{self.unit_id}/system/0/Ac/PvOnGenset/L3/Power",
+            "PV_DC": f"N/{self.unit_id}/system/0/Dc/Pv/Power",
+            "SOC": f"N/{self.unit_id}/system/0/Dc/Battery/Soc"
         }
         return mqtt_config

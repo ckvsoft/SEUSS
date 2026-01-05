@@ -24,10 +24,8 @@
 #
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
+import re
 from datetime import datetime
-
-from websockets.sync.server import serve as ws_serv
-import websockets
 
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
@@ -37,7 +35,6 @@ import os, sys, glob
 import zipfile
 import threading
 import core.version as version
-from waitress import serve
 
 from core.config import Config
 from core.logreader import LogReader
@@ -56,16 +53,17 @@ class SEUSSWeb:
         self.config = Config()
         self.logger = CustomLogger()
         self.market_items = Itemlist()
+        self.fee = ""
 
         # Routen einrichten
         self.setup_routes()
 
     def save_config(self, config):
         config = Utils.encode_passwords_in_base64(config)
-        self.logger.log_info(f"save configuration to {self.config.config_file}")
+        self.logger.log.info(f"save configuration to {self.config.config_file}")
         self.config.save_config(config)
         self.config.load_config()
-        self.logger.log_info(f"{self.config.config_data}")
+        self.logger.log.info(f"{self.config.config_data}")
 
         # restart = os.path.join(self.main_script_directory, 'restart.sh')
         # if os.path.exists('/data/rc.local'):
@@ -84,6 +82,7 @@ class SEUSSWeb:
         self.app.route('/update_log', method='GET', callback=self.update_log)
         self.app.route('/check_is_online', method='GET', callback=self.check_is_online)
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
+        self.app.route('/get_charts', method='GET', callback=self.get_charts)
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
@@ -109,8 +108,13 @@ class SEUSSWeb:
 
     def set_item_list(self, items):
         self.market_items = items
+        self.fee = next(
+            (entry['fee'] for entry in self.config.config_data['markets']
+             if entry.get('name', '').lower() == self.market_items.current_market_name.lower()),
+            ""
+        )
 
-    def index(self):
+    def get_charts(self, as_json=True):
 
         data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(
             self.market_items.get_current_list())
@@ -123,6 +127,19 @@ class SEUSSWeb:
         next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
 
         legend_svg = self.generate_legend_svg()
+
+        if as_json:
+            response.content_type = 'application/json'
+            return json.dumps({
+                "today_chart": chart_svg,
+                "tomorrow_chart": next_chart_svg,
+                "legend_svg": legend_svg
+            })
+
+        return chart_svg, next_chart_svg, legend_svg
+
+    def index(self):
+        chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
                         version=version.__version__, root=self.view_path)
@@ -269,9 +286,9 @@ class SEUSSWeb:
 
                     new_config[key] = value
                 else:
-                    self.logger.log_debug(f"Invalid key format - {key}")
+                    self.logger.log.debug(f"Invalid key format - {key}")
 
-        self.logger.log_debug(new_config)
+        self.logger.log.debug(new_config)
 
         delay_seconds = 1
         threading.Timer(delay_seconds, self.save_config, args=(new_config,)).start()
@@ -283,15 +300,17 @@ class SEUSSWeb:
         # SVG-Code für das Balkendiagramm
         current_time = datetime.now()
         current_hour = current_time.hour
-        width = 35
-        factor = 12
+        width = 37
+        factor = 10
+        baseline_y = 380
+        svg_height = 460
 
         # Wenn keine Preise vorhanden sind, initialisiere mit 24 Preisen von 0.00
         if not data:
             data = {hour: None for hour in range(24)}
 
         svg = f"""
-        <svg width="{width * 24}" height="420" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="{width * 24}" height="{svg_height}" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
         """
 
         average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
@@ -301,14 +320,14 @@ class SEUSSWeb:
         elif not tomorrow and average_price_today is not None:
             avg_height = (average_price_today + 1) * factor  # Umrechnung in Höhe (Skalierung)
 
-        y_avg_line = 330 - avg_height  # Linie für den Durchschnittspreis
+        y_avg_line = baseline_y - avg_height  # Linie für den Durchschnittspreis
         svg += f"""
         <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
         """
 
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * factor
         svg += f"""
-        <line x1="0" y1="{330 - charge_limit_height}" x2="{width * 24}" y2="{330 - charge_limit_height}" stroke="yellow" stroke-width="2"/>
+        <line x1="0" y1="{baseline_y - charge_limit_height}" x2="{width * 24}" y2="{baseline_y - charge_limit_height}" stroke="yellow" stroke-width="2"/>
         """
 
         # Erzeuge SVG für jeden Balken und Beschriftung basierend auf den Daten
@@ -336,11 +355,11 @@ class SEUSSWeb:
                         color = "red"
 
                 # Berechne die Höhe und Ausrichtung des Balkens
-                height = (abs(price) + 1) * factor
-                y = 330 - height if price >= 0 else 330
+                height = (abs(price if price else 0) + 1) * factor
+                y = baseline_y - height if price >= 0 else baseline_y
             else:
                 height = factor
-                y = 330 - height
+                y = baseline_y - height
 
             # Füge Balken hinzu
             svg += f"""
@@ -349,14 +368,13 @@ class SEUSSWeb:
 
             # Füge Stunden-Beschriftung hinzu innerhalb der Gruppe
             svg += f"""
-            <text x="{hour * width + 15}" y="345" text-anchor="middle" font-size="10">{hour}</text>
+            <text x="{hour * width + 15}" y="{baseline_y + 15}" text-anchor="middle" font-size="10">{hour}</text>
             """
 
             if price is None:
                 price = ""
 
-            # Überprüfen, ob der Balken höher als der Diagrammrahmen ist (330 Pixel)
-            if height > 330:
+            if height > baseline_y:
                 # Preis wird innerhalb des Balkens angezeigt (Kontrastfarbe)
                 price_color = "white" if (color != "gray" and color != "gainsboro") else "black"  # Kontrastfarbe wählen
                 svg += f"""
@@ -374,8 +392,18 @@ class SEUSSWeb:
 
         charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * factor
         svg += f"""
-        <line x1="0" y1="{330 - charge_hard_cap_height}" x2="{width * 24}" y2="{330 - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
+        <line x1="0" y1="{baseline_y - charge_hard_cap_height}" x2="{width * 24}" y2="{baseline_y - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
         """
+
+        if self.fee != "":
+            # Berechne den x-Wert, um den Text zu zentrieren
+            x_center = width * 12  # Mitte des SVG (Breite / 2)
+
+            svg += f"""
+            <text x="{x_center}" y="{svg_height - 15}" text-anchor="middle" font-size="12" fill="yellow">
+            "Prices exclude tax and include fees. Formula: Final price = Base price + {self.fee}"
+            </text>
+            """
 
         # Schließe die Gruppe und SVG-Code
         svg += """
@@ -389,7 +417,7 @@ class SEUSSWeb:
 
         # SVG-Code für die Legende
         legend_svg = """
-        <svg width="240" height="195" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
+        <svg width="240" height="195" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin-top: 18px;">
         """
 
         # Füge Rechteck für grüne Stunde hinzu
@@ -476,13 +504,13 @@ class SEUSSWeb:
             debug = True
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
-        self.logger.log_info(f"start bottle host:{host}, port:{port}")
-        serve(self.app, host=host, port=port)
+        self.logger.log.info(f"start bottle host:{host}, port:{port}")
+        # serve(self.app, host=host, port=port)
 
-        # self.app.run(host=host, port=port, debug=debug)
+        self.app.run(host=host, port=port, debug=debug)
 
     def stop(self):
-        self.logger.log_debug(f"Bottle Stop")
+        self.logger.log.debug(f"Bottle has stopped.")
         sys.stderr.close()
         self.app.close()
 
@@ -497,16 +525,17 @@ class SEUSSWeb:
         result_dict = {}
 
         # Suche nach Zeilen, die mit "|" beginnen und nicht den Überschriften entsprechen
-        lines = [line.strip() for line in markdown_text.splitlines() if line.strip().startswith(
-            '|') and "Setting" not in line and "Meaning" not in line and "-------" not in line]
-
+        splitlines = markdown_text.splitlines()
+        lines = [line.strip() for line in splitlines if line.strip().startswith('|') and "Setting" not in line.split(' ', 1)[0] and "Meaning" not in line.split(' ', 1)[0] and "-------" not in line]
         for line in lines:
             # Teile die Zeile in Spalten auf
-            columns = [col.strip() for col in line.split('|') if col.strip()]
+            # columns = [col.strip() for col in line.split('|') if col.strip()]
+            columns = [col.strip() for col in re.split(r'(?<!\\)\|', line) if col.strip()]
 
             if len(columns) == 2:
                 key, value = columns
                 value = value.replace("<br/>", "\n")
+                value = re.sub(r'\\\|', '|', value)
                 key = key.replace("`", "")
                 result_dict[key] = value
 

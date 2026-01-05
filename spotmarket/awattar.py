@@ -38,10 +38,10 @@ from spotmarket.abstract_classes.marketdata import MarketData
 
 
 class AwattarItem(Item):
-    def __init__(self, start_timestamp, end_timestamp, price):
+    def __init__(self, start_timestamp, end_timestamp, price, fee_str):
         starttime = datetime.fromtimestamp(start_timestamp / 1000).astimezone(timezone.utc)
         endtime = datetime.fromtimestamp(end_timestamp / 1000).astimezone(timezone.utc)
-        super().__init__(starttime, endtime, price, 13)
+        super().__init__(starttime, endtime, price, fee_str, 13)
 
 
 class Awattar(MarketData):
@@ -58,16 +58,16 @@ class Awattar(MarketData):
             if response.status_code == 200:
                 return self._load_data_from_json(response.text)
             else:
-                self.logger.log_warning(f"Error downloading Awattar prices. Status code: {response.status_code}")
+                self.logger.log.warning(f"Error downloading Awattar prices. Status code: {response.status_code}")
                 return []
 
         except ConnectionError as e:
             if isinstance(e.args[0], socket.gaierror):
-                self.logger.log_error(f"Error in name resolution for 'api.awattar.com'")
-                self.logger.log_error("Please check your network connection and DNS configuration.")
+                self.logger.log.error(f"Error in name resolution for 'api.awattar.com'")
+                self.logger.log.error("Please check your network connection and DNS configuration.")
             else:
-                self.logger.log_error(f"Connection error: {e}")
-                self.logger.log_error("Please check your network connection and server configuration.")
+                self.logger.log.error(f"Connection error: {e}")
+                self.logger.log.error("Please check your network connection and server configuration.")
 
             return []
 
@@ -76,12 +76,12 @@ class Awattar(MarketData):
             data = json.loads(json_data)
             items = []
             for entry in data.get('data', []):
-                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'),
-                                           entry.get('marketprice'))
+                current_price = float(entry.get('marketprice'))
+                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'), current_price, self.fee)
                 items.append(awattar_item)
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            self.logger.log_warning(f"Error loading Awattar prices: {e}")
+            self.logger.log.warning(f"Error loading Awattar prices: {e}")
             return []
 
     def _make_url(self) -> str:

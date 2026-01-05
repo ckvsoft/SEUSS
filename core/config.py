@@ -51,6 +51,7 @@ class Config(Singleton):
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
         "use_solar_forecast_to_abort": False,
+        "delay_grid_charging_below_active_soc_limit": False,
         "prices": [
             {
                 "use_second_day": False,
@@ -118,6 +119,7 @@ class Config(Singleton):
             {
                 "name": "Awattar",
                 "country": "AT",
+                "fee": "3% + 1.5",
                 "primary": True,
                 "enabled": True
             },
@@ -126,6 +128,7 @@ class Config(Singleton):
                 "api_token": "enter_your_entsoe_apikey_here",
                 "in_domain": "10YAT-APG------L",
                 "out_domain": "10YAT-APG------L",
+                "fee": "",
                 "primary": False,
                 "enabled": False
             },
@@ -133,9 +136,43 @@ class Config(Singleton):
                 "name": "Tibber",
                 "api_token": "enter_your_tibber_apikey_here",
                 "price_unit": "energy",
+                "fee": "",
                 "primary": False,
                 "enabled": False
             }
+        ],
+        "smart_switches": [
+            {
+                "name": "Shelly",
+                "ips": "10.1.1.20 | 10.1.1.21",
+                "user": "",
+                "password": "",
+                "enabled": False
+            },
+            {
+                "name": "Tasmota",
+                "ips": "10.1.1.30",
+                "user": "admin",
+                "password": "YWRtaW4",
+                "enabled": False
+            },
+            {
+                "name": "Fritz",
+                "ips": "192.168.178.1 | 10.1.1.23",
+                "ains": "1234,3443,2333 | 1234,4456,7866,3421",
+                "user": "admin",
+                "password": "YWRtaW4",
+                "enabled": False
+            },
+            {
+                "name": "RemoteGPIO",
+                "ips": "192.168.1.10 | 192.168.1.11 | !192.168.1.12",
+                "pins": "17,18 | 21 | 20",
+                "user": "",
+                "password": "",
+                "enabled": False
+            }
+
         ]
     }
 

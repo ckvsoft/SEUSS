@@ -30,6 +30,11 @@ import binascii
 from typing import Dict, List
 import json
 import random
+import re
+import operator
+from decimal import Decimal, getcontext
+
+from core.log import CustomLogger
 
 
 class Utils:
@@ -97,3 +102,107 @@ class Utils:
     def generate_random_hex(length):
         random_hex = ''.join(random.choices('0123456789abcdef', k=length))
         return random_hex
+
+    @staticmethod
+    def create_ssl_context(certificate):
+        """Create an SSL context for the MQTT connection."""
+        try:
+            import ssl
+        except ImportError:
+            CustomLogger().log.error("SSL support not available.")
+            return None
+
+        try:
+            # Use PROTOCOL_TLS_CLIENT instead of deprecated PROTOCOL_TLS
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_verify_locations(certificate)
+            context.check_hostname = True
+            return context
+        except Exception as e:
+            CustomLogger().log.error(f"Failed to create SSL context: {e}")
+            return None
+
+    @staticmethod
+    def calculate_fee(base_value, fee_str):
+        if fee_str == "":
+            return 0.0
+
+        expr = fee_str.strip()
+
+        try:
+            base_value = int(base_value)
+        except ValueError:
+            CustomLogger().log.warning(f"Invalid base value: {base_value}, defaulting to 0.0")
+            return 0.0
+
+        OPS = {
+            "+": operator.add,
+            "-": operator.sub,
+            "*": operator.mul,
+            "/": operator.truediv
+        }
+
+        try:
+            # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
+            if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
+                return float(expr)
+
+            # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
+            percentage_fee = 0.0
+            fixed_fee = 0.0
+
+            if "%" in expr:
+                percentage_match = re.search(r"([+-]?\d+(\.\d+)?)\s*%", expr)
+                if percentage_match:
+                    percentage_fee = base_value * (float(percentage_match.group(1)) / 100)
+                    expr = expr.replace(percentage_match.group(0), "")  # Prozent-Anteil entfernen
+
+            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5")
+            matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr)
+
+            for op, num in matches:
+                num = Utils.convert_to_millicents(float(num))
+                fixed_fee = OPS[op](fixed_fee, num)
+
+            return percentage_fee + fixed_fee
+
+        except Exception as e:
+            CustomLogger().log.warning(f"Warning in calculate_fee: {e}. Returning 0.0. fee: {fee_str}")
+            CustomLogger().log.debug(f"Base Value: {base_value} (Type: {type(base_value)})")
+            CustomLogger().log.debug(f"Fee Expression: {fee_str} (Type: {type(fee_str)})")
+            return 0.0
+
+    @staticmethod
+    def convert_to_millicents(euro, potency=14):
+        try:
+            # Replace commas with dots
+            euro = str(euro).replace(',', '.')
+
+            getcontext().prec = 30
+
+            millicents = int(Decimal(euro) * Decimal(10) ** potency)
+            return int(millicents)
+        except ValueError:
+            CustomLogger().log.error(f"Error converting price: {euro}")
+            return None
+
+    @staticmethod
+    def millicent_to_cent(price):
+        potency = 14
+        try:
+            getcontext().prec = 30
+
+            cent = Decimal(price) / Decimal(10 ** potency)
+            return "{:.4f}".format(cent)
+        except (TypeError, ValueError):
+            CustomLogger().log.error(f"Error converting price: {price}")
+            return None
+
+    @staticmethod
+    def commercial_round(value, digits=2):
+        """
+        Perform commercial rounding (0.5 rounds up).
+        """
+        multiplier = 10 ** digits
+        return float(int(value * multiplier + 0.5000001) / multiplier)

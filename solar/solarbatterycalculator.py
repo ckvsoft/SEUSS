@@ -32,101 +32,169 @@ from core.log import CustomLogger
 
 
 class SolarBatteryCalculator:
+    """
+    Calculates the required battery SOC to safely cover consumption
+    until next solar availability, based on forecast and current state.
+    """
+
+    NOMINAL_BATTERY_VOLTAGE = 57.6     # V (should be configurable)
+    SAFETY_MARGIN_PERCENT = 5.0        # %
+
     def __init__(self, solardata):
         self.logger = CustomLogger()
         self.solardata = solardata
+
+        # PV peak power in W
         self.solar_peak_power = solardata.power_peak * 1000
-        self.average_consumption = 0.0
-        self.efficiency = 0.0
 
-        average_consumption_list = StatsManager.get_data('gridmeters', 'forward_hourly')
-        if average_consumption_list is not None:
-            self.average_consumption = round(average_consumption_list[0], 2)
+        # Defaults
+        self.average_consumption = 0.0  # W
+        self.efficiency = 100.0         # %
 
-        efficiency_data = StatsManager.get_data('solar', 'efficiency')
-        if efficiency_data is not None:
+        # Load average consumption
+        consumption_data = StatsManager().get_data(
+            "powerconsumption", "daily_watt_average"
+        )
+        if consumption_data:
+            self.average_consumption = round(consumption_data[0], 2)
+
+        # Load solar efficiency
+        efficiency_data = StatsManager().get_data("solar", "efficiency")
+        if efficiency_data:
             self.efficiency = round(efficiency_data[0], 2)
 
-    def calculate_full_capacity(self):
-        if self.solardata.soc <= 0: return 0
-        full_capacity = (self.solardata.battery_capacity / self.solardata.soc) * 100
-        return full_capacity
+    # ------------------------------------------------------------------
 
-    def calculate_battery_percentage(self):
+    def calculate_full_capacity_wh(self) -> float:
+        """
+        Returns full battery capacity in Wh.
+        """
+        capacity_ah = self.solardata.battery_capacity
+
+        if capacity_ah <= 0:
+            self.logger.log.error("Battery capacity (Ah) not configured")
+            return 0.0
+
+        return capacity_ah * self.NOMINAL_BATTERY_VOLTAGE
+
+    # ------------------------------------------------------------------
+
+    def _get_forecast_context(self, now):
+        """
+        Determines whether to use today or tomorrow forecast.
+        Returns: forecast_wh, daylight_hours, hours_until_target
+        """
+        sunset_time = datetime.strptime(
+            self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M"
+        ).time()
+
+        if now.time() > sunset_time:
+            self.logger.log.debug("Using tomorrow forecast")
+            forecast = self.solardata.total_tomorrow_day
+            daylight_hours = self.solardata.sun_time_tomorrow_minutes / 60
+            target_time = datetime.strptime(
+                self.solardata.sunrise_tomorrow_day, "%Y-%m-%dT%H:%M"
+            ).astimezone(TimeUtilities.TZ)
+        else:
+            self.logger.log.debug("Using today forecast")
+            forecast = self.solardata.total_current_day
+            daylight_hours = self.solardata.sun_time_today_minutes / 60
+            target_time = datetime.strptime(
+                self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M"
+            ).astimezone(TimeUtilities.TZ)
+
+        hours_until_target = max(
+            (target_time - now).total_seconds() / 3600, 0
+        )
+
+        return forecast, daylight_hours, hours_until_target
+
+    # ------------------------------------------------------------------
+
+    def calculate_battery_percentage(self) -> float:
+        """
+        Returns the required battery SOC (%) to safely cover consumption.
+        """
         try:
-            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
+            now = TimeUtilities.get_now()
 
-            current_time = TimeUtilities.get_now().time()
-            current_date = TimeUtilities.get_now()
+            # --- Forecast context ---
+            forecast, daylight_hours, hours_until_target = (
+                self._get_forecast_context(now)
+            )
 
-            if current_time > sunset_time:
-                self.logger.log_debug("Use tomorrow_day forecast")
-                forecast = self.solardata.total_tomorrow_day
-                daylight_hours = self.solardata.sun_time_tomorrow_minutes / 60
-                sunrise_tomorrow_date = datetime.strptime(self.solardata.sunrise_tomorrow_day,
-                                                          "%Y-%m-%dT%H:%M").astimezone(TimeUtilities.TZ)
-                differenz = sunrise_tomorrow_date - current_date
+            # --- Battery capacity ---
+            full_capacity_wh = self.calculate_full_capacity_wh()
+            if full_capacity_wh <= 0:
+                return self.solardata.battery_minimum_soc_limit
+
+            soc = self.solardata.soc
+            if soc <= 0:
+                self.logger.log.warning("SOC unavailable, using minimum SOC")
+                return self.solardata.battery_minimum_soc_limit
+
+            actual_capacity_wh = full_capacity_wh * soc / 100
+
+            # --- Consumption until next solar event ---
+            consumption_wh = self.average_consumption * hours_until_target
+
+            self.logger.log.debug(
+                f"Consumption: {consumption_wh:.2f} Wh "
+                f"over {hours_until_target:.2f} h"
+            )
+
+            # --- Solar production ---
+            if not forecast or daylight_hours <= 0:
+                solar_wh = 0.0
             else:
-                self.logger.log_debug("Use current_day forecast")
-                forecast = self.solardata.total_current_day
-                daylight_hours = self.solardata.sun_time_today_minutes / 60
-                sunset_date = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").astimezone(
-                    TimeUtilities.TZ)
-                differenz = sunset_date - current_date
+                max_solar_per_hour = (
+                    self.solar_peak_power * self.efficiency / 100
+                )
+                forecast_per_hour = (
+                    forecast / daylight_hours * self.efficiency / 100
+                )
+                solar_wh = (
+                    min(max_solar_per_hour, forecast_per_hour)
+                    * daylight_hours
+                )
 
-            max_solar_per_hour = (self.solar_peak_power * self.efficiency) / 100
-            forecast_per_hour = 0.0
-            if daylight_hours > 0.0:
-                forecast_per_hour = ((forecast / daylight_hours) * self.efficiency) / 100
-            if forecast is not None and forecast_per_hour < max_solar_per_hour:
-                max_solar_per_hour = forecast_per_hour
+            # --- Net battery usage ---
+            net_usage_wh = consumption_wh - solar_wh
 
-            actual_solar_during_daylight = max_solar_per_hour * daylight_hours
-            available_hours = differenz.total_seconds() / 3600
+            if net_usage_wh <= 0:
+                self.logger.log.debug(
+                    "Solar production covers consumption"
+                )
+                return self.solardata.battery_minimum_soc_limit
 
-            # verbrauch bis sonnenuntergang oder verbrauch bis sonnenaufgang wenn nacht
-            self.logger.log_debug(
-                f"average_consumption {self.average_consumption} * available_hours: {available_hours}")
-            average_consumption = self.average_consumption * available_hours
-            # restliche battery capazität über minimum soc
-            remaining_battery_soc = self.solardata.soc - self.solardata.battery_minimum_soc_limit
+            remaining_wh = actual_capacity_wh - net_usage_wh
 
-            #            battery_power_needed = average_consumption - actual_solar_during_daylight
+            # --- Required SOC ---
+            required_soc = (
+                (full_capacity_wh - remaining_wh)
+                / full_capacity_wh
+                * 100
+            )
 
-            actual_battery_capacity_wh = self.solardata.battery_capacity * self.solardata.battery_current_voltage
-            full_voltage = 57.6  # self.solardata.battery_current_voltage / (self.solardata.soc/ 100)
-            full_battery_capacity_wh = self.calculate_full_capacity() * full_voltage
+            # --- Apply limits ---
+            required_soc = max(
+                required_soc,
+                self.solardata.battery_minimum_soc_limit
+            )
+            required_soc = min(required_soc, 100.0)
 
-            available_battery_capacity = ((
-                                                  full_battery_capacity_wh - actual_battery_capacity_wh) / 100) * remaining_battery_soc
+            # --- Safety margin ---
+            required_soc *= (1 - self.SAFETY_MARGIN_PERCENT / 100)
 
-            self.logger.log_info(
-                f"Current Battery state: {self.solardata.battery_capacity} Ah, maximum: {round(full_battery_capacity_wh, 2)} Wh")
+            self.logger.log.info(
+                f"Required SOC: {required_soc:.2f}% "
+                f"(Remaining: {remaining_wh:.2f} Wh)"
+            )
 
-            # Überprüfen, ob die tatsächliche Solarproduktion den Verbrauch während der Sonnenstunden übersteigt
-            if actual_solar_during_daylight >= average_consumption:
-                self.logger.log_debug(
-                    f"return while actual_solar_during_daylight ({actual_solar_during_daylight}) >= average_consumption ({average_consumption})")
-                return self.solardata.battery_minimum_soc_limit  # Der Akku muss während der Sonnenstunden nicht geladen werden
+            return round(required_soc, 2)
 
-            # Berechnen des verbleibenden Speicherplatzes in der Batterie
-            remaining_battery_capacity = available_battery_capacity + actual_solar_during_daylight - average_consumption
-            self.logger.log_debug(f"Remaining battery capacity: {remaining_battery_capacity}")
-            battery_percentage = 0.0
-            if remaining_battery_capacity < 0.0:
-                battery_percentage = ((remaining_battery_capacity / full_battery_capacity_wh) * 100) * -1
-                self.logger.log_debug(f"Battery percentage add: {battery_percentage}")
-
-            battery_percentage = battery_percentage + self.solardata.battery_minimum_soc_limit
-            self.logger.log_debug(f"Battery percentage total: {battery_percentage}")
-
-            # Berücksichtigung der verbleibenden Batteriekapazität
-            battery_percentage = min(min(battery_percentage, 100), 100)
-            battery_percentage = max(battery_percentage - (battery_percentage / 100) * 5,
-                                     self.solardata.battery_minimum_soc_limit)
-            self.logger.log_debug(f"Battery percentage (- 5% spare: {battery_percentage}")
-
-            return round(battery_percentage, 2)
-
-        except TypeError:
-            return 0
+        except Exception:
+            self.logger.log.exception(
+                "Battery SOC calculation failed"
+            )
+            return self.solardata.battery_minimum_soc_limit

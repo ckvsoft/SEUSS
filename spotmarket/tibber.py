@@ -33,15 +33,16 @@ import socket
 import requests
 from requests.exceptions import ConnectionError
 
+from core.utils import Utils
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
 
 
 class TibberItem(Item):
-    def __init__(self, starts_at, price_unit):
+    def __init__(self, starts_at, price_unit, fee_str):
         start_time = datetime.strptime(starts_at, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone(timezone.utc)
         if price_unit is not None:
-            super().__init__(start_time, None, price_unit, 15)
+            super().__init__(start_time, None, price_unit, fee_str, 15)
         else:
             raise ValueError("Ungültige Tibber-Preisdaten. 'price_unit' muss gesetzt sein.")
 
@@ -51,66 +52,114 @@ class TibberItem(Item):
             extended_endtime = self.starttime + timedelta(hours=1) - timedelta(seconds=1)
             self.endtime = extended_endtime  # .strftime('%Y-%m-%dT%H:%M:%S.%f%z')
 
-
 class Tibber(MarketData):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.price_unit = kwargs.get("price_unit", "energy")
         self.api_token = kwargs.get("api_token", "")
+        self.use_second_day = False
 
     def load_data(self, use_second_day):
-        try:
-            self._calculate_dates(use_second_day)
-            self.use_second_day = use_second_day
-            url = 'https://api.tibber.com/v1-beta/gql'
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {self.api_token}'
+        self.use_second_day = use_second_day
+
+        url = "https://api.tibber.com/v1-beta/gql"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_token}"
+        }
+
+        query = {
+            "query": """
+            {
+              viewer {
+                homes {
+                  currentSubscription {
+                    priceInfo(resolution: QUARTER_HOURLY) {
+                      today { total energy tax startsAt }
+                      tomorrow { total energy tax startsAt }
+                    }
+                  }
+                }
+              }
             }
+            """
+        }
 
-            query = '{"query":"{viewer{homes{currentSubscription{priceInfo{current{total energy tax startsAt}today{total energy tax startsAt}tomorrow{total energy tax startsAt}}}}}}"}'
-
-            response = requests.post(url, headers=headers, json=json.loads(query))
-
-            if response.status_code == 200:
-                # data = response.json()
-                return self._load_data_from_json(response.text)
-            else:
-                self.logger.log_error(f"Error with the API request. Status code: {response.status_code}")
-
+        try:
+            response = requests.post(url, headers=headers, json=query, timeout=10)
         except ConnectionError as e:
-            if isinstance(e.args[0], socket.gaierror):
-                self.logger.log_error(f"Error in name resolution for 'api.awattar.com'")
-                self.logger.log_error("Please check your network connection and DNS configuration.")
-            else:
-                self.logger.log_error(f"Connection error: {e}")
-                self.logger.log_error("Please check your network connection and server configuration.")
-
+            self.logger.log.error(f"Tibber connection error: {e}")
             return []
 
-    def _load_data_from_json(self, json_data):
-        items = []
+        if response.status_code != 200:
+            self.logger.log.warning(
+                f"Tibber API returned HTTP {response.status_code}: {response.text}"
+            )
+            return []
+
         try:
-            data = json.loads(json_data)
-            for entry in data.get('data', {}).get('viewer', {}).get('homes', [])[0].get('currentSubscription', {}).get(
-                    'priceInfo', {}).get('today', []):
-                tibber_item = TibberItem(entry.get('startsAt'), entry.get(self.price_unit))
-                tibber_item.extend_endtime()
-                items.append(tibber_item)
+            data = response.json()
+        except json.JSONDecodeError:
+            self.logger.log.warning("Tibber API returned invalid JSON")
+            return []
 
-            if self.use_second_day:
-                for entry in data.get('data', {}).get('viewer', {}).get('homes', [])[0].get('currentSubscription',
-                                                                                            {}).get(
-                    'priceInfo', {}).get('tomorrow', []):
-                    tibber_item = TibberItem(entry.get('startsAt'), entry.get(self.price_unit))
-                    tibber_item.extend_endtime()
-                    items.append(tibber_item)
+        homes = (
+            data.get("data", {})
+                .get("viewer", {})
+                .get("homes", [])
+        )
 
-                if len(items) < 25:
-                    self.logger.log_warning("Error: Tibber prices for tomorrow could not be loaded.")
+        if not homes:
+            self.logger.log.warning("Tibber API returned no homes")
+            return []
 
-            return items
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            self.logger.log_warning(f"Error loading all Tibber prices: {e}")
+        price_info = (
+            homes[0]
+            .get("currentSubscription", {})
+            .get("priceInfo", {})
+        )
 
-            return items
+        days = ["today", "tomorrow"] if self.use_second_day else ["today"]
+
+        hour_prices = {}
+        hour_start_map = {}
+
+        for day in days:
+            for entry in price_info.get(day, []):
+                try:
+                    ts = datetime.strptime(
+                        entry["startsAt"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                    ).astimezone(timezone.utc)
+
+                    hour_ts = ts.replace(minute=0, second=0, microsecond=0)
+                    price = float(entry[self.price_unit])
+
+                    if hour_ts not in hour_prices:
+                        hour_prices[hour_ts] = []
+                        hour_start_map[hour_ts] = entry["startsAt"]
+
+                    hour_prices[hour_ts].append(price)
+
+                except Exception as e:
+                    self.logger.log.warning(
+                        f"Tibber entry skipped: {entry} ({e})"
+                    )
+
+        items = []
+
+        for hour_ts in sorted(hour_prices.keys()):
+            prices = hour_prices[hour_ts]
+            if not prices:
+                continue
+
+            avg_price = Utils.commercial_round(sum(prices) / len(prices), 3)
+
+            item = TibberItem(
+                hour_start_map[hour_ts],
+                avg_price,
+                self.fee
+            )
+            item.extend_endtime()
+            items.append(item)
+
+        return items

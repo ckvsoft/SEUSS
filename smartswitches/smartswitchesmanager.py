@@ -2,7 +2,7 @@
 #
 #  MIT License
 #
-#  Copyright (c) 2024-2025 Christian Kvasny chris(at)ckvsoft.at
+#  Copyright (c) 2025 Christian Kvasny chris(at)ckvsoft.at
 #
 #  Permission is hereby granted, free of charge, to any person obtaining a copy
 #  of this software and associated documentation files (the "Software"), to deal
@@ -25,27 +25,28 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-# generic_loader_factory.py
-from importlib import import_module
-from core.log import CustomLogger
+from core.config import Config
+from design_patterns.factory.generic_loader_factory import GenericLoaderFactory
 
+class SmartSwitchesManager:
+    def __init__(self):
+        self.devices = []
+        self.config = Config()
+        self.load_devices(self.config.config_data.get("smart_switches", []))
 
-class GenericLoaderFactory:
-    @staticmethod
-    def create_loader(loader_type, info):
-        logger = CustomLogger()
-        if info is None:
-            logger.log.warning(f"Received None for {loader_type} info. Returning None.")
-            return None
+    def load_devices(self, devices_config):
+        for device_info in devices_config:
+            if not device_info.get("enabled", True):
+                continue  # Überspringt deaktivierte Geräte
 
-        try:
-            loader_name = info["name"].lower()
-            loader_module_name = f"{loader_type}.{loader_name}"
-            loader_class_name = f"{loader_name.capitalize()}"
+            device = GenericLoaderFactory.create_loader("smartswitches", device_info)
+            if device:
+                self.devices.append(device)
 
-            loader_module = import_module(loader_module_name)
-            loader_class = getattr(loader_module, loader_class_name)
-            return loader_class(**info)
-        except (ModuleNotFoundError, AttributeError, ValueError):
-            logger.log.error(f"Invalid {loader_type} Loader: {info}")
-            return None
+    def turn_on_all(self):
+        for device in self.devices:
+            device.turn_on()
+
+    def turn_off_all(self):
+        for device in self.devices:
+            device.turn_off()

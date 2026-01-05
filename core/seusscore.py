@@ -49,6 +49,7 @@ from spotmarket.abstract_classes.itemlist import Itemlist
 from core.seussweb import SEUSSWeb
 from core.timeutilities import TimeUtilities
 from powerconsumption.powerconsumptionmanager import PowerConsumptionManager
+from smartswitches.smartswitchesmanager import SmartSwitchesManager
 
 class SEUSS:
     def __init__(self):
@@ -58,16 +59,23 @@ class SEUSS:
         self.ws_server = WebSocketServer()
         self.seuss_web = SEUSSWeb()
         self.power_consumption_manager = PowerConsumptionManager()
+        self.statsmanager = StatsManager()
+        self.statsmanager.remove_unused_datagroups()
 
         self.no_data = [0]
+        self.interval_minutes = 5
         self.svs_thread_stop_flag = threading.Event()
         self.solardata = Solardata()
-        self.items = self.initialize_items()
+        self.items = Itemlist.create_item_list([])
+        self.smartswitches = SmartSwitchesManager()
+        self.smartswitches.turn_off_all()
         self.current_time = datetime.now()
 
     def handle_config_update(self, config_data):
-        self.logger.log_info("Run checks while configuration was changed")
+        self.logger.log.info("Run checks while configuration was changed")
         self.load_configuration()
+        self.items.remove_all_items()
+        self.smartswitches = SmartSwitchesManager()
         self.run_markets()
 
     def run_markets(self):
@@ -79,11 +87,49 @@ class SEUSS:
         essunit = self.initialize_essunit()
         if essunit is not None:
             unit_config = essunit.get_config()
+            active_soc_limit = essunit.get_active_soc_limit()
+            soc = essunit.get_soc()
+            delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
+            self.logger.log.debug(f"Active Soc Limit: {active_soc_limit} Soc: {soc}")
+
+            if delay_active_soc_limit and (soc if soc is not None else 0) < (active_soc_limit if active_soc_limit is not None else 0):
+                check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
+                if check_limit is None:
+                    self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit, save_data=False)
+                    self.logger.log.info(f"Save Active Soc Limit Status: {active_soc_limit}")
+
+                self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
+                t_soc = soc #(soc // 5) * 5
+                if t_soc < active_soc_limit:
+                    essunit.set_active_soc_limit(t_soc)
+
+            else:
+                check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
+
+                if check_limit is not None:
+                    if soc and active_soc_limit:
+                        if soc > active_soc_limit:
+                            t_soc = soc # (soc // 5) * 5
+                            if t_soc < check_limit:
+                                essunit.set_active_soc_limit(t_soc)
+
+                        if active_soc_limit > check_limit:
+                            self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
+                            self.logger.log.info(f"Update Active Soc Limit Status: {active_soc_limit}")
+
+                        if abs(soc - check_limit) <= 1:
+                                # Auf gespeicherten Wert zurücksetzen und Delay beenden
+                                essunit.set_active_soc_limit(check_limit)
+                                self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
+                                self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
+                                self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
+
             self.power_consumption_manager.update_instance(unit_config)
             if self.ws_server:
                 power_consumption_instance = self.power_consumption_manager.get_instance()
                 if power_consumption_instance:
                     power_consumption_instance.set_ws_server(self.ws_server)
+                    power_consumption_instance.set_current_price(self.items.get_current_price(True))
 
             # if essunit is not None:
             #    essunit.get_data()
@@ -94,56 +140,61 @@ class SEUSS:
             else:
                 self.handle_no_data(essunit)
 
-            next_minute = (self.current_time.minute // 15 + 1) * 15
+            next_minute = (self.current_time.minute // self.interval_minutes + 1) * self.interval_minutes
             if next_minute >= 60:
                 next_hour = self.current_time.replace(second=0, microsecond=0, minute=0) + timedelta(hours=1)
             else:
                 next_hour = self.current_time.replace(second=0, microsecond=0, minute=next_minute)
             next_run_time = next_hour
-            self.logger.log_info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
+            self.logger.log.info(f"Next {essunit.get_name()} check at {next_run_time.strftime('%H:%M')}")
             return
 
         self.power_consumption_manager.stop_instance()
-        self.logger.log_info("No enabled essunit found.")
+        self.logger.log.info("No enabled essunit found.")
 
     def run_svs(self):
         self.load_configuration()
         self.initialize_logging()
         self.config.observer.add_observer("seuss", self)
+        lasttime_minute = None  # Startwert bleibt None, damit die erste Ausführung sofort möglich ist
 
         try:
             while True:
                 self.current_time = datetime.now()
 
-                if self.current_time.minute == 0 and self.current_time.second == 5 or self.items.get_item_count() == 0:
+                if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
                     self.run_markets()
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log_info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log.info(
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                        )
 
-                interval_minutes = 15
-                if self.current_time.minute % interval_minutes == 0 and self.current_time.minute != 0 and (
-                        self.current_time.second == 0):
-                    if (
-                            self.items.get_item_count() < 25
-                            if self.config.use_second_day and 13 < self.current_time.hour < 15
-                            else False
-                    ):
+                if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
+                    lasttime_minute = self.current_time.minute
+
+                    count = self.items.get_item_count()
+                    self.logger.log.debug(f"Item count: {count}")
+                    self.logger.log.debug(f"Current hour: {self.current_time.hour}")
+                    if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
                         self.run_markets()
                     else:
                         self.run_essunit()
+
                     if self.items:
                         next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log_info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
+                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                        self.logger.log.info(
+                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                        )
 
                 self.perform_test_run()
                 self.handle_no_data_sleep()
-                # self.handle_time_to_next_hour(current_time)
-                time.sleep(1)
+
+                self.current_time = datetime.now()
+                sleep_time = 1 - (self.current_time.microsecond / 1_000_000)
+                time.sleep(sleep_time)
 
         except KeyboardInterrupt:
             self.graceful_exit(signal.SIGINT, None)
@@ -152,18 +203,15 @@ class SEUSS:
         self.config.load_config()
 
     def initialize_logging(self):
-        self.logger.log_info(f"SEUSS v{version.__version__} started...")
-        self.logger.log_info(f"{self.config.config_data}")
-
-    def initialize_items(self):
-        return Itemlist.create_item_list([])
+        self.logger.log.info(f"SEUSS v{version.__version__} started...")
+        self.logger.log.info(f"{self.config.config_data}")
 
     def update_items(self):
         return self.items.perform_update(self.items)
 
     def initialize_essunit(self):
         if self.config.essunit is None:
-            self.logger.log_warning(f"essunit is None. Try to reload config")
+            self.logger.log.warning(f"essunit is None. Try to reload config")
             self.config.load_config()
 
         return GenericLoaderFactory.create_loader("essunit", self.config.essunit)
@@ -184,72 +232,69 @@ class SEUSS:
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
-        total_forward_hourly = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
             productname = gridmeters.get_value(key_outer, 'ProductName')
             forward = gridmeters.get_forward_kwh(key_outer)
             forward_hourly = gridmeters.get_hourly_kwh(key_outer)
-            self.logger.log_debug(f"Found Gridmeter:  {productname} {customname}.")
-            self.logger.log_info(
+            self.logger.log.debug(f"Found Gridmeter:  {productname} {customname}.")
+            self.logger.log.info(
                 f"{productname} {customname} today:  {round(forward, 2)} Wh, average hour: {round(forward_hourly, 2)} Wh")
 
             for key_inner, value_inner in value_outer.items():
-                self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+                self.logger.log.debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        statsmanager = StatsManager()
-        total_forward_hourly_list = statsmanager.get_data("powerconsumption","hourly_watt_average")
+        total_forward_hourly_list = self.statsmanager.get_data("powerconsumption","hourly_watt_average")
         total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
-        manager_instance = (self.power_consumption_manager.get_instance())
+        manager_instance = self.power_consumption_manager.get_instance()
         if manager_instance:
             value = manager_instance.get_hourly_average()
             consumption = manager_instance.get_daily_wh()
-            total_forward_hourly = (total_forward_hourly + value) / 2
-            self.logger.log_info(
+            if value > 0.0:
+                total_forward_hourly = (total_forward_hourly + value) / 2
+            self.logger.log.info(
                 f"Consumption today: {round(consumption, 2):.2f} Wh, forecast today: {total_forward_hourly * 24:.2f} Wh average hour: {round(total_forward_hourly, 2):.2f} Wh")
 
-            statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
+            self.statsmanager.update_percent_status_data('gridmeters', 'forward_hourly', total_forward_hourly)
 
         for key_outer, value_outer in inverters.inverters.items():
             customname = inverters.get_value(key_outer, 'CustomName')
             productname = inverters.get_value(key_outer, 'ProductName')
             forward = inverters.get_forward_kwh(key_outer)
             total_solar += float(forward)
-            self.logger.log_debug(f"Found PV Inverter:  {productname} {customname}.")
-            self.logger.log_info(f"{productname} {customname} yield today:  {round(forward, 2)} Wh.")
+            self.logger.log.debug(f"Found PV Inverter:  {productname} {customname}.")
+            self.logger.log.info(f"{productname} {customname} yield today:  {round(forward, 2)} Wh.")
 
             for key_inner, value_inner in value_outer.items():
-                self.logger.log_debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
+                self.logger.log.debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        self.logger.log_info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
+        self.logger.log.info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
         self.solardata.update_current_hour_solar_yield(round(total_solar, 2))
         return total_solar
 
     def process_solar_forecast(self, total_solar):
-        forecast = OpenMeteo()  # Forecastsolar()
-        # self.solardata = Solardata()
+        forecast = OpenMeteo()
+        # This now updates the adjustment_factor internally
         total_forecast = forecast.forecast(self.solardata)
+
         calculator = SolarBatteryCalculator(self.solardata)
         self.solardata.update_need_soc(calculator.calculate_battery_percentage())
-        self.logger.log_info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
+        self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
+
+        # Get the freshly calculated values
+        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
+        efficiency_display = round(adj[0] * 100, 2)
 
         if total_forecast is not None and total_forecast > 0.0:
-            percentage = (total_solar / total_forecast) * 100
-            efficiency = None
-            sunset_time = datetime.strptime(self.solardata.sunset_current_day, "%Y-%m-%dT%H:%M").time()
-            current_time = TimeUtilities.get_now().time()
+            # 'total_forecast' is the prediction for the CURRENT HOUR.
+            # We compare it to 'total_solar' (what actually came in this hour so far)
+            hour_performance = round((total_solar / total_forecast) * 100, 2)
 
-            if current_time < sunset_time and total_solar > 0.0:
-                efficiency = StatsManager.update_percent_status_data('solar', 'efficiency', percentage)
-            else:
-                efficiency_list = StatsManager.get_data('solar', 'efficiency')
-                if efficiency_list is not None:
-                    efficiency = round(efficiency_list[0], 2)
-            rounded_percentage = round(percentage, 2)
-            self.logger.log_info(f"Solar current percent: {rounded_percentage}%. average: {efficiency}%")
+            self.logger.log.info(f"Solar hour performance: {hour_performance}% of adjusted forecast.")
+            self.logger.log.info(f"Current System Efficiency (Adj-Factor): {efficiency_display}%")
         else:
-            self.logger.log_info("Solar forecast is zero or not available.")
+            self.logger.log.info(f"Solar forecast is zero. Current Adj-Factor: {efficiency_display}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
         only_observation = False
@@ -260,51 +305,104 @@ class SEUSS:
         if not only_observation:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
-            conditions_instance = Conditions(self.items, self.solardata, essunit)
+            condition_switching_result = ConditionResult()
+            conditions_instance = Conditions(self.items, essunit)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+            conditions_instance.evaluate_conditions(condition_switching_result, "switching")
 
             self.control_charging(essunit, condition_charging_result)
             self.control_discharging(essunit, condition_discharging_result)
+            self.control_switching(condition_switching_result)
 
         self.items.log_items()
         self.no_data[0] = 0
 
+    def control_switching(self, condition_switching_result):
+        if condition_switching_result.execute:
+            self.logger.log.info(
+                f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
+            )
+            self.smartswitches.turn_on_all()
+
+        elif condition_switching_result.condition:
+            self.logger.log.info(
+                f"{condition_switching_result.condition}, switching mode is turned off."
+            )
+            self.smartswitches.turn_off_all()
+
+        else:
+            self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
+            self.smartswitches.turn_off_all()
+
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:
-            self.logger.log_info(
+            self.logger.log.info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
             essunit.set_charge("on")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", essunit.get_battery_current_wh())
+            self.smartswitches.turn_on_all()
+
+            initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
+            if not initial_data:
+                self.statsmanager.set_status_data('energy', "initial_charge_state_wh", (essunit.get_battery_current_wh(), TimeUtilities.get_now().isoformat()))
+
+            self.update_charging_statistics(essunit)
+
         elif condition_charging_result.condition and essunit is not None:
-            self.logger.log_info(f"{condition_charging_result.condition}, charging is turned off.")
+            self.logger.log.info(f"{condition_charging_result.condition}, charging is turned off.")
             essunit.set_charge("off")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
+            self.smartswitches.turn_off_all()
+            self.statsmanager.remove_data('energy', "initial_charge_state_wh")
+
         elif essunit is not None:
-            self.logger.log_info("Since none of the charging conditions are true, charging is turned off.")
+            self.logger.log.info("Since none of the charging conditions are true, charging is turned off.")
             essunit.set_charge("off")
-            StatsManager().set_status_data('Energy', "initial_charge_state_wh", 0.0)
+            self.smartswitches.turn_off_all()
+            self.statsmanager.remove_data('energy', "initial_charge_state_wh")
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:
-            self.logger.log_info(
+            self.logger.log.info(
                 f"Condition {condition_discharging_result.condition} result: {condition_discharging_result.execute}, discharging is turned on.")
             essunit.set_discharge("on")
         elif condition_discharging_result.condition and essunit is not None:
-            self.logger.log_info(f"{condition_discharging_result.condition}, discharging is turned off.")
+            self.logger.log.info(f"{condition_discharging_result.condition}, discharging is turned off.")
             essunit.set_discharge("off")
         elif essunit is not None:
-            self.logger.log_info("Since none of the discharging conditions are true, discharging is turned off.")
+            self.logger.log.info("Since none of the discharging conditions are true, discharging is turned off.")
             essunit.set_discharge("off")
 
+    def update_charging_statistics(self, essunit):
+        current_wh = essunit.get_battery_current_wh()
+
+        stored_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
+        if not stored_data:
+            return
+
+        initial_wh, timestamp_str = stored_data
+        start_time = datetime.fromisoformat(timestamp_str)
+        now = TimeUtilities.get_now()
+
+        if start_time is None or start_time == 0 or current_wh <= initial_wh:
+            return
+
+        minutes_passed = (now - start_time).total_seconds() / 60
+        if minutes_passed <= 0:
+            return
+
+        current_wh_per_min = (current_wh - initial_wh) / minutes_passed
+
+        self.statsmanager.update_percent_status_data('energy', "average_charge_wh_per_min", current_wh_per_min)
+        self.logger.log.debug(f"Updated charge average: {current_wh_per_min:.2f} Wh/min over {minutes_passed:.1f} min")
+
     def handle_no_data(self, essunit):
-        self.logger.log_warning("No data available")
+        self.logger.log.warning("No data available")
         self.no_data[0] += 1
         if essunit is not None:
-            self.logger.log_info("There are currently no prices, so the charging mode is turned off.")
+            self.logger.log.info("There are currently no prices, so the charging mode is turned off.")
             essunit.set_discharge("off")
-            self.logger.log_info("There are currently no prices, so the discharging mode is turned on.")
+            self.logger.log.info("There are currently no prices, so the discharging mode is turned on.")
             essunit.set_discharge("on")
 
     def perform_test_run(self):
@@ -315,7 +413,7 @@ class SEUSS:
     def handle_no_data_sleep(self):
         if 0 < self.no_data[0] < 4:
             sleeptime = random.randint(10, 60)
-            self.logger.log_info(
+            self.logger.log.info(
                 f"There is no data available, attempt number {self.no_data[0]}/3 failed. wait {sleeptime} seconds for the next attempt.")
             time.sleep(sleeptime)
         else:
@@ -324,23 +422,27 @@ class SEUSS:
     def handle_time_to_next_hour(self, current_time):
         next_hour = (current_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
         time_to_next_hour = int((next_hour - current_time).total_seconds())
-        self.logger.log_info(f"Next price check at {next_hour.strftime('%H:%M')}")
+        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
         if self.items:
-            self.logger.log_info(
+            self.logger.log.info(
                 f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}")
         time.sleep(max(0, time_to_next_hour + 2))
 
     def graceful_exit(self, signum, frame):
         print("\r   ")  # clear ^C
-        self.logger.log_info("Program will be terminated...")
-        self.seuss_web.stop()
+        print(f"Program will be terminated... signal: {signum}")
+        self.logger.log.info(f"Program will be terminated... signal: {signum}")
+
         self.power_consumption_manager.stop_instance()
+        self.statsmanager.save_data()
+        self.ws_server.stop()
+        self.seuss_web.stop()
         self.svs_thread_stop_flag.set()
 
         sys.exit(0)
 
     def excepthook_handler(self, exc_type, exc_value, exc_traceback):
-        self.logger.log_error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
+        self.logger.log.error(f"Unknown Exception exc_info=({exc_type}, {exc_value}, {exc_traceback})")
 
     def start(self):
         sys.excepthook = self.excepthook_handler
@@ -356,6 +458,7 @@ class SEUSS:
         self.svs_thread.start()
 
         signal.signal(signal.SIGINT, self.graceful_exit)
+        signal.signal(signal.SIGTERM, self.graceful_exit)
 
         try:
             while not self.svs_thread_stop_flag.is_set():

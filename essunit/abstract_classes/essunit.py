@@ -57,6 +57,12 @@ class ESSUnit:
     def get_battery_current_wh(self):
         pass
 
+    def get_battery_full_wh(self):
+        pass
+
+    def get_battery_min_wh(self):
+        pass
+
     def get_battery_minimum_soc_limit(self):
         pass
 
@@ -69,7 +75,13 @@ class ESSUnit:
     def get_soc(self):
         pass
 
+    def get_active_soc_limit(self):
+        pass
+
     def get_scheduler_soc(self):
+        pass
+
+    def set_active_soc_limit(self, value):
         pass
 
     def set_discharge(self, status):

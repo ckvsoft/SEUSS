@@ -25,36 +25,295 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-import json
-import os
 import threading
 import time
+import calendar
 
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
+from core.timeutilities import TimeUtilities
+
+class PowerDataHandler:
+    def __init__(self):
+        self._logger = CustomLogger()
+        self.num_ac_phases = None  # Wird per MQTT gesetzt
+        self.num_grid_phases = None
+        self.ac_phases = {}
+        self.grid_phases = {}
+        self.dc_data = {}
+        self.pv_data = {}
+        self.updated_ac_phases = set()
+        self.updated_grid_phases = set()
+        self.final_data = {}
+        self.checked_data = {}
+        self.total_loss = 0
+        self.last_loss_efficiency = (0, 100)
+
+    def update_values(self, topic, payload):
+        """Empfängt MQTT-Daten und aktualisiert Werte."""
+        value = payload.get("value")
+        if value is not None:
+            self.checked_data[topic] = True
+
+        if topic == "number_of_phases":
+            self.num_ac_phases = int(value)
+        elif topic == "number_of_grid_phases":
+            self.num_grid_phases = int(value)
+
+        # PV-Daten erfassen
+        elif topic == "PV_DC":
+            self.pv_data["PV_DC"] = value if value else 0
+        elif "PV_AC_OUT" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_OUT_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_OUT_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_OUT_L3"] = value if value is not None else 0
+        elif "PV_AC_GRID" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_GRID_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_GRID_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_GRID_L3"] = value if value is not None else 0
+        elif "PV_AC_GENSET" in topic:
+            if "L1" in topic:
+                self.pv_data["PV_AC_GENSET_L1"] = value if value is not None else 0
+            elif "L2" in topic:
+                self.pv_data["PV_AC_GENSET_L2"] = value if value is not None else 0
+            elif "L3" in topic:
+                self.pv_data["PV_AC_GENSET_L3"] = value if value is not None else 0
+
+        # AC-Verbrauch erfassen
+        elif topic.startswith("P_AC_consumption_L"):
+            phase = topic.split("_")[-1]
+            self.ac_phases[phase] = value
+            self.updated_ac_phases.add(phase)
+
+        # Grid-Verbrauch erfassen
+        elif topic.startswith("G_AC_consumption_L"):
+            phase = topic.split("_")[-1]
+            self.grid_phases[phase] = value
+            self.updated_grid_phases.add(phase)
+
+        # Batterie-Verbrauch
+        elif topic == "P_DC_consumption_Battery":
+            if value is not None:
+                self.dc_data["Battery"] = value
+
+        elif topic == "SOC":
+            self.final_data["SOC"] = value
+
+        # Berechnungen ausführen
+        self.calculate_power()
+
+    def calculate_power(self):
+        """Berechnet AC_POWER, AC_GRID_POWER, PV_POWER, DC_POWER und TOTAL_POWER."""
+
+        # Sicherstellen, dass für AC und Grid mindestens ein gültiger Wert da ist
+        if self.data_complete(self.updated_ac_phases, self.num_ac_phases):
+            self.final_data["AC_POWER"] = sum(v for v in self.ac_phases.values() if v is not None)
+            self.reset(self.updated_ac_phases)
+
+        if self.data_complete(self.updated_grid_phases, self.num_grid_phases):
+            self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
+            self.reset(self.updated_grid_phases)
+
+        battery_value = self.dc_data.get("Battery")
+        if battery_value is not None:
+            self.final_data["DC_POWER"] = battery_value
+            self.dc_data.clear()
+
+        keys = [
+            "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
+            "PV_AC_GRID_L1", "PV_AC_GRID_L2", "PV_AC_GRID_L3",
+            "PV_AC_GENSET_L1", "PV_AC_GENSET_L2", "PV_AC_GENSET_L3",
+            "PV_DC"
+        ]
+
+        if all(self.pv_data.get(key) is not None for key in keys):
+            self.final_data["PV_POWER"] = sum(self.pv_data.values())
+            self.reset(self.pv_data)
+
+        if len([value for value in self.final_data.values() if value is not None]) >= 3:
+            if self.all_required_data_complete():
+                self.final_data["TOTAL_POWER"], self.final_data["EFFICIENCY"] = self.process_data()
+
+    def data_complete(self, phase_set, num_phases):
+        """Überprüft, ob alle Phasen vorhanden sind oder wenn Phasenanzahl nicht bekannt ist."""
+        if num_phases is None:
+            return False
+        return len(phase_set) >= num_phases
+
+    def all_required_data_complete(self):
+        """Prüft, ob alle relevanten Werte für die Berechnung vorhanden sind."""
+        return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
+
+    def check_for_data(self):
+        missing_data = []
+
+        # Prüfen, ob alle notwendigen Felder vorhanden sind
+        if self.checked_data.get("P_AC_consumption_L1") is None:
+            missing_data.append("P_AC_consumption_L1")
+        if self.num_ac_phases is None:
+            missing_data.append("number_of_phases")
+
+        # Nur für 2 oder 3 Phasen:
+        if self.num_ac_phases is not None and self.num_ac_phases >= 2 and self.checked_data.get(
+                "P_AC_consumption_L2") is None:
+            missing_data.append("P_AC_consumption_L2")
+        if self.num_ac_phases is not None and self.num_ac_phases == 3 and self.checked_data.get(
+                "P_AC_consumption_L3") is None:
+            missing_data.append("P_AC_consumption_L3")
+
+        # Grid-Daten
+        if self.checked_data.get("G_AC_consumption_L1") is None:
+            missing_data.append("G_AC_consumption_L1")
+        if self.num_grid_phases is None:
+            missing_data.append("number_of_grid_phases")
+
+        # Nur für 2 oder 3 Phasen:
+        if self.num_grid_phases is not None and self.num_grid_phases >= 2 and self.checked_data.get(
+                "G_AC_consumption_L2") is None:
+            missing_data.append("G_AC_consumption_L2")
+        if self.num_grid_phases is not None and self.num_grid_phases == 3 and self.checked_data.get(
+                "G_AC_consumption_L3") is None:
+            missing_data.append("G_AC_consumption_L3")
+
+        # Hier auch die PV_DC-Überprüfung und ggf. Initialisierung:
+        if self.checked_data.get("PV_DC") is None:
+            self.final_data["PV_DC"] = 0
+            # missing_data.append("PV_DC")
+
+        if missing_data:
+            self._logger.log.debug(f"Missing data: {', '.join(missing_data)}")
+            return False
+
+        return True
+
+    def process_data(self):
+        """Perform calculations with complete data."""
+
+        ac_grid_power = self.final_data.get("AC_GRID_POWER", 0)
+        dc_power = self.final_data.get("DC_POWER", 0)
+        # Calculate total energy input (DC + positive grid + PV)
+        energy_input = (
+            -min(dc_power, 0)  # Nur negative Werte von DC-Power (Entladung)
+            # abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
+            + max(ac_grid_power, 0)  # Only positive grid power (import)
+            + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
+        )
+
+        # Calculate usable energy (AC power + exported grid power)
+        usable_energy = (
+            self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
+            + min(ac_grid_power, 0)  # Negative grid power (exported energy)
+            + max(dc_power, 0)
+        )
+
+        # Calculate losses (negative values shouldn't count as losses, so use max())
+        loss = max(energy_input - usable_energy, 0)
+        # loss = abs(energy_input - usable_energy)
+
+
+        # Calculate efficiency and ensure it doesn't exceed 100%
+        efficiency = (usable_energy / energy_input) * 100 if energy_input > 0 else 100
+
+        # Clamp efficiency to 100% if necessary
+        efficiency = min(efficiency, 100)
+
+        if efficiency < 100.0 and loss > 0.0:
+            self.total_loss = loss
+            self.last_loss_efficiency = (loss, efficiency)
+
+        return self.last_loss_efficiency
+
+    def is_complete(self, phase_set, num_phases):
+        """Überprüft, ob alle Phasen im Set aktualisiert wurden."""
+        required_phases = {f"L{i + 1}" for i in range(num_phases)}
+        return required_phases.issubset(phase_set)
+
+    def reset(self, phase_set):
+        """Setzt das Phase-Set zurück, nachdem die Berechnung abgeschlossen ist."""
+        phase_set.clear()  # Alle Phasen in diesem Set zurücksetzen
+
+    def get_power(self, power_type):
+        """
+        Gibt den aggregierten Power-Wert für den angegebenen Typ zurück:
+          - "PV_POWER": Summe aus PV_DC und allen PV_AC-Werten
+          - "AC_GRID_POWER": Aggregierte Grid-Leistung
+          - "AC_POWER": Aggregierte AC-Leistung
+          - "BATTERY_POWER": Den Batterieverbrauchswert (P_DC_consumption_Battery)
+          - "TOTAL_POWER": Der berechnete Gesamtverbrauch (total_consumption)
+        """
+        if power_type == "PV_POWER":
+            pv = self.final_data.get("PV_POWER", 0)
+            return pv
+
+        elif power_type == "AC_GRID_POWER":
+            return self.final_data.get("AC_GRID_POWER", 0)
+
+        elif power_type == "AC_POWER":
+            return self.final_data.get("AC_POWER", 0)
+
+        elif power_type == "BATTERY_POWER":
+            return self.final_data.get("DC_POWER", 0)
+
+        elif power_type == "TOTAL_POWER":
+            return self.total_loss
+
+        elif power_type == "EFFICIENCY":
+            return self.final_data.get("EFFICIENCY", 0)
+
+        elif power_type == "SOC":
+            soc = self.final_data.get("SOC", 0)
+            return soc
+
+
+        else:
+            return None
+
 
 class PowerConsumptionBase:
     def __init__(self, interval_duration=5):
+        self.handler = PowerDataHandler()
         self.interval_duration = interval_duration
+        self.stop_event = threading.Event()
         self.ws_server = None
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
         self.running = False
         self.last_minute = None
         self.last_value = None  # Last power value in watts
+        self.last_grid_value = None
+        self.last_dc_value = 0
         self.last_time = None   # Last timestamp (seconds since epoch)
+        self.current_price = 0
 
         self.hourly_wh = 0          # Consumption for the current hour in kWh
-        self.hourly_start_time = None  # Start time of the current hour
+        self.hour_grid_wh = 0
+        self.energy_costs_by_hour = {}
+        self.energy_costs_by_day = {}
+        self.hourly_start_time = time.time()  # Start time of the current hour
 
         self.daily_wh = 0           # Daily consumption in kWh
-        self.current_hour = None     # Current hour
-        self.current_day = None      # Current day
+        self.daily_grid_wh = 0
+        self.current_hour = time.localtime(time.time()).tm_hour
+        self.current_day = time.localtime(time.time()).tm_yday
+        self.curent_year = time.localtime(time.time()).tm_year
 
         # Initialized variables
+        self.P_DC_consumption_Battery = None
+        self.P_DC_inverter_Charger = None
         self.P_AC_consumption_L1 = self.P_AC_consumption_L2 = self.P_AC_consumption_L3 = None
+        self.G_AC_consumption_L1 = self.G_AC_consumption_L2 = self.G_AC_consumption_L3 = None
         self.number_of_phases = 3  # Default number of phases, adjust if needed
+        self.number_of_grid_phases = 3  # Default number of phases, adjust if needed
         self.current_power = 0
+        self.current_grid_power = 0
+        self.consumption_diff = 0
+        self.soc = None
 
         self.data_file = "consumption_data.json"
         self.load_data()
@@ -63,20 +322,21 @@ class PowerConsumptionBase:
         self.average = (0,0)
 
     def start(self):
-        if self.thread is None:
+        if self.thread is None or not self.thread.is_alive():
             self.thread = threading.Thread(target=self.run)
             self.thread.start()
-            self.logger.log_debug(f"{self.__class__.__name__} started with interval {self.interval_duration} minutes.")
+            self.logger.log.debug(f"{self.__class__.__name__} started with interval {self.interval_duration} minutes.")
         else:
-            self.logger.log_debug(f"{self.__class__.__name__} is already running.")
+            self.logger.log.debug(f"{self.__class__.__name__} is already running.")
 
     def stop(self):
-        if self.thread is not None:
-            self.logger.log_debug(f"{self.__class__.__name__} is stopping...")
-            self.thread.join()  # Wait until the thread finishes
-            self.thread = None
-        else:
-            self.logger.log_debug(f"{self.__class__.__name__} is not running.")
+        """Stop the running thread."""
+        self.save_data(True)
+        self.stop_event.set()  # Set the stop flag to end the run loop
+        if self.thread:
+            self.thread.join()  # Wait for the main thread to finish
+
+
 
     def run(self):
         """Main process - Implementation in derived classes."""
@@ -85,46 +345,49 @@ class PowerConsumptionBase:
     def set_ws_server(self, ws):
         self.ws_server = ws
 
-    def load_data(self):
-        """Lädt gespeicherte Daten aus einer JSON-Datei."""
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, "r") as file:
-                    data = json.load(file)
-                    self.hourly_wh = data.get("hourly_wh", 0)
-                    self.daily_wh = data.get("daily_wh", 0)
-                    self.hourly_start_time = data.get("hourly_start_time", time.time())
-                    self.last_value = data.get("last_value", 0)
-                    self.last_time = data.get("last_time", time.time())
-                    self.current_hour = data.get("current_hour", time.localtime(time.time()).tm_hour)
-                    self.current_day = data.get("current_day", time.localtime(time.time()).tm_yday)
-                    self.average = data.get("average", (0,0))
-            except json.JSONDecodeError:
-                self.logger.log_error("Corrupted JSON file detected. Resetting data.")
-                self.reset_data()
+    def set_current_price(self, current_price):
+        self.current_price = current_price
 
-    def save_data(self):
-        """Speichert den aktuellen Status in einer JSON-Datei."""
-        data = {
-            "hourly_wh": self.hourly_wh,
-            "daily_wh": self.daily_wh,
-            "hourly_start_time": self.hourly_start_time,
-            "last_value": self.last_value,
-            "last_time": self.last_time,
-            "current_hour": self.current_hour,
-            "current_day": self.current_day,
-            "average": self.average
-        }
-        backup_file = f"{self.data_file}.backup"
-        try:
-            if os.path.exists(self.data_file):
-                os.replace(self.data_file, backup_file)  # Backup der aktuellen Datei
-            with open(self.data_file, "w") as file:
-                json.dump(data, file, indent=4)
-        except Exception as e:
-            self.logger.log_error(f"Error saving data: {e}")
-            if os.path.exists(backup_file):
-                os.replace(backup_file, self.data_file)  # Wiederherstellung aus Backup
+    def load_data(self):
+        self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh") or 0.0
+
+        hourly_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_wh")
+        self.hourly_wh, self.hourly_start_time = hourly_wh_list if isinstance(hourly_wh_list, tuple) and len(hourly_wh_list) == 2 else (0, time.time())
+
+        average_list = self.statsmanager.get_data("powerconsumption", "average")
+        self.average = average_list if isinstance(average_list, tuple) and len(average_list) == 2 else (0, 0)
+
+        last_value_list = self.statsmanager.get_data("powerconsumption", "last_power_value")
+        last_grid_value_list = self.statsmanager.get_data("powerconsumption", "last_grid_power_value")
+
+        self.last_value, self.last_time = last_value_list if isinstance(last_value_list, tuple) and len(last_value_list) == 2 else (0, time.time())
+        self.last_grid_value, _ = last_grid_value_list if isinstance(last_grid_value_list, tuple) and len(last_grid_value_list) == 2 else (0, time.time())
+
+        energy_costs_by_hour = self.statsmanager.get_data("powerconsumption","energy_costs_by_hour")
+        energy_costs_by_day = self.statsmanager.get_data("powerconsumption","energy_costs_by_day")
+
+        self.logger.log.debug(f"Loaded energy costs by hour: {energy_costs_by_hour}")
+        self.logger.log.debug(f"Loaded energy costs by day: {energy_costs_by_day}")
+
+        self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
+        self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
+        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption","current_hour_grid_wh")
+        if current_hour_grid_wh and current_hour_grid_wh[1] == self.current_hour:
+            self.hour_grid_wh = current_hour_grid_wh[0]
+        else:
+            self.statsmanager.remove_data("powerconsumption", "current_hourly_grid_wh")
+
+    def save_data(self, logging=False):
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time), save_data=False)
+        self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","last_grid_power_value", (self.last_grid_value, self.last_time))
+        self.statsmanager.set_status_data("powerconsumption","current_hour_grid_wh", (self.hour_grid_wh, self.current_hour))
+
+        if logging:
+            self.logger.log.debug("data saved.")
 
     def save_hour(self):
         """Speichert den Durchschnitt des aktuellen Stundenverbrauchs."""
@@ -137,35 +400,32 @@ class PowerConsumptionBase:
             count += 1
             value /= count
             self.average = (value, count)
-        else:
-            avg_wh = 0
-        print(f"Hourly average for hour {self.current_hour}: {avg_wh:.4f} Wh")
-        print(f"Hourly average : {value:.4f} Wh")
-        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value)
-        self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh)
+
+        self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average, save_data=False)
+        self.logger.log.debug(f"save ... update average: {self.average}")
+        self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value, save_data=False)
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh, save_data=False)
 
         # Speichert die Daten
         self.save_data()
 
     def save_day(self):
-        """Speichert den täglichen Verbrauch und ruft save_data auf."""
-        print(f"Daily consumption: {self.daily_wh:.4f} Wh")
-        elapsed_time_in_hours = (time.time() - self.hourly_start_time) / 3600
-        if elapsed_time_in_hours > 0:
-            daily_forecast = (self.daily_wh / elapsed_time_in_hours) * 24
-            self.statsmanager.update_percent_status_data("powerconsumption", "daily_wh_average", daily_forecast)
-            print(f"Projected daily consumption: {daily_forecast:.4f} Wh")
-        else:
-            print("No projected data available.")
+        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        total_cost = sum(self.energy_costs_by_hour.values())
+        self.energy_costs_by_day[str(self.current_day)] = total_cost
+        self.energy_costs_by_hour = {}
 
         # Speichert die Daten
         self.save_data()
 
-    def update(self, power, timestamp):
+    def update(self, power, grid_power, battery_power, timestamp):
         """Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit."""
         # Setze den Startwert, wenn es die erste Messung ist
         if self.last_time is None:
             self.last_value = power
+            self.last_grid_value = grid_power
             self.last_time = timestamp
             self.current_hour = time.localtime(timestamp).tm_hour
             self.current_day = time.localtime(timestamp).tm_yday
@@ -179,6 +439,13 @@ class PowerConsumptionBase:
         wh = (self.last_value * time_diff)
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
         self.daily_wh += wh   # Update des täglichen Verbrauchs
+
+        grid_wh = (self.last_grid_value * time_diff)
+        if grid_wh > 0.0:
+            self.hour_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
+            self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
+
+        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
@@ -196,35 +463,19 @@ class PowerConsumptionBase:
             self.current_hour = current_hour
             self.hourly_wh = 0  # Setze den stündlichen Verbrauch zurück
             self.hourly_start_time = timestamp
+            self.hour_grid_wh = 0
 
         # Speichern der Daten alle 5 Minuten
         current_minute = time.localtime(timestamp).tm_min
-        if current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]:
+        if current_minute in [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] and current_minute != self.last_minute:
             self.save_data()
+            self.last_minute = current_minute
 
         # Aktualisieren der letzten Werte
         self.last_value = power
+        self.last_grid_value = grid_power
+        self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
-
-    def check_for_data(self):
-        missing_data = []
-
-        if self.P_AC_consumption_L1 is None:
-            missing_data.append("P_AC_consumption_L1")
-        if self.number_of_phases is None:
-            missing_data.append("number_of_phases")
-
-        # Only for 2 or 3 phases:
-        if self.number_of_phases >= 2 and self.P_AC_consumption_L2 is None:
-            missing_data.append("P_AC_consumption_L2")
-        if self.number_of_phases == 3 and self.P_AC_consumption_L3 is None:
-            missing_data.append("P_AC_consumption_L3")
-
-        if missing_data:
-            self.logger.log_debug(f"Missing data: {', '.join(missing_data)}")
-            return False
-
-        return True
 
     def get_hourly_average(self):
         """Calculates the projected hourly average."""
@@ -235,9 +486,25 @@ class PowerConsumptionBase:
             return projected_wh
         return 0
 
+    def get_daily_average(self):
+        total_duration_minutes, _ = self.get_minutes_since_until__midnight()
+        if total_duration_minutes > 0:
+            consumption_per_minute = self.daily_wh / total_duration_minutes
+            projected_consumption_wh = consumption_per_minute * 1440
+            return projected_consumption_wh / 24
+
+        return 0
+
     def get_daily_wh(self):
         """Returns the current daily consumption in Wh."""
         return self.daily_wh
+
+    def get_minutes_since_until__midnight(self):
+        """Berechnet die vergangenen Minuten seit Mitternacht."""
+        now = TimeUtilities.get_now()  # Lokale Zeit holen
+        elapsed_minutes = now.hour * 60 + now.minute + now.second / 60  # Umrechnung in Minuten
+        remaining_minutes = 1440 - elapsed_minutes  # Verbleibende Minuten bis Mitternacht
+        return elapsed_minutes, remaining_minutes
 
     def reset_data(self):
         """Reset all tracked data to default values."""
@@ -245,6 +512,16 @@ class PowerConsumptionBase:
         self.daily_wh = 0
         self.hourly_start_time = time.time()
         self.last_value = 0
+        self.last_grid_value = 0
         self.last_time = time.time()
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
+        self.curent_year = time.localtime(time.time()).tm_year
+
+    def get_monthly_cost(self, year, month):
+        """Berechnet die Gesamtkosten für einen bestimmten Monat anhand von yday."""
+        start_day = sum(calendar.monthrange(year, m)[1] for m in range(1, month)) + 1
+        end_day = start_day + calendar.monthrange(year, month)[1] - 1
+
+        # Summe der Kosten für alle yday im Bereich
+        return sum(self.energy_costs_by_day.get(day, 0) for day in range(start_day, end_day + 1))
