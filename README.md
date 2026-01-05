@@ -13,6 +13,22 @@
 This is a Python 3 Application that turns on your ESS unit (controller) at the right time when your hourly dynamic
 energy prices are low. Or used for discharging when prices are extremely high.
 
+---
+
+### Design Note: Hourly Prices as Core Decision Unit
+
+SEUSS bases **all charging and discharging decisions on hourly prices**, even when some spot markets provide higher-resolution (15-minute) prices.
+
+**Why this matters:**
+
+- ⚖ **Fair comparison:** Hourly aggregation ensures prices from aWATTar, ENTSO-E, and Tibber are semantically equivalent.  
+- ⏱ **Avoid misleading spikes:** Single 15-minute low prices do not make an entire hour “cheap.”  
+- 🔌 **Contiguous periods:** Maintains meaningful, hour-scale charging/discharging windows.  
+- 🛠 **Hardware stability:** Prevents excessive switching and reduces wear on ESS components.
+
+> For a detailed explanation, see the [full design note](./SEUSS_hourly_price_design_decision.md).
+
+---
 #### Currently supported systems are:
 
 ### ESS Units
