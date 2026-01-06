@@ -219,8 +219,17 @@ class OpenMeteo:
                 f"Forecast: Today {total_today:.2f} Wh (Measured: {measured_today:.0f}, Rest: {rest_today_final:.0f}), "
                 f"Tomorrow {total_tomorrow:.2f} Wh (Adj: {adj:.2f})"
             )
-            return solar_data.total_current_hour
+            return {
+                "current_hour": sum_current_hour_wh_raw,
+                "past_today": sum_forecast_past_today_raw,
+                "rest_today": sum_forecast_rest_today_raw
+            }
 
         except Exception as e:
             self.logger.log.exception(f"Forecast failed: {e}")
-            return 0.0
+            # Return the same structure with zeros so the caller doesn't crash
+            return {
+                "current_hour": 0.0,
+                "past_today": 0.0,
+                "rest_today": 0.0
+            }

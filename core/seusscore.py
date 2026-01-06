@@ -274,27 +274,30 @@ class SEUSS:
         return total_solar
 
     def process_solar_forecast(self, total_solar):
-        forecast = OpenMeteo()
-        # This now updates the adjustment_factor internally
-        total_forecast = forecast.forecast(self.solardata)
+        forecast_provider = OpenMeteo()
+        # Now returns a dictionary
+        forecast_results = forecast_provider.forecast(self.solardata)
 
         calculator = SolarBatteryCalculator(self.solardata)
         self.solardata.update_need_soc(calculator.calculate_battery_percentage())
         self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
 
-        # Get the freshly calculated values
-        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
-        efficiency_display = round(adj[0] * 100, 2)
+        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or [1.0]
+        adj_factor = adj[0]
+        efficiency_display = round(adj_factor * 100, 2)
 
-        if total_forecast is not None and total_forecast > 0.0:
-            # 'total_forecast' is the prediction for the CURRENT HOUR.
-            # We compare it to 'total_solar' (what actually came in this hour so far)
-            hour_performance = round((total_solar / total_forecast) * 100, 2)
+        # Calculate expected yield from 00:00 until the end of the current hour
+        # We apply the adjustment_factor to the raw forecast
+        expected_until_now = (forecast_results["past_today"] + forecast_results["current_hour"]) * adj_factor
 
-            self.logger.log.info(f"Solar hour performance: {hour_performance}% of adjusted forecast.")
+        if expected_until_now > 0.0:
+            # Compare actual yield (since 00:00) with adjusted forecast (since 00:00)
+            solar_performance = round((total_solar / expected_until_now) * 100, 2)
+
+            self.logger.log.info(f"Solar hour performance: {solar_performance}% of adjusted forecast.")
             self.logger.log.info(f"Current System Efficiency (Adj-Factor): {efficiency_display}%")
         else:
-            self.logger.log.info(f"Solar forecast is zero. Current Adj-Factor: {efficiency_display}%")
+            self.logger.log.info(f"Solar forecast until now is zero. Current Adj-Factor: {efficiency_display}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
         only_observation = False
