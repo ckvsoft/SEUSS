@@ -97,7 +97,7 @@ class PvInverterResults(MqttResult):
 
         custom_name = self.get_value(device_id, 'CustomName')
         if not isinstance(custom_name, str) or not custom_name.strip():
-            return 0.0
+            custom_name = f"device_{device_id}"
 
         stats_manager_instance = StatsManager()
         stats_manager_instance.insert_new_daily_status_data("pvinverters", f"{custom_name}_forward_start", forward)
