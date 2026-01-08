@@ -374,7 +374,7 @@ class SEUSSWeb:
             if price is None:
                 price = ""
 
-            if height + 10 > baseline_y:
+            if height + 15 > baseline_y:
                 # Preis wird innerhalb des Balkens angezeigt (Kontrastfarbe)
                 price_color = "white" if (color != "gray" and color != "gainsboro") else "black"  # Kontrastfarbe wählen
                 svg += f"""
