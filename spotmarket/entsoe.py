@@ -120,7 +120,7 @@ class Entsoe(MarketData):
 
                     while last_pos < 96:
                         last_pos += 1
-                        dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
+                        dt_s = dt_start + timedelta(minutes=(last_pos - 1) * 15)
                         self.logger.log.warning(
                             f"Gap detected: Position {last_pos} at {dt_s.isoformat()}."
                         )
@@ -178,7 +178,7 @@ class Entsoe(MarketData):
 
                         while last_pos < current_pos - 1:
                             last_pos += 1
-                            dt_s = dt_start + timedelta(hours=(last_pos // 4) - 1)
+                            dt_s = dt_start + timedelta(minutes=(last_pos - 1) * 15)
                             self.logger.log.warning(
                                 f"Gap detected: Position {last_pos} at {dt_s.isoformat()}."
                             )
