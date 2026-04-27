@@ -93,10 +93,15 @@
             text-align: right;
         }
         .stats-compare th {
-            text-align: left;
             background: #f7f7f7;
             color: #333;
         }
+        /* First column = label (left-aligned for both header and data),
+         * remaining columns = numeric values (right-aligned). Without
+         * this both <th> were left-aligned while <td> stayed right --
+         * headers and numbers ended up at opposite edges of the cell.
+         */
+        .stats-compare th:first-child,
         .stats-compare td:first-child {
             text-align: left;
             color: #555;
@@ -153,12 +158,16 @@
          data-today-consumption="{{ stats['today']['consumption_wh'] }}"
          data-today-grid="{{ stats['today']['grid_wh'] }}"
          data-today-pv="{{ stats['today']['pv_wh'] }}"
-         data-today-battery="{{ stats['today']['battery_throughput_wh'] }}"
+         data-today-battery-charge="{{ stats['today']['battery_charge_wh'] }}"
+         data-today-battery-discharge="{{ stats['today']['battery_discharge_wh'] }}"
+         data-today-grid-export="{{ stats['today']['grid_export_wh'] }}"
          data-today-cost="{{ stats['today']['cost_eur'] }}"
          data-yesterday-consumption="{{ stats['yesterday']['consumption_wh'] }}"
          data-yesterday-grid="{{ stats['yesterday']['grid_wh'] }}"
          data-yesterday-pv="{{ stats['yesterday']['pv_wh'] }}"
-         data-yesterday-battery="{{ stats['yesterday']['battery_throughput_wh'] }}"
+         data-yesterday-battery-charge="{{ stats['yesterday']['battery_charge_wh'] }}"
+         data-yesterday-battery-discharge="{{ stats['yesterday']['battery_discharge_wh'] }}"
+         data-yesterday-grid-export="{{ stats['yesterday']['grid_export_wh'] }}"
          data-yesterday-cost="{{ stats['yesterday']['cost_eur'] }}">
 
         <div class="stats-tile">
@@ -183,6 +192,14 @@
         </div>
 
         <div class="stats-tile pv">
+            <div class="label">Grid Export</div>
+            <div class="value">
+                <span id="tile-grid-export">{{ "{:.0f}".format(active['grid_export_wh']) }}</span>
+                <span class="unit">Wh</span>
+            </div>
+        </div>
+
+        <div class="stats-tile pv">
             <div class="label">PV Production</div>
             <div class="value">
                 <span id="tile-pv">{{ "{:.0f}".format(active['pv_wh']) }}</span>
@@ -191,17 +208,27 @@
         </div>
 
         <div class="stats-tile">
-            <div class="label">Battery Throughput</div>
+            <div class="label">Battery Charged</div>
             <div class="value">
-                <span id="tile-battery">{{ "{:.0f}".format(active['battery_throughput_wh']) }}</span>
+                <span id="tile-battery-charge">{{ "{:.0f}".format(active['battery_charge_wh']) }}</span>
                 <span class="unit">Wh</span>
             </div>
         </div>
 
-        <div class="stats-tile cost">
+        <div class="stats-tile">
+            <div class="label">Battery Discharged</div>
+            <div class="value">
+                <span id="tile-battery-discharge">{{ "{:.0f}".format(active['battery_discharge_wh']) }}</span>
+                <span class="unit">Wh</span>
+            </div>
+        </div>
+
+        <div class="stats-tile cost"
+             title="Stored as cents internally; shown as EUR.">
             <div class="label">Grid Cost</div>
             <div class="value">
-                <span id="tile-cost">{{ "{:.4f}".format(active['cost_eur']) }}</span>
+                <span id="tile-cost"
+                      title="{{ '{:.4f}'.format(active['cost_eur']) }} ¢">{{ "{:.4f}".format(active['cost_eur'] / 100.0) }}</span>
                 <span class="unit">€</span>
             </div>
         </div>
@@ -228,19 +255,29 @@
                 <td>{{ "{:.0f}".format(stats['yesterday']['grid_wh']) }} Wh</td>
             </tr>
             <tr>
+                <td>Grid export</td>
+                <td>{{ "{:.0f}".format(stats['today']['grid_export_wh']) }} Wh</td>
+                <td>{{ "{:.0f}".format(stats['yesterday']['grid_export_wh']) }} Wh</td>
+            </tr>
+            <tr>
                 <td>PV production</td>
                 <td>{{ "{:.0f}".format(stats['today']['pv_wh']) }} Wh</td>
                 <td>{{ "{:.0f}".format(stats['yesterday']['pv_wh']) }} Wh</td>
             </tr>
             <tr>
-                <td>Battery throughput</td>
-                <td>{{ "{:.0f}".format(stats['today']['battery_throughput_wh']) }} Wh</td>
-                <td>{{ "{:.0f}".format(stats['yesterday']['battery_throughput_wh']) }} Wh</td>
+                <td>Battery charged</td>
+                <td>{{ "{:.0f}".format(stats['today']['battery_charge_wh']) }} Wh</td>
+                <td>{{ "{:.0f}".format(stats['yesterday']['battery_charge_wh']) }} Wh</td>
+            </tr>
+            <tr>
+                <td>Battery discharged</td>
+                <td>{{ "{:.0f}".format(stats['today']['battery_discharge_wh']) }} Wh</td>
+                <td>{{ "{:.0f}".format(stats['yesterday']['battery_discharge_wh']) }} Wh</td>
             </tr>
             <tr>
                 <td>Grid cost</td>
-                <td>{{ "{:.4f}".format(stats['today']['cost_eur']) }} €</td>
-                <td>{{ "{:.4f}".format(stats['yesterday']['cost_eur']) }} €</td>
+                <td title="{{ '{:.4f}'.format(stats['today']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['today']['cost_eur'] / 100.0) }} €</td>
+                <td title="{{ '{:.4f}'.format(stats['yesterday']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['yesterday']['cost_eur'] / 100.0) }} €</td>
             </tr>
         </tbody>
     </table>
@@ -282,12 +319,22 @@
                     formatNum(grid.getAttribute('data-' + range + '-consumption'), 0);
                 document.getElementById('tile-grid').textContent =
                     formatNum(grid.getAttribute('data-' + range + '-grid'), 0);
+                document.getElementById('tile-grid-export').textContent =
+                    formatNum(grid.getAttribute('data-' + range + '-grid-export'), 0);
                 document.getElementById('tile-pv').textContent =
                     formatNum(grid.getAttribute('data-' + range + '-pv'), 0);
-                document.getElementById('tile-battery').textContent =
-                    formatNum(grid.getAttribute('data-' + range + '-battery'), 0);
-                document.getElementById('tile-cost').textContent =
-                    formatNum(grid.getAttribute('data-' + range + '-cost'), 4);
+                document.getElementById('tile-battery-charge').textContent =
+                    formatNum(grid.getAttribute('data-' + range + '-battery-charge'), 0);
+                document.getElementById('tile-battery-discharge').textContent =
+                    formatNum(grid.getAttribute('data-' + range + '-battery-discharge'), 0);
+
+                // Cost: stored in cents server-side; display as EUR
+                // (divide by 100). Tooltip keeps the original cent value
+                // for precision / debugging.
+                const costRaw = parseFloat(grid.getAttribute('data-' + range + '-cost')) || 0;
+                const tileCost = document.getElementById('tile-cost');
+                tileCost.textContent = (costRaw / 100.0).toFixed(4);
+                tileCost.setAttribute('title', costRaw.toFixed(4) + ' ¢');
 
                 tabs.forEach(t => {
                     if (t.getAttribute('data-range') === range) {

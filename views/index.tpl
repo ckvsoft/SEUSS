@@ -46,18 +46,20 @@
                         <div id="grid_power">Gridpower: -</div>
                         <div id="battery_power">Batterypower: -</div>
                         <div id="pv">Pv: -</div>
+                        <div id="loss">Loss: -</div>
+                        <div id="efficiency">Efficiency: -</div>
                     </div>
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
                         <div id="consumptionD">Consumption today: -</div>
                         <div id="gridD">Grid today: -</div>
+                        <div id="gridExportD">Grid export today: -</div>
                         <div id="gridH">Grid this hour: -</div>
                         <div id="pvD">PV today: -</div>
-                        <div id="batteryThroughputD">Battery today: -</div>
+                        <div id="batteryChargeD">Battery charged today: -</div>
+                        <div id="batteryDischargeD">Battery discharged today: -</div>
                         <div id="costs">Current Hour Costs: -</div>
                         <div id="total_costs_today">Total Costs Today: -</div>
-                        <div id="loss">Loss: -</div>
-                        <div id="efficiency">Efficiency: -</div>
                     </div>
                 </div>
             </div>
@@ -134,9 +136,11 @@
                     updateValue("pv", "PV", data.pv, "W");
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
                     updateValue("gridD", "Grid today", data.gridD, "Wh");
+                    updateValue("gridExportD", "Grid export today", data.gridExportD, "Wh");
                     updateValue("gridH", "Grid this hour", data.gridH, "Wh");
                     updateValue("pvD", "PV today", data.pvD, "Wh");
-                    updateValue("batteryThroughputD", "Battery today", data.batteryThroughputD, "Wh");
+                    updateValue("batteryChargeD", "Battery charged today", data.batteryChargeD, "Wh");
+                    updateValue("batteryDischargeD", "Battery discharged today", data.batteryDischargeD, "Wh");
                     if (data.soc !== undefined && data.soc !== null) {
                         document.getElementById("soc-value").textContent = data.soc.toFixed(0) + " %";
                     }

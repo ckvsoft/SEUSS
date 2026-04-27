@@ -240,8 +240,10 @@ class SEUSSWeb:
 
         consumption_by_day = _get_dict("consumption_wh_by_day")
         grid_by_day = _get_dict("grid_wh_by_day")
+        grid_export_by_day = _get_dict("grid_export_wh_by_day")
         pv_by_day = _get_dict("pv_wh_by_day")
-        battery_by_day = _get_dict("battery_throughput_wh_by_day")
+        battery_charge_by_day = _get_dict("battery_charge_wh_by_day")
+        battery_discharge_by_day = _get_dict("battery_discharge_wh_by_day")
         costs_by_day = _get_dict("energy_costs_by_day")
 
         today_iso = date.today().isoformat()
@@ -252,8 +254,10 @@ class SEUSSWeb:
                 "iso": iso_date,
                 "consumption_wh": consumption_by_day.get(iso_date, 0),
                 "grid_wh": grid_by_day.get(iso_date, 0),
+                "grid_export_wh": grid_export_by_day.get(iso_date, 0),
                 "pv_wh": pv_by_day.get(iso_date, 0),
-                "battery_throughput_wh": battery_by_day.get(iso_date, 0),
+                "battery_charge_wh": battery_charge_by_day.get(iso_date, 0),
+                "battery_discharge_wh": battery_discharge_by_day.get(iso_date, 0),
                 "cost_eur": costs_by_day.get(iso_date, 0),
             }
 

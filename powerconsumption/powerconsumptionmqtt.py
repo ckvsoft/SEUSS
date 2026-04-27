@@ -156,9 +156,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'efficiency': efficiency,
                             'consumptionD': self.get_daily_wh(),
                             'gridD': self.get_daily_grid_wh(),
+                            'gridExportD': self.get_daily_grid_export_wh(),
                             'gridH': self.get_hour_grid_wh(),
                             'pvD': self.get_daily_pv_wh(),
-                            'batteryThroughputD': self.get_daily_battery_throughput_wh(),
+                            'batteryChargeD': self.get_daily_battery_charge_wh(),
+                            'batteryDischargeD': self.get_daily_battery_discharge_wh(),
                             'soc' : self.soc
                         })
 

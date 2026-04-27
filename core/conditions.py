@@ -232,10 +232,29 @@ class Conditions:
         current_soc, min_soc, required_capacity = (
             self._calculate_available_surplus(future_high)
         )
-        # Total minutes of discharging window we still face before next charge:
-        future_minutes = sum(
-            (blk.get_duration_minutes() or 0) for blk in future_high
-        )
+        # Total minutes of discharging window we still face before next
+        # charge. For a block that's currently active we want the
+        # REMAINING duration, not the full one -- otherwise the log
+        # line keeps reporting 120 minutes for a 2h block until it
+        # fully expires, even though only 30 minutes are actually left.
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
+        future_minutes = 0
+        for blk in future_high:
+            blk_end = blk.get_end_datetime() if hasattr(blk, "get_end_datetime") else None
+            if blk_end is None:
+                # Fallback: compute from start + total duration.
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                from datetime import timedelta
+                blk_end = blk_start + timedelta(minutes=blk.get_duration_minutes() or 0)
+            if blk_end.tzinfo is None:
+                blk_end = blk_end.replace(tzinfo=timezone.utc)
+            remaining_seconds = max(0, (blk_end - now_utc).total_seconds())
+            future_minutes += int(remaining_seconds / 60)
 
         self.conditions_by_operation_mode["discharging"].update({
             f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh "
@@ -769,9 +788,27 @@ class Conditions:
             "powerconsumption", "hourly_watt_average"
         )
         avg_consumption_per_hour = round(avg_list[0], 2) if avg_list else 0
-        total_minutes = sum(
-            (blk.get_duration_minutes() or 0) for blk in future_high_blocks
-        )
+
+        # Use REMAINING minutes per block, not full duration. A block
+        # that's currently active 18:00-20:00 still has only 30 minutes
+        # left at 19:30 -- we shouldn't reserve capacity for the full 2h.
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        total_minutes = 0
+        for blk in future_high_blocks:
+            blk_end = blk.get_end_datetime() if hasattr(blk, "get_end_datetime") else None
+            if blk_end is None:
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                blk_end = blk_start + timedelta(minutes=blk.get_duration_minutes() or 0)
+            if blk_end.tzinfo is None:
+                blk_end = blk_end.replace(tzinfo=timezone.utc)
+            remaining_seconds = max(0, (blk_end - now_utc).total_seconds())
+            total_minutes += int(remaining_seconds / 60)
+
         # Convert to hours, apply 10% safety buffer like before.
         required = (total_minutes / 60.0) * avg_consumption_per_hour * 1.10
         self.logger.log.debug(f"Required capacity: {required:.2f} Wh")
