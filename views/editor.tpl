@@ -14,27 +14,40 @@
             <form id="meinFormular" autocomplete="off">
     <div class="container">
         <div class="left">
+                <%
+                # Top-level keys that get their own grouped fieldset
+                # below; the generic loop should skip them.
+                solar_keys = [
+                    "use_solar_forecast_to_abort",
+                    "solar_adj_ewma_alpha",
+                    "solar_adj_min_theoretical_wh",
+                    "solar_adj_min_sun_hours",
+                    "solar_adj_max_daily_change",
+                ]
+                battery_keys = [
+                    "skip_charge_when_battery_sufficient",
+                    "delay_grid_charging_below_active_soc_limit",
+                ]
+                grouped_keys = set(solar_keys + battery_keys)
+                section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]
+                %>
                 % for key, value in config.items():
-                    <%
-                    if tooltips and key in tooltips:
-                        title=tooltips.get(key)
-                        additional=' ℹ️'
-                    else:
-                        title = ''
-                        additional= ''
-                    end
-                    formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
-                    %>
-                    % if key not in ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]:
+                    % if key not in section_keys and key not in grouped_keys:
+                        <%
+                        if tooltips and key in tooltips:
+                            title = tooltips.get(key)
+                            additional = ' \u2139\ufe0f'
+                        else:
+                            title = ''
+                            additional = ''
+                        end
+                        formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                        %>
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
                             <br/>
                             <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
-                        % elif key == "password":
-                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
-                            <input type="password" id="{{ key }}" name="{{ key }} autofill="new-password">
-                            <span id="password-toggle" onclick="togglePasswordVisibility()">👁️</span><br>
                         % elif key == "log_level":
                             <select id="{{ key }}" name="{{ key }}">
                                 <option value="DEBUG" {{ 'selected' if value == 'DEBUG' else '' }}>DEBUG</option>
@@ -52,6 +65,60 @@
                         % end
                     % end
                 % end
+
+                <fieldset>
+                    <legend>Solar Forecast</legend>
+                    % for key in solar_keys:
+                        % if key in config:
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
+
+                <fieldset>
+                    <legend>Battery / Charging</legend>
+                    % for key in battery_keys:
+                        % if key in config:
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
 
                 % if isinstance(config["prices"], list):
                     <fieldset>

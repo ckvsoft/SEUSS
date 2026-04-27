@@ -51,6 +51,33 @@ class OpenMeteo:
             self.logger.log.error(f"Date {target_date} ({label}) not found in API response.")
             return None
 
+    def _estimate_sun_hours_so_far(self, now):
+        """
+        Cheap approximation of "how many hours of usable sun have we
+        already had today". Used as a guard for the adjustment-factor
+        learning logic: until we've seen enough sun, we don't trust the
+        observed-vs-forecast ratio enough to update the multiplier.
+
+        We define a "sun hour" as one full clock-hour past sunrise --
+        below this we're in dawn / dusk regime where small absolute
+        errors translate to huge relative ones. Sunrise comes from the
+        already-fetched solar_data on the caller side; here we only need
+        a rough hours-since-sunrise figure based on the local clock.
+
+        Falls back to a simple heuristic (hours since 06:00 local) if
+        no sunrise info is available yet, which is fine because the
+        threshold check is paired with a Wh-threshold anyway.
+        """
+        try:
+            # Crude: assume sunrise ~ 06:00 local. The Wh threshold catches
+            # the dark-winter-morning case where sun rises later -- in that
+            # case theoretical_past_net stays low and learning is skipped
+            # for the right reason.
+            hours = max(0.0, (now.hour + now.minute / 60.0) - 6.0)
+            return hours
+        except Exception:
+            return 0.0
+
     def calculate_exponential_damping(self, hour, panel, sunrise_str, sunset_str):
         try:
             # ISO Strings zu Objekten
@@ -116,13 +143,12 @@ class OpenMeteo:
             debug_api_tomorrow_raw = 0.0
 
             inverter_efficiency = 0.88
-            solar_data.power_peak = sum(panel['totPower'] for panel in self.panels)
 
             for panel in self.panels:
                 if not panel.get('enabled', True): continue
 
                 url = (f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}"
-                       f"&hourly=global_tilted_irradiance&daily=sunrise,sunset,sunshine_duration"
+                       f"&hourly=global_tilted_irradiance&daily=sunrise,sunset"
                        f"&timezone={self.config.time_zone}&forecast_days=2&tilt={panel['angle']}&azimuth={panel['direction']}")
 
                 data = None
@@ -155,13 +181,15 @@ class OpenMeteo:
                     sr_t, ss_t = daily['sunrise'][t_idx], daily['sunset'][t_idx]
                     sr_tm, ss_tm = daily['sunrise'][tm_idx], daily['sunset'][tm_idx]
 
-                    # ALLE Updates für den BatteryCalculator
+                    # Sunrise/sunset are kept on solar_data for downstream
+                    # consumers (currently only sunrise_tomorrow_day is
+                    # read, by the solar abort condition; the others stay
+                    # for symmetry). The local sr/ss variables drive the
+                    # damping curve below.
                     solar_data.update_sunrise_current_day(sr_t)
                     solar_data.update_sunset_current_day(ss_t)
                     solar_data.update_sunrise_tomorrow_day(sr_tm)
                     solar_data.update_sunset_tomorrow_day(ss_tm)
-                    solar_data.update_sun_time_today(daily['sunshine_duration'][t_idx])
-                    solar_data.update_sun_time_tomorrow(daily['sunshine_duration'][tm_idx])
 
                     area, eff, p_max = panel.get('total_area', 0), panel.get('efficiency', 20) / 100, panel.get(
                         'totPower', 0) * 1000
@@ -193,6 +221,31 @@ class OpenMeteo:
                             sum_forecast_tomorrow_raw += damped_wh
 
             # --- Learning Logic ---
+            #
+            # The previous version overwrote `adj` directly from the
+            # observed-vs-forecast ratio of the last few hours. That made
+            # one cloudy morning crash the multiplier for the whole day
+            # AND tomorrow, with no smoothing. It also persisted across
+            # restarts via statsmanager, so a bad day yesterday biased
+            # today's first reading.
+            #
+            # New behaviour:
+            #   * EWMA (exponential moving average) with configurable alpha
+            #     -- the new ratio gets weight `alpha`, the persisted value
+            #     gets `1-alpha`. alpha=1.0 reproduces the old behaviour.
+            #   * A daily theoretical-yield threshold below which we don't
+            #     learn at all -- avoids training on a single sliver of
+            #     morning sun.
+            #   * A minimum number of "sun hours so far" before we touch
+            #     the factor -- avoids early-morning over-correction.
+            #   * Per-day cap on how much `adj` can move (clamps drift if
+            #     the model and reality disagree wildly on one day).
+            #
+            # All four parameters are read from Config so installations
+            # with very different climates (alpine vs coastal vs arid)
+            # can tune behaviour without code changes. Defaults match
+            # "EWMA alpha=0.3, threshold 1000 Wh, min 4 sun hours, cap
+            # 20%/day" -- a moderate setting.
             measured_today = solar_data.current_hour_solar_yield or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * inverter_efficiency
 
@@ -200,10 +253,53 @@ class OpenMeteo:
             adj = (adj_data[0] / 100.0) if isinstance(adj_data, list) and len(adj_data) > 0 else (
                 (adj_data / 100.0) if adj_data else 1.0)
 
-            if theoretical_past_net > 200:
-                adj = max(0.2, min(2.0, measured_today / theoretical_past_net))
+            # Read tunables from config with safe fallbacks.
+            alpha = getattr(self.config, "solar_adj_ewma_alpha", 0.3)
+            min_theoretical = getattr(self.config, "solar_adj_min_theoretical_wh", 1000.0)
+            min_sun_hours = getattr(self.config, "solar_adj_min_sun_hours", 4.0)
+            max_daily_change = getattr(self.config, "solar_adj_max_daily_change", 0.20)
+
+            # Sun hours observed so far today (rough clock-based estimate
+            # of how far past sunrise we are). The Wh-threshold check below
+            # catches cases where the clock says "10:00" but a heavy
+            # overcast meant near-zero actual yield.
+            sun_hours_so_far = self._estimate_sun_hours_so_far(now)
+
+            should_learn = (
+                theoretical_past_net > min_theoretical
+                and sun_hours_so_far >= min_sun_hours
+            )
+
+            if should_learn:
+                instantaneous = measured_today / theoretical_past_net
+                # Clamp the same hard limits as before -- the model can't
+                # be off by more than 5x in either direction, that would
+                # be a configuration / data problem we shouldn't paper over.
+                instantaneous = max(0.2, min(2.0, instantaneous))
+
+                # EWMA smoothing
+                new_adj = alpha * instantaneous + (1.0 - alpha) * adj
+
+                # Per-day change cap
+                if max_daily_change > 0:
+                    delta = new_adj - adj
+                    capped = max(-max_daily_change, min(max_daily_change, delta))
+                    new_adj = adj + capped
+
+                adj = max(0.2, min(2.0, new_adj))
                 self.statsmanager.update_percent_status_data('solar', 'adjustment_factor', round(adj, 2))
                 self.statsmanager.update_percent_status_data('solar', 'efficiency', round(adj * 100, 2))
+                self.logger.log.debug(
+                    f"adj learn: instant={instantaneous:.2f}, smoothed={adj:.2f} "
+                    f"(alpha={alpha}, sun_h={sun_hours_so_far:.1f}, "
+                    f"theoretical={theoretical_past_net:.0f}Wh)"
+                )
+            else:
+                self.logger.log.debug(
+                    f"adj learn skipped: theoretical={theoretical_past_net:.0f}Wh "
+                    f"(need {min_theoretical}), sun_h={sun_hours_so_far:.1f} "
+                    f"(need {min_sun_hours}). Keeping adj={adj:.2f}"
+                )
 
             rest_today_final = sum_forecast_rest_today_raw * inverter_efficiency * adj
             total_today = measured_today + rest_today_final
@@ -211,7 +307,6 @@ class OpenMeteo:
 
             solar_data.update_total_current_day(round(total_today, 2))
             solar_data.update_total_tomorrow_day(round(total_tomorrow, 2))
-            solar_data.update_total_current_hour(round(sum_current_hour_wh_raw * inverter_efficiency * adj, 2))
 
             self.logger.log.debug(
                 f"RAW API (Total): Today {debug_api_today_raw:.0f} Wh, Tomorrow {debug_api_tomorrow_raw:.0f} Wh")

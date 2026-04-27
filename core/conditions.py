@@ -59,9 +59,14 @@ class Conditions:
     cheap 60min block won't abort charging mid-block.
     """
 
-    def __init__(self, itemlist, essunit):
+    def __init__(self, itemlist, essunit, solardata=None):
         self.items = itemlist
         self.essunit = essunit
+        # solardata is optional -- callers that don't have a solar
+        # subsystem (or have it disabled) can leave it None. The solar
+        # forecast abort condition only registers when both
+        # `use_solar_forecast_to_abort` is set AND solardata is present.
+        self.solardata = solardata
         self.config = Config()
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
@@ -275,6 +280,45 @@ class Conditions:
                 self._abort_charging_block_above_hard_cap
         })
 
+        # Solar forecast abort: skip charging when both
+        #   (a) total expected solar (today + tomorrow) covers two days
+        #       of average consumption, AND
+        #   (b) current SOC alone covers consumption until the next solar
+        #       event.
+        # Both must hold -- (a) alone would drain the battery overnight
+        # if today is mostly past; (b) alone would skip charging on a
+        # week of bad weather. Together they only skip when we're truly
+        # in the comfort zone.
+        #
+        # Only registered when the config flag is on AND we actually have
+        # solardata to check against. The user can flip the flag without
+        # restart -- conditions are rebuilt on every evaluation cycle.
+        if (getattr(self.config, "use_solar_forecast_to_abort", False)
+                and self.solardata is not None):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - solar forecast covers consumption "
+                "and battery is sufficient":
+                    self._abort_charging_solar_forecast_sufficient
+            })
+
+        # Battery-range abort: skip charging when the current battery
+        # state alone covers consumption until the next equally-cheap-
+        # or-cheaper future charge cluster. Independent of solar -- this
+        # is for runs when there's no usable solar (winter, indoor PV)
+        # but the user still wants to avoid topping up at a less-cheap
+        # cluster when a cheaper one is coming up later in the day.
+        #
+        # Registered AFTER the solar abort: when both flags are on, the
+        # solar check runs first and a True there short-circuits this
+        # one (see evaluate_conditions, which breaks on the first
+        # matching abort).
+        if getattr(self.config, "skip_charge_when_battery_sufficient", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - battery covers consumption "
+                "until next equally-cheap charge cluster":
+                    self._abort_charging_battery_reaches_next_cluster
+            })
+
         # Switching uses the same hard cap rule by default.
         self.abort_conditions_by_operation_mode["switching_abort"].update({
             "Abort switching - Block average exceeds hard cap":
@@ -304,6 +348,353 @@ class Conditions:
 
     def _abort_switching_block_above_hard_cap(self):
         return self._current_quarter_above_hard_cap()
+
+    def _abort_charging_solar_forecast_sufficient(self):
+        """
+        True if BOTH of these hold:
+          (a) Today's + tomorrow's adjusted solar forecast covers at
+              least two days of average consumption.
+          (b) Current battery SOC alone covers consumption until the
+              next "solar event" (sunrise tomorrow if we're past sunset
+              today, end of today's daylight otherwise) plus a safety
+              margin.
+
+        The double check is on purpose. Either condition alone has a
+        well-known failure mode:
+
+          * (a) alone fails when the day is mostly over -- we'd skip
+            charging tonight on the strength of "tomorrow will be
+            sunny", then drain the battery overnight.
+          * (b) alone fails on a streak of bad-weather days -- the SOC
+            check works for the next 12h but doesn't see that day 2/3/4
+            won't recharge either.
+
+        Combining them means we only skip charging when we're in the
+        comfort zone on BOTH the long horizon (forecast) and the short
+        horizon (battery). Anything else -> charging stays allowed.
+
+        Returns False on any error or missing data, which is the safe
+        side: we'd rather charge a battery we didn't need to than skip
+        charging we did need.
+        """
+        try:
+            sd = self.solardata
+            if sd is None:
+                return False
+
+            # ---- (a) Two-day horizon: forecast vs consumption ----
+            forecast_today = sd.total_current_day or 0.0
+            forecast_tomorrow = sd.total_tomorrow_day or 0.0
+            total_forecast_wh = forecast_today + forecast_tomorrow
+
+            # Consumption baseline. `daily_watt_average` from the stats
+            # manager is the projected hourly-average consumption in
+            # Wh/h (despite the name -- see
+            # PowerConsumptionBase.get_daily_average which divides
+            # projected daily Wh by 24). So:
+            #   avg_hourly_wh        = avg_list[0]   # Wh per hour
+            #   one-day consumption  = avg_hourly_wh * 24
+            #   two-day consumption  = avg_hourly_wh * 48
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "daily_watt_average"
+            )
+            avg_hourly_wh = (
+                round(avg_list[0], 2)
+                if isinstance(avg_list, (list, tuple)) and avg_list
+                else 0.0
+            )
+
+            # If we have no consumption history yet (fresh install,
+            # stats reset, etc.) we can't honestly evaluate either
+            # condition. Defer -- charging stays allowed until we have
+            # data to reason about.
+            if avg_hourly_wh <= 0:
+                self.logger.log.debug(
+                    "Solar abort: no consumption history yet, "
+                    "keeping charging allowed."
+                )
+                return False
+
+            two_day_consumption_wh = avg_hourly_wh * 48.0
+
+            condition_a = total_forecast_wh >= two_day_consumption_wh
+
+            # ---- (b) Short horizon: SOC vs consumption-until-solar ----
+            from core.timeutilities import TimeUtilities
+            now = TimeUtilities.get_now()
+
+            target_dt = self._next_solar_target(now)
+            if target_dt is None:
+                # Missing sunrise/sunset data -> can't safely evaluate.
+                self.logger.log.debug(
+                    "Solar abort: sunrise/sunset data missing, "
+                    "keeping charging allowed."
+                )
+                return False
+
+            hours_until_solar = max(
+                (target_dt - now).total_seconds() / 3600.0, 0.0
+            )
+
+            # Required reserve in Wh: hourly avg * hours-until-solar +
+            # 10% safety buffer (mirrors the discharge-side calculation).
+            required_until_solar_wh = (
+                avg_hourly_wh * hours_until_solar * 1.10
+            )
+
+            current_soc_wh = (
+                self.essunit.get_battery_current_wh()
+                if self.essunit else 0
+            ) or 0
+            min_soc_wh = (
+                self.essunit.get_battery_min_wh()
+                if self.essunit else 0
+            ) or 0
+
+            usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
+
+            condition_b = usable_soc_wh >= required_until_solar_wh
+
+            self.logger.log.debug(
+                f"Solar abort check: "
+                f"(a) forecast={total_forecast_wh:.0f}Wh "
+                f"vs 2-day consumption={two_day_consumption_wh:.0f}Wh "
+                f"-> {condition_a}; "
+                f"(b) usable_soc={usable_soc_wh:.0f}Wh "
+                f"vs required_until_solar={required_until_solar_wh:.0f}Wh "
+                f"(over {hours_until_solar:.1f}h) -> {condition_b}"
+            )
+
+            return condition_a and condition_b
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Solar forecast abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _next_solar_target(self, now):
+        """
+        Return the next "meaningful solar event" datetime (in local
+        timezone) the battery has to hold out for. We always use
+        tomorrow's sunrise as the conservative target -- the SOC has to
+        last through the rest of today AND the night, because today's
+        remaining yield may be small.
+
+        Returns None if sunrise data is missing or unparseable.
+        """
+        sd = self.solardata
+        if sd is None:
+            return None
+
+        sunrise_str = sd.sunrise_tomorrow_day
+        if not sunrise_str:
+            return None
+
+        from datetime import datetime
+        from core.timeutilities import TimeUtilities
+
+        try:
+            naive = datetime.strptime(sunrise_str, "%Y-%m-%dT%H:%M")
+            # OpenMeteo returns sunrise in the requested timezone (we
+            # pass `timezone=config.time_zone`), so the naive value is
+            # already wall-clock local time. Attach the same tz that
+            # `now` carries so the subtraction below is valid. With
+            # pytz that needs localize(), not replace().
+            tz = getattr(TimeUtilities, "TZ", None)
+            if tz is not None and hasattr(tz, "localize"):
+                return tz.localize(naive)
+            # Fallback for non-pytz tzinfo (e.g. zoneinfo)
+            return naive.replace(tzinfo=tz) if tz else naive
+        except (ValueError, TypeError) as e:
+            self.logger.log.debug(
+                f"Solar abort: cannot parse sunrise '{sunrise_str}': {e}"
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Battery-range abort
+    # ------------------------------------------------------------------
+
+    def _abort_charging_battery_reaches_next_cluster(self):
+        """
+        True if the user has enabled `skip_charge_when_battery_sufficient`
+        AND we can confidently skip the current charge attempt because
+        the battery will hold us until a future, at-least-equally-cheap
+        charge cluster.
+
+        Decision tree:
+          1. If current_price <= charging_price_limit:
+             -- the always-on safety floor wins, NEVER skip. The
+                user explicitly asked "always charge below this price".
+          2. Find the next future, non-expired, non-active charge block
+             whose avg price is <= the currently active block's avg.
+             -- if NONE: the current cluster IS the cheapest left;
+                skipping it means we'd later charge at a higher price.
+                Don't skip.
+          3. Compute hours_until_target = start of that block - now.
+          4. Required Wh = avg_hourly_consumption * hours * 1.10
+             (10% safety buffer, mirrors discharge calc).
+          5. Usable SOC = current_soc_wh - min_soc_wh.
+          6. Skip iff usable_soc >= required.
+
+        Like the solar abort, returns False on any error or missing
+        data -- charging stays allowed when in doubt.
+        """
+        try:
+            # Step 1: charging_price_limit is a hard "always charge" rule.
+            # Never let this abort override that.
+            cur = self.items.get_current_price(convert=False)
+            if cur is not None:
+                try:
+                    if int(cur) <= self.charging_price_limit:
+                        self.logger.log.debug(
+                            "Battery-range abort: current price "
+                            f"({Utils.millicent_to_cent(cur)} c) at or "
+                            "below charging_price_limit -- not skipping."
+                        )
+                        return False
+                except (TypeError, ValueError):
+                    pass  # fall through and let the rest decide
+
+            # Step 2: find the cheaper-or-equal future block.
+            target_block = self._find_next_cheaper_or_equal_charge_block()
+            if target_block is None:
+                self.logger.log.debug(
+                    "Battery-range abort: no future charge block at "
+                    "current price level or cheaper -- not skipping."
+                )
+                return False
+
+            # Step 3: hours until that block starts.
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
+            block_start = target_block.get_start_datetime()
+            if block_start is None:
+                return False
+            if block_start.tzinfo is None:
+                block_start = block_start.replace(tzinfo=timezone.utc)
+            hours_until = max(
+                (block_start - now_utc).total_seconds() / 3600.0, 0.0
+            )
+
+            # Step 4: required reserve.
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "daily_watt_average"
+            )
+            avg_hourly_wh = (
+                round(avg_list[0], 2)
+                if isinstance(avg_list, (list, tuple)) and avg_list
+                else 0.0
+            )
+            if avg_hourly_wh <= 0:
+                # No history -> can't decide safely.
+                self.logger.log.debug(
+                    "Battery-range abort: no consumption history yet, "
+                    "not skipping."
+                )
+                return False
+
+            required_wh = avg_hourly_wh * hours_until * 1.10
+
+            # Step 5: usable SOC headroom.
+            current_soc_wh = (
+                self.essunit.get_battery_current_wh()
+                if self.essunit else 0
+            ) or 0
+            min_soc_wh = (
+                self.essunit.get_battery_min_wh()
+                if self.essunit else 0
+            ) or 0
+            usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
+
+            # Step 6: decision.
+            should_skip = usable_soc_wh >= required_wh
+
+            self.logger.log.debug(
+                f"Battery-range abort: target_block "
+                f"{target_block.describe(localtime=True)} "
+                f"(starts in {hours_until:.1f}h), "
+                f"required={required_wh:.0f}Wh, "
+                f"usable_soc={usable_soc_wh:.0f}Wh, "
+                f"skip={should_skip}"
+            )
+            return should_skip
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Battery-range abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _find_next_cheaper_or_equal_charge_block(self):
+        """
+        From the pre-computed `_charge_blocks`, return the earliest
+        future (non-expired, non-currently-active) block whose average
+        price is <= the price level we'd be charging at right now.
+
+        "Right now's price level" is:
+          * the avg of the currently active charge block, if any;
+          * otherwise the current per-quarter price.
+
+        Returns None if no such block exists (current attempt is the
+        cheapest remaining option).
+        """
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
+
+        # Establish the price reference -- what would we be paying if
+        # we charged in this evaluation cycle?
+        active_block = None
+        for blk in self._charge_blocks:
+            if blk.is_active_now():
+                active_block = blk
+                break
+
+        if active_block is not None:
+            reference_price = active_block.get_avg_price(convert=False)
+        else:
+            cur = self.items.get_current_price(convert=False)
+            if cur is None:
+                return None
+            try:
+                reference_price = int(cur)
+            except (TypeError, ValueError):
+                return None
+
+        # Walk all future charge blocks, pick the earliest one that's
+        # cheaper or equal. We sort by start time so "earliest" actually
+        # means earliest -- the input list is greedy-by-price, not by
+        # time.
+        candidates = []
+        for blk in self._charge_blocks:
+            if blk is active_block:
+                continue
+            if blk.is_expired():
+                continue
+            blk_start = blk.get_start_datetime()
+            if blk_start is None:
+                continue
+            if blk_start.tzinfo is None:
+                blk_start = blk_start.replace(tzinfo=timezone.utc)
+            if blk_start <= now_utc:
+                # Active or already-started but not expired -- treat as
+                # "now" and skip (we'd be charging right now anyway if
+                # we wanted to).
+                continue
+            try:
+                if blk.get_avg_price(convert=False) <= reference_price:
+                    candidates.append((blk_start, blk))
+            except (TypeError, ValueError):
+                continue
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda pair: pair[0])
+        return candidates[0][1]
 
     def _current_quarter_above_hard_cap(self):
         """

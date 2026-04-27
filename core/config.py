@@ -52,7 +52,12 @@ class Config(Singleton):
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
         "use_solar_forecast_to_abort": False,
+        "skip_charge_when_battery_sufficient": False,
         "delay_grid_charging_below_active_soc_limit": False,
+        "solar_adj_ewma_alpha": 0.3,
+        "solar_adj_min_theoretical_wh": 1000.0,
+        "solar_adj_min_sun_hours": 4.0,
+        "solar_adj_max_daily_change": 0.20,
         "prices": [
             {
                 "use_second_day": False,
@@ -218,6 +223,20 @@ class Config(Singleton):
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
             self.tariff_resolution = "hourly"
+            # Top-level boolean flags. Defaults are duplicated in
+            # DEFAULT_CONFIG_TEMPLATE; the load_config loop reads them
+            # from the actual config.json on startup.
+            self.use_solar_forecast_to_abort = False
+            self.skip_charge_when_battery_sufficient = False
+            self.delay_grid_charging_below_active_soc_limit = False
+            # Solar forecast adjustment-factor tunables. See README and
+            # solar/openmeteo.py for what each does. These fields exist
+            # so getattr() in openmeteo gets a value even if config.json
+            # is older than this build (migration adds them on next save).
+            self.solar_adj_ewma_alpha = 0.3
+            self.solar_adj_min_theoretical_wh = 1000.0
+            self.solar_adj_min_sun_hours = 4.0
+            self.solar_adj_max_daily_change = 0.20
             self.load_config()
             self.update_config_with_template()
 
@@ -270,6 +289,40 @@ class Config(Singleton):
         # sitting inside the prices block (from older configs).
         if top_level_tariff_resolution is not None:
             self.tariff_resolution = top_level_tariff_resolution
+
+        # Top-level boolean flags -- read explicitly so getattr() in
+        # downstream code returns the real value, not just the default
+        # baked into _init. These are not part of the `prices` block.
+        for attr, default in (
+            ("use_solar_forecast_to_abort", False),
+            ("skip_charge_when_battery_sufficient", False),
+            ("delay_grid_charging_below_active_soc_limit", False),
+        ):
+            raw = config_data.get(attr, default)
+            # Accept both real bools and the string "off"/"on" that the
+            # editor's hidden checkbox-pair scheme produces.
+            if isinstance(raw, str):
+                setattr(self, attr, raw.strip().lower() in ("on", "true", "1", "yes"))
+            else:
+                setattr(self, attr, bool(raw))
+
+        # Solar adjustment-factor tunables -- top-level, with type-safe
+        # fallback to the in-memory default if the config value is bogus.
+        for attr, default in (
+            ("solar_adj_ewma_alpha", 0.3),
+            ("solar_adj_min_theoretical_wh", 1000.0),
+            ("solar_adj_min_sun_hours", 4.0),
+            ("solar_adj_max_daily_change", 0.20),
+        ):
+            raw = config_data.get(attr, default)
+            try:
+                setattr(self, attr, float(raw))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
+        # Clamp alpha to [0, 1] -- alpha=1 reproduces old behaviour,
+        # alpha=0 freezes the factor entirely. Negative or >1 would
+        # destabilise the EWMA so we silently snap them.
+        self.solar_adj_ewma_alpha = max(0.0, min(1.0, self.solar_adj_ewma_alpha))
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")

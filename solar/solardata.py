@@ -25,58 +25,47 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-from datetime import datetime
 
 class Solardata:
     """
-    Solar data container.
-    Stores PV forecast, current yield, sunrise/sunset info, battery state, etc.
-    All methods are in English and compatible with OpenMeteo class.
+    Solar data container -- holds the OpenMeteo forecast outputs and
+    the day-so-far yield, used by:
+
+      * solar/openmeteo.py        -- writes forecast / sun-time fields
+      * core/conditions.py        -- reads sunrise_tomorrow_day,
+                                     total_current_day, total_tomorrow_day
+                                     for the solar abort condition
+      * core/seusscore.py         -- writes current_hour_solar_yield
+                                     after summing inverter Wh
+
+    Earlier revisions of this class had a `Battery / SOC` block plus a
+    `need_soc` value pushed through SolarBatteryCalculator. Both were
+    removed when the calculator was deleted -- the abort logic in
+    conditions.py now does the SOC math itself against the live
+    essunit, which avoids the calculator's brittle "required SOC"
+    formula.
     """
 
     def __init__(self):
-        # Sunrise / Sunset
+        # Sunrise / sunset (ISO strings "YYYY-MM-DDTHH:MM" in local tz,
+        # as returned by OpenMeteo when called with timezone=...).
+        # Only sunrise_tomorrow_day is currently consumed (by the solar
+        # abort condition in conditions.py); the other three are kept
+        # as a symmetric pair so future code can grab "today's
+        # sunset" etc. without re-plumbing the OpenMeteo loop.
         self.sunrise_current_day = None
         self.sunset_current_day = None
         self.sunrise_tomorrow_day = None
         self.sunset_tomorrow_day = None
-        self.sun_time_today_minutes = None
-        self.sun_time_tomorrow_minutes = None
 
-        # PV yields
-        self.total_current_hour = 0.0
-        self.total_current_day = 0.0
-        self.total_tomorrow_day = 0.0
-        self.current_hour_forecast = 0.0
-        self.current_hour_solar_yield = 0.0
-
-        # Panel / system info
-        self.power_peak = 0.0
-
-        # Battery / SOC info
-        self.need_soc = 0
-        self.soc = 0
-        self.battery_capacity = 0
-        self.battery_minimum_soc_limit = 5
-        self.battery_current_voltage = 0.0
+        # PV yields (Wh)
+        self.total_current_day = 0.0    # measured-so-far + forecast-rest
+        self.total_tomorrow_day = 0.0   # forecast tomorrow
+        self.current_hour_solar_yield = 0.0  # measured Wh today, summed across inverters
 
     # --------------------------------------------------
     # Time-related updates
     # --------------------------------------------------
-    def outside_sun_hours(self):
-        current_datetime = datetime.now()
-        current_time = current_datetime.time()
-        try:
-            sunrise_time = datetime.strptime(self.sunrise_current_day, "%Y-%m-%dT%H:%M").time()
-            sunset_time = datetime.strptime(self.sunset_tomorrow_day, "%Y-%m-%dT%H:%M").time()
-        except Exception:
-            return True  # assume outside if no data
-
-        if sunrise_time < sunset_time:
-            return current_time < sunrise_time or current_time > sunset_time
-        else:
-            return not (sunrise_time < current_time < sunset_time)
-
     def update_sunrise_current_day(self, sunrise):
         self.sunrise_current_day = sunrise
 
@@ -89,47 +78,14 @@ class Solardata:
     def update_sunset_tomorrow_day(self, sunset):
         self.sunset_tomorrow_day = sunset
 
-    def update_sun_time_today(self, minutes):
-        self.sun_time_today_minutes = minutes
-
-    def update_sun_time_tomorrow(self, minutes):
-        self.sun_time_tomorrow_minutes = minutes
-
     # --------------------------------------------------
     # PV yield updates
     # --------------------------------------------------
-    def update_total_current_hour(self, value):
-        self.total_current_hour = value
-
     def update_total_current_day(self, value):
         self.total_current_day = value
 
     def update_total_tomorrow_day(self, value):
         self.total_tomorrow_day = value
 
-    def update_current_hour_forecast(self, value):
-        self.current_hour_forecast = value
-
     def update_current_hour_solar_yield(self, value):
         self.current_hour_solar_yield = value
-
-    def update_power_peak(self, value):
-        self.power_peak = value
-
-    # --------------------------------------------------
-    # Battery / SOC updates
-    # --------------------------------------------------
-    def update_need_soc(self, percentage):
-        self.need_soc = round(percentage / 5) * 5
-
-    def update_soc(self, percentage):
-        self.soc = percentage
-
-    def update_battery_capacity(self, capacity):
-        self.battery_capacity = capacity
-
-    def update_battery_minimum_soc_limit(self, limit):
-        self.battery_minimum_soc_limit = limit
-
-    def update_battery_current_voltage(self, voltage):
-        self.battery_current_voltage = voltage

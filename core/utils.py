@@ -28,7 +28,6 @@
 import base64
 import binascii
 from typing import Dict, List
-import json
 import random
 import re
 import operator
@@ -89,14 +88,6 @@ class Utils:
                 config[key] = decoded_password
 
         return config
-
-    @staticmethod
-    def is_json_string(s):
-        try:
-            json_object = json.loads(s.strip())
-            return isinstance(json_object, dict)
-        except json.JSONDecodeError:
-            return False
 
     @staticmethod
     def generate_random_hex(length):
@@ -198,11 +189,3 @@ class Utils:
         except (TypeError, ValueError):
             CustomLogger().log.error(f"Error converting price: {price}")
             return None
-
-    @staticmethod
-    def commercial_round(value, digits=2):
-        """
-        Perform commercial rounding (0.5 rounds up).
-        """
-        multiplier = 10 ** digits
-        return float(int(value * multiplier + 0.5000001) / multiplier)

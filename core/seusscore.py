@@ -40,7 +40,6 @@ from core.statsmanager import StatsManager
 from core.websocketserver import WebSocketServer
 from solar.openmeteo import OpenMeteo
 from solar.solardata import Solardata
-from solar.solarbatterycalculator import SolarBatteryCalculator
 from core.conditions import Conditions, ConditionResult
 from core.config import Config
 from core.log import CustomLogger
@@ -224,11 +223,6 @@ class SEUSS:
         return total_solar
 
     def get_total_solar_yield(self, essunit):
-        self.solardata.update_soc(essunit.get_soc())
-        self.solardata.update_battery_capacity(essunit.get_battery_capacity())
-        self.solardata.update_battery_minimum_soc_limit(essunit.get_battery_minimum_soc_limit())
-        self.solardata.update_battery_current_voltage(essunit.get_battery_current_voltage())
-
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
         total_solar = 0.0
@@ -278,10 +272,6 @@ class SEUSS:
         # Now returns a dictionary
         forecast_results = forecast_provider.forecast(self.solardata)
 
-        calculator = SolarBatteryCalculator(self.solardata)
-        self.solardata.update_need_soc(calculator.calculate_battery_percentage())
-        self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
-
         adj = self.statsmanager.get_data('solar', 'adjustment_factor') or [1.0]
         adj_factor = adj[0]
         efficiency_display = round(adj_factor * 100, 2)
@@ -309,7 +299,7 @@ class SEUSS:
             condition_charging_result = ConditionResult()
             condition_discharging_result = ConditionResult()
             condition_switching_result = ConditionResult()
-            conditions_instance = Conditions(self.items, essunit)
+            conditions_instance = Conditions(self.items, essunit, self.solardata)
             conditions_instance.info()
             conditions_instance.evaluate_conditions(condition_charging_result, "charging")
             conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
