@@ -39,18 +39,35 @@ from spotmarket.abstract_classes.marketdata import MarketData
 
 
 class TibberItem(Item):
-    def __init__(self, starts_at, price_unit, fee_str):
-        start_time = datetime.strptime(starts_at, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone(timezone.utc)
-        if price_unit is not None:
-            super().__init__(start_time, None, price_unit, fee_str, 15)
-        else:
-            raise ValueError("Ungültige Tibber-Preisdaten. 'price_unit' muss gesetzt sein.")
+    """
+    Tibber emits prices with a startsAt timestamp and no explicit endtime.
+    The slot length depends on the GraphQL resolution we requested:
+      - QUARTER_HOURLY -> 15 minutes
+      - HOURLY         -> 60 minutes
+    We pass slot_minutes from the loader so the item knows its endtime
+    immediately and downstream code (Item.get_duration_minutes etc.)
+    works without an extra extend_endtime() step.
+    """
+
+    def __init__(self, starts_at, price_value, fee_str, slot_minutes=15):
+        start_time = datetime.strptime(
+            starts_at, '%Y-%m-%dT%H:%M:%S.%f%z'
+        ).astimezone(timezone.utc)
+        if price_value is None:
+            raise ValueError("Ungültige Tibber-Preisdaten. 'price_value' muss gesetzt sein.")
+        end_time = start_time + timedelta(minutes=slot_minutes)
+        super().__init__(start_time, end_time, price_value, fee_str, 15)
 
     def extend_endtime(self):
-        # Verlängere die Endzeit um eine Stunde
+        """
+        Kept for backward compatibility -- older code may still call this.
+        With the new constructor we always have an endtime, so this is a
+        no-op unless an item was somehow created without one.
+        """
         if self.endtime is None:
             extended_endtime = self.starttime + timedelta(hours=1) - timedelta(seconds=1)
-            self.endtime = extended_endtime  # .strftime('%Y-%m-%dT%H:%M:%S.%f%z')
+            self.endtime = extended_endtime
+
 
 class Tibber(MarketData):
     def __init__(self, **kwargs) -> None:
@@ -68,6 +85,11 @@ class Tibber(MarketData):
             "Authorization": f"Bearer {self.api_token}"
         }
 
+        # We request QUARTER_HOURLY resolution. Tibber will return either
+        # 4 entries per hour (true 15min markets) or 1 entry per hour
+        # (markets without sub-hourly data, padded by Tibber). We handle
+        # both cases by computing the slot length from the gap between
+        # consecutive timestamps.
         query = {
             "query": """
             {
@@ -121,45 +143,82 @@ class Tibber(MarketData):
 
         days = ["today", "tomorrow"] if self.use_second_day else ["today"]
 
-        hour_prices = {}
-        hour_start_map = {}
-
+        # Collect raw entries with parsed timestamps so we can determine
+        # the actual resolution returned by Tibber.
+        raw_entries = []
         for day in days:
             for entry in price_info.get(day, []):
                 try:
+                    starts_at_str = entry["startsAt"]
                     ts = datetime.strptime(
-                        entry["startsAt"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                        starts_at_str, "%Y-%m-%dT%H:%M:%S.%f%z"
                     ).astimezone(timezone.utc)
-
-                    hour_ts = ts.replace(minute=0, second=0, microsecond=0)
                     price = float(entry[self.price_unit])
-
-                    if hour_ts not in hour_prices:
-                        hour_prices[hour_ts] = []
-                        hour_start_map[hour_ts] = entry["startsAt"]
-
-                    hour_prices[hour_ts].append(price)
-
+                    raw_entries.append((ts, starts_at_str, price))
                 except Exception as e:
                     self.logger.log.warning(
                         f"Tibber entry skipped: {entry} ({e})"
                     )
 
+        if not raw_entries:
+            return []
+
+        raw_entries.sort(key=lambda x: x[0])
+
+        # Determine slot length from the smallest gap between consecutive
+        # timestamps. Tibber typically returns 15 or 60 minute slots.
+        # Default to 15 if we can't tell (single entry).
+        slot_minutes = 15
+        if len(raw_entries) >= 2:
+            gaps = []
+            for i in range(1, len(raw_entries)):
+                gap = (raw_entries[i][0] - raw_entries[i - 1][0]).total_seconds() / 60
+                if gap > 0:
+                    gaps.append(int(round(gap)))
+            if gaps:
+                slot_minutes = min(gaps)
+                # Snap to known sensible values to absorb tiny timestamp
+                # jitter (DST edges, server clock drift).
+                if slot_minutes < 15:
+                    slot_minutes = 15
+                elif 15 < slot_minutes < 60:
+                    # Anything between 15 and 60 is unusual; round to the
+                    # nearest of 15 or 60.
+                    slot_minutes = 15 if slot_minutes <= 30 else 60
+
+        self.logger.log.debug(
+            f"Tibber resolution detected: {slot_minutes} minutes "
+            f"({len(raw_entries)} entries)"
+        )
+
         items = []
-
-        for hour_ts in sorted(hour_prices.keys()):
-            prices = hour_prices[hour_ts]
-            if not prices:
-                continue
-
-            avg_price = Utils.commercial_round(sum(prices) / len(prices), 3)
-
-            item = TibberItem(
-                hour_start_map[hour_ts],
-                avg_price,
-                self.fee
-            )
-            item.extend_endtime()
-            items.append(item)
+        for ts, starts_at_str, price in raw_entries:
+            try:
+                if slot_minutes == 60:
+                    # Tibber returned hourly data despite QUARTER_HOURLY
+                    # request -- happens for markets without 15min prices.
+                    # Split into 4 identical quarters so the rest of the
+                    # system sees uniform 15-minute resolution.
+                    for q in range(4):
+                        q_start_dt = ts + timedelta(minutes=q * 15)
+                        q_starts_at = q_start_dt.strftime(
+                            "%Y-%m-%dT%H:%M:%S.000%z"
+                        )
+                        # strftime emits +0000 without colon; Tibber uses
+                        # +00:00. Insert the colon to keep the format
+                        # consistent with what TibberItem expects.
+                        if len(q_starts_at) >= 5 and q_starts_at[-5] in "+-" and ":" not in q_starts_at[-5:]:
+                            q_starts_at = q_starts_at[:-2] + ":" + q_starts_at[-2:]
+                        items.append(
+                            TibberItem(q_starts_at, price, self.fee, slot_minutes=15)
+                        )
+                else:
+                    items.append(
+                        TibberItem(starts_at_str, price, self.fee, slot_minutes=slot_minutes)
+                    )
+            except Exception as e:
+                self.logger.log.warning(
+                    f"Tibber item creation failed for {starts_at_str}: {e}"
+                )
 
         return items

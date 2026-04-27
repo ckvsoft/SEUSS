@@ -48,6 +48,7 @@ class Info:
 class Config(Singleton):
     DEFAULT_CONFIG_TEMPLATE = {
         "time_zone": "Europe/Vienna",
+        "tariff_resolution": "hourly",
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
         "use_solar_forecast_to_abort": False,
@@ -57,6 +58,11 @@ class Config(Singleton):
                 "use_second_day": False,
                 "number_of_lowest_prices_for_charging": 0,
                 "number_of_highest_prices_for_discharging": 0,
+                "number_of_lowest_prices_for_switching": 0,
+                "charging_block_minutes": 60,
+                "discharging_block_minutes": 60,
+                "switching_block_minutes": 60,
+                "fill_gaps_with_short_clusters": True,
                 "charging_price_limit": -999,
                 "charging_price_hard_cap": 999
             }
@@ -145,6 +151,8 @@ class Config(Singleton):
             {
                 "name": "Shelly",
                 "ips": "10.1.1.20 | 10.1.1.21",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "",
                 "password": "",
                 "enabled": False
@@ -152,6 +160,8 @@ class Config(Singleton):
             {
                 "name": "Tasmota",
                 "ips": "10.1.1.30",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "admin",
                 "password": "YWRtaW4",
                 "enabled": False
@@ -160,6 +170,8 @@ class Config(Singleton):
                 "name": "Fritz",
                 "ips": "192.168.178.1 | 10.1.1.23",
                 "ains": "1234,3443,2333 | 1234,4456,7866,3421",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "admin",
                 "password": "YWRtaW4",
                 "enabled": False
@@ -168,6 +180,8 @@ class Config(Singleton):
                 "name": "RemoteGPIO",
                 "ips": "192.168.1.10 | 192.168.1.11 | !192.168.1.12",
                 "pins": "17,18 | 21 | 20",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "",
                 "password": "",
                 "enabled": False
@@ -193,11 +207,17 @@ class Config(Singleton):
             self.essunit = None
             self.number_of_lowest_prices_for_charging = 0
             self.number_of_highest_prices_for_discharging = 0
+            self.number_of_lowest_prices_for_switching = 0
+            self.charging_block_minutes = 60
+            self.discharging_block_minutes = 60
+            self.switching_block_minutes = 60
+            self.fill_gaps_with_short_clusters = True
             self.charging_price_limit = -999
             self.charging_price_hard_cap = float('inf')
             self.converter_efficiency = 1.0
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
+            self.tariff_resolution = "hourly"
             self.load_config()
             self.update_config_with_template()
 
@@ -227,6 +247,16 @@ class Config(Singleton):
         self.log_file_path = config_data.get("log_file_path", "")
         self.log_level = config_data.get("log_level", "INFO")
 
+        # tariff_resolution lives at top level (it's a market-level
+        # property, not a price-strategy one). Read it directly. For
+        # backward compatibility with fix13/13b configs that wrote it
+        # into the `prices` block, the per-price loop below will pick
+        # it up too -- the last value wins, which means a top-level
+        # value gets overridden by a stale prices-block value if both
+        # exist. To avoid that, we re-apply the top-level value AFTER
+        # the prices loop further down.
+        top_level_tariff_resolution = config_data.get("tariff_resolution")
+
         if not os.path.exists(self.log_file_path):
             # touch
             with open(self.log_file_path, 'w'):
@@ -235,6 +265,11 @@ class Config(Singleton):
         for item in config_data.get("prices", []):
             for key, value in item.items():
                 setattr(self, key, value)
+
+        # Top-level tariff_resolution wins over any stale value still
+        # sitting inside the prices block (from older configs).
+        if top_level_tariff_resolution is not None:
+            self.tariff_resolution = top_level_tariff_resolution
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")
@@ -246,6 +281,37 @@ class Config(Singleton):
 
         if not self.failback_market:
             self.failback_market = self.find_failback_market()
+
+        # Normalize block-minute settings: snap to multiples of 15min,
+        # minimum 15. We allow arbitrarily long blocks (no upper cap) --
+        # if the user wants to charge for 10 hours straight, that's their
+        # call.
+        for attr in ("charging_block_minutes",
+                     "discharging_block_minutes",
+                     "switching_block_minutes"):
+            value = getattr(self, attr, 60)
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = 60
+            # Round to nearest 15min, minimum 15
+            if value < 15:
+                value = 15
+            else:
+                value = max(15, ((value + 7) // 15) * 15)
+            setattr(self, attr, value)
+
+        # Normalize tariff_resolution: only "hourly" or "quarterly" are
+        # valid. Anything else falls back to "hourly" -- which matches
+        # the typical Austrian retail contract (Awattar, Tibber default
+        # tariff) where billing is per-hour even when the spot data is
+        # quarter-hour. "quarterly" is for the rare 15-minute tariffs.
+        tr = getattr(self, "tariff_resolution", "hourly")
+        if isinstance(tr, str):
+            tr = tr.strip().lower()
+        if tr not in ("hourly", "quarterly"):
+            tr = "hourly"
+        self.tariff_resolution = tr
 
         self._set_os_timezone()
 
@@ -272,7 +338,18 @@ class Config(Singleton):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
     def update_config_with_template(self):
-        # Überprüfen und Hinzufügen von fehlenden Schlüsseln und Abschnitten
+        # Migration: tariff_resolution moved from prices block to top
+        # level in fix14. If an old config has it inside prices, copy
+        # the value up (if top level is missing) and drop it from prices.
+        prices_block = self.config_data.get("prices", [])
+        if isinstance(prices_block, list):
+            for price_item in prices_block:
+                if isinstance(price_item, dict) and "tariff_resolution" in price_item:
+                    legacy_value = price_item.pop("tariff_resolution")
+                    if "tariff_resolution" not in self.config_data:
+                        self.config_data["tariff_resolution"] = legacy_value
+
+        # Check and add missing keys and sections from the template
         for key, value in self.DEFAULT_CONFIG_TEMPLATE.items():
             if key not in self.config_data:
                 self.config_data[key] = value

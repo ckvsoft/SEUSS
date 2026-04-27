@@ -323,6 +323,20 @@ class SEUSS:
         self.no_data[0] = 0
 
     def control_switching(self, condition_switching_result):
+        # Per-IP switching: when at least one configured smart switch
+        # has per-IP overrides (lowest_prices_per_ip / block_minutes_per_ip),
+        # we delegate the on/off decision to the manager's per-IP
+        # evaluator instead of toggling all switches in lockstep.
+        # The legacy bulk path (turn_on_all / turn_off_all) is kept for
+        # configurations without any per-IP overrides, so existing setups
+        # behave exactly as before.
+        if self._smart_switches_have_per_ip_overrides():
+            charging_count = getattr(
+                self.config, "number_of_lowest_prices_for_charging", 0
+            ) or 0
+            self.smartswitches.evaluate_per_ip(self.items, charging_count)
+            return
+
         if condition_switching_result.execute:
             self.logger.log.info(
                 f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
@@ -338,6 +352,17 @@ class SEUSS:
         else:
             self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
             self.smartswitches.turn_off_all()
+
+    def _smart_switches_have_per_ip_overrides(self):
+        """Return True iff any configured smart switch has a non-empty
+        lowest_prices_per_ip or block_minutes_per_ip setting."""
+        for entry in self.config.config_data.get("smart_switches", []):
+            if not entry.get("enabled", True):
+                continue
+            if (entry.get("lowest_prices_per_ip", "").strip()
+                    or entry.get("block_minutes_per_ip", "").strip()):
+                return True
+        return False
 
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:

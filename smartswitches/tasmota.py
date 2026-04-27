@@ -10,24 +10,43 @@ class Tasmota(SmartSwitch):
         self._filter_disabled_ips()
 
     def turn_on(self):
-        """ Schaltet das Tasmota-Gerät oder mehrere Geräte ein """
-        self._send_request("ON")
+        """Switch the Tasmota device or several devices on."""
+        for ip in self.ips:
+            self._send_one_request(ip, "ON")
 
     def turn_off(self):
-        """ Schaltet das Tasmota-Gerät oder mehrere Geräte aus """
-        self._send_request("OFF")
-
-    def _send_request(self, action):
-        """ Sendet HTTP-Requests für alle konfigurierten IP-Adressen """
+        """Switch the Tasmota device or several devices off."""
         for ip in self.ips:
-            url = f"http://{ip}/cm?cmnd=Power%20{action}"
-            try:
-                if self.user and self.password:
-                    response = requests.get(url, auth=(self.user, self.password), timeout=5)
-                else:
-                    response = requests.get(url, timeout=5)  # Ohne Authentifizierung
+            self._send_one_request(ip, "OFF")
 
-                response.raise_for_status()
-                self.logger.log.debug(f"[{ip}] Request successful: {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                self.logger.log.debug(f"[{ip}] Error while sending the request: {e}")
+    def turn_on_ip(self, ip):
+        """Switch a single Tasmota IP on."""
+        if ip in self.ips:
+            self._send_one_request(ip, "ON")
+        else:
+            self.logger.log.debug(
+                f"[{ip}] not in active IP list for {self.name}, skipping turn_on_ip"
+            )
+
+    def turn_off_ip(self, ip):
+        """Switch a single Tasmota IP off."""
+        if ip in self.ips:
+            self._send_one_request(ip, "OFF")
+        else:
+            self.logger.log.debug(
+                f"[{ip}] not in active IP list for {self.name}, skipping turn_off_ip"
+            )
+
+    def _send_one_request(self, ip, action):
+        """Send a single HTTP request to one IP."""
+        url = f"http://{ip}/cm?cmnd=Power%20{action}"
+        try:
+            if self.user and self.password:
+                response = requests.get(url, auth=(self.user, self.password), timeout=5)
+            else:
+                response = requests.get(url, timeout=5)
+
+            response.raise_for_status()
+            self.logger.log.debug(f"[{ip}] Request successful: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            self.logger.log.debug(f"[{ip}] Error while sending the request: {e}")

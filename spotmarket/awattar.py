@@ -37,6 +37,12 @@ from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
 
 
+# Quarter length in milliseconds (15 minutes * 60s * 1000ms).
+# Awattar timestamps are in milliseconds, so we work in the same unit
+# to keep the integer arithmetic obvious.
+_QUARTER_MS = 15 * 60 * 1000
+
+
 class AwattarItem(Item):
     def __init__(self, start_timestamp, end_timestamp, price, fee_str):
         starttime = datetime.fromtimestamp(start_timestamp / 1000).astimezone(timezone.utc)
@@ -72,13 +78,46 @@ class Awattar(MarketData):
             return []
 
     def _load_data_from_json(self, json_data):
+        """
+        Parse Awattar JSON and emit 15-minute items.
+
+        Awattar provides hourly prices. To keep the rest of the system
+        on a uniform 15-minute resolution (matching ENTSO-E and Tibber),
+        we split each hourly entry into 4 identical quarter items.
+        The price is the same for all 4 quarters of an Awattar hour,
+        because Awattar genuinely has no sub-hour resolution -- so
+        splitting carries no information loss.
+        """
         try:
             data = json.loads(json_data)
             items = []
             for entry in data.get('data', []):
                 current_price = float(entry.get('marketprice'))
-                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'), current_price, self.fee)
-                items.append(awattar_item)
+                hour_start = int(entry.get('start_timestamp'))
+                hour_end = int(entry.get('end_timestamp'))
+
+                # Sanity check: an Awattar entry should be exactly one hour.
+                # If a future API change ever delivers something else, we
+                # honour the actual span instead of assuming 60 minutes.
+                span_ms = hour_end - hour_start
+                if span_ms <= 0:
+                    self.logger.log.warning(
+                        f"Awattar entry with non-positive span skipped: {entry}"
+                    )
+                    continue
+
+                quarter_count = max(1, span_ms // _QUARTER_MS)
+                for q in range(quarter_count):
+                    q_start = hour_start + q * _QUARTER_MS
+                    q_end = q_start + _QUARTER_MS
+                    # Clamp the last quarter to the original entry's end,
+                    # in case the entry isn't a clean multiple of 15min.
+                    if q == quarter_count - 1:
+                        q_end = hour_end
+                    items.append(
+                        AwattarItem(q_start, q_end, current_price, self.fee)
+                    )
+
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.logger.log.warning(f"Error loading Awattar prices: {e}")

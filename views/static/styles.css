@@ -329,3 +329,19 @@ body.dark-mode #soc-container {
 body.dark-mode #soc-value {
     color: #3fff33;
 }
+
+/* ============================================================
+ * SEUSS chart text — theme-aware fill colour
+ * ============================================================
+ * The chart SVG renders hour numbers, price labels and legend
+ * texts using class="chart-text". Default = light-mode dark
+ * grey; the dark-mode override below switches it to white so
+ * the text stays readable on either background.
+ */
+.chart-text {
+    fill: #333;
+}
+
+body.dark-mode .chart-text {
+    fill: #fff;
+}

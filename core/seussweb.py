@@ -25,7 +25,7 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
@@ -87,12 +87,12 @@ class SEUSSWeb:
     def add_config_entry(self):
         param_name = request.json.get('param_name')
 
-        # Überprüfe, ob der Parameter-Namen gültig ist
+        # Check if the parameter name is valid
         if param_name in self.config.config_data:
             # Suche den vorhandenen Eintrag in der Konfiguration mit dem Parameter-Namen
             existing_entry = self.config.config_data[param_name]
 
-            # Überprüfe, ob der Eintrag gefunden wurde
+            # Check if the entry was found
             if existing_entry:
                 # Kopiere den vorhandenen Eintrag und aktualisiere die Daten mit den neuen Daten
                 count = len(existing_entry)
@@ -116,15 +116,77 @@ class SEUSSWeb:
 
     def get_charts(self, as_json=True):
 
-        data, gray_hours, next_data, next_gray_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_current_list())
-        green_data, green_hours, next_green_data, next_green_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_lowest_prices(self.config.number_of_lowest_prices_for_charging))
-        red_data, red_hours, next_red_data, next_red_hours = Itemlist.get_price_hour_lists(
-            self.market_items.get_highest_prices(self.config.number_of_highest_prices_for_discharging))
+        # Hourly price data for the chart bars (4 quarters averaged per hour).
+        data, _, next_data, _ = Itemlist.get_price_hour_lists(
+            self.market_items.get_current_list()
+        )
 
-        chart_svg = self.generate_chart_svg(data, green_hours, red_hours)
-        next_chart_svg = self.generate_chart_svg(next_data, next_green_hours, next_red_hours, True)
+        # Block-based charge/discharge selections.
+        # We pass the blocks themselves to the SVG generator, which colours
+        # individual quarter slices within each hourly bar based on block
+        # membership -- so a 14:30-15:30 block visibly straddles the
+        # boundary between the 14h and 15h bars.
+        charge_blocks = self.market_items.get_lowest_charging_blocks(
+            self.config.number_of_lowest_prices_for_charging,
+            block_minutes=self.config.charging_block_minutes,
+        )
+        discharge_blocks = self.market_items.get_highest_discharging_blocks(
+            self.config.number_of_highest_prices_for_discharging,
+            block_minutes=self.config.discharging_block_minutes,
+            exclude_blocks=charge_blocks,
+            fill_gaps=getattr(self.config, "fill_gaps_with_short_clusters", True),
+        )
+
+        # Diagnostic logging: show how many items per local date and how
+        # many blocks fall on which day. This makes it obvious if either
+        # tomorrow's items are missing or tomorrow's blocks weren't found.
+        from core.timeutilities import TimeUtilities
+        logger = self.logger if hasattr(self, "logger") else None
+        try:
+            from core.log import CustomLogger
+            log = CustomLogger().log
+            items_per_day = {}
+            for it in self.market_items.get_current_list():
+                local = TimeUtilities.convert_utc_to_local(
+                    it.get_start_datetime(), False
+                )
+                if local is not None:
+                    items_per_day.setdefault(local.date(), 0)
+                    items_per_day[local.date()] += 1
+            log.debug(f"chart: items per local day: {items_per_day}")
+            log.debug(f"chart: today_data hours: {sorted(data.keys())}")
+            log.debug(f"chart: next_data hours: {sorted(next_data.keys())}")
+
+            charge_per_day = {}
+            for blk in charge_blocks:
+                local = TimeUtilities.convert_utc_to_local(
+                    blk.get_start_datetime(), False
+                )
+                if local is not None:
+                    charge_per_day.setdefault(local.date(), 0)
+                    charge_per_day[local.date()] += 1
+            discharge_per_day = {}
+            for blk in discharge_blocks:
+                local = TimeUtilities.convert_utc_to_local(
+                    blk.get_start_datetime(), False
+                )
+                if local is not None:
+                    discharge_per_day.setdefault(local.date(), 0)
+                    discharge_per_day[local.date()] += 1
+            log.debug(
+                f"chart: charge blocks per day: {charge_per_day}, "
+                f"discharge blocks per day: {discharge_per_day}"
+            )
+        except Exception as exc:
+            # Logging must never break the chart endpoint.
+            pass
+
+        chart_svg = self.generate_chart_svg(
+            data, charge_blocks, discharge_blocks, tomorrow=False
+        )
+        next_chart_svg = self.generate_chart_svg(
+            next_data, charge_blocks, discharge_blocks, tomorrow=True
+        )
 
         legend_svg = self.generate_legend_svg()
 
@@ -165,7 +227,7 @@ class SEUSSWeb:
     def download_log(self):
         directory_path = str(os.path.dirname(self.config.log_file_path))
 
-        # Überprüfen, ob directory_path leer oder None ist
+        # Check if directory_path is empty or None
         if not directory_path:
             main_script_path = os.path.abspath(sys.argv[0])
             directory_path = str(os.path.dirname(main_script_path))
@@ -242,7 +304,7 @@ class SEUSSWeb:
                     new_config[section] = []
 
                 entry = next(e for e in new_config[section])
-                # Aktualisieren des Feldwerts
+                # Update the field value
                 if self._is_numeric(value):
                     value = float(value) if '.' in value else int(value)
 
@@ -252,23 +314,23 @@ class SEUSSWeb:
 
                 entry[key] = value
 
-            # Überprüfen, ob der Schlüssel genügend Elemente hat
+            # Check if the key has enough elements
             elif len(split_key) >= 3:
                 section = split_key[0]
                 name = split_key[1]
 
-                # Überprüfen, ob die Sektion in der Konfiguration existiert
+                # Check if the section exists in the config
                 if section not in new_config:
                     new_config[section] = []
 
-                # Überprüfen, ob der Name in der Sektion existiert
+                # Check if the name exists in the section
                 entry = next((e for e in new_config[section] if e['name'] == name), None)
                 if entry is None:
                     # Neuen Eintrag hinzufügen, falls nicht vorhanden
                     entry = {'name': name}
                     new_config[section].append(entry)
 
-                # Aktualisieren des Feldwerts
+                # Update the field value
                 if self._is_numeric(value):
                     value = float(value) if '.' in value else int(value)
                 value_mapping = {'on': True, 'off': False}
@@ -278,7 +340,7 @@ class SEUSSWeb:
             else:
                 key = key.strip()
                 if key in new_config:
-                    # Aktualisieren des Feldwerts
+                    # Update the field value
                     if self._is_numeric(value):
                         value = float(value) if '.' in value else int(value)
                     value_mapping = {'on': True, 'off': False}
@@ -296,8 +358,19 @@ class SEUSSWeb:
         # Zurück zur Indexseite
         return new_config
 
-    def generate_chart_svg(self, data, green_hours, red_hours, tomorrow=False):
-        # SVG-Code für das Balkendiagramm
+    def generate_chart_svg(self, data, charge_blocks, discharge_blocks,
+                           tomorrow=False):
+        """
+        Render the daily price chart. 24 hourly bars per day, but each
+        bar is internally split into 4 quarter-width slices that can be
+        coloured independently. This lets a 14:30-15:30 charge block
+        visibly straddle the boundary between the 14h and 15h bars: the
+        right half of bar 14 and the left half of bar 15 turn green.
+
+        Bars without block membership use the standard gray ramp
+        (already-passed -> dark gray, future -> light gray, tomorrow ->
+        always light gray).
+        """
         current_time = datetime.now()
         current_hour = current_time.hour
         width = 37
@@ -305,174 +378,439 @@ class SEUSSWeb:
         baseline_y = 380
         svg_height = 460
 
-        # Wenn keine Preise vorhanden sind, initialisiere mit 24 Preisen von 0.00
+        # Empty fallback: draw 24 grey bars at zero height
         if not data:
             data = {hour: None for hour in range(24)}
 
-        svg = f"""
-        <svg width="{width * 24}" height="{svg_height}" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin: 25px;">
-        """
+        svg = (
+            f'<svg width="{width * 24}" height="{svg_height}" '
+            f'xmlns="http://www.w3.org/2000/svg" '
+            f'style="border: 1px solid #ccc; margin: 25px;">'
+        )
 
-        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+        # Average price line (magenta)
+        average_price_today, average_price_tomorrow = (
+            self.market_items.get_average_price_by_date(True)
+        )
         avg_height = 12
-        if tomorrow and average_price_tomorow is not None:
-            avg_height = (average_price_tomorow + 1) * factor  # Umrechnung in Höhe (Skalierung)
+        if tomorrow and average_price_tomorrow is not None:
+            avg_height = (average_price_tomorrow + 1) * factor
         elif not tomorrow and average_price_today is not None:
-            avg_height = (average_price_today + 1) * factor  # Umrechnung in Höhe (Skalierung)
+            avg_height = (average_price_today + 1) * factor
+        y_avg_line = baseline_y - avg_height
+        svg += (
+            f'<line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" '
+            f'stroke="magenta" stroke-width="2"/>'
+        )
 
-        y_avg_line = baseline_y - avg_height  # Linie für den Durchschnittspreis
-        svg += f"""
-        <line x1="0" y1="{y_avg_line}" x2="{width * 24}" y2="{y_avg_line}" stroke="magenta" stroke-width="2"/>
-        """
-
+        # Charging-price-limit line (yellow)
         charge_limit_height = (abs(self.config.charging_price_limit) + 1) * factor
-        svg += f"""
-        <line x1="0" y1="{baseline_y - charge_limit_height}" x2="{width * 24}" y2="{baseline_y - charge_limit_height}" stroke="yellow" stroke-width="2"/>
-        """
+        svg += (
+            f'<line x1="0" y1="{baseline_y - charge_limit_height}" '
+            f'x2="{width * 24}" y2="{baseline_y - charge_limit_height}" '
+            f'stroke="yellow" stroke-width="2"/>'
+        )
 
-        # Erzeuge SVG für jeden Balken und Beschriftung basierend auf den Daten
-        for hour, price in data.items():
-            # Standardfarbe: Grau
-            color = "gray" if current_hour > hour else "gainsboro"
-            pattern = ""  # Initialisiere pattern
+        # Pre-compute which quarters are in charge / discharge spans, for
+        # the day this chart represents. We work in localtime to match
+        # the hourly bar indexing.
+        target_date = self._target_date(tomorrow)
+        charge_quarters = self._collect_quarter_keys(charge_blocks, target_date)
+        discharge_quarters = self._collect_quarter_keys(
+            discharge_blocks, target_date
+        )
+        # Map (hour, q) -> charge block average price. Used to check
+        # the hard cap against the block average rather than the
+        # individual quarter price.
+        charge_block_avgs = self._collect_quarter_block_avgs(
+            charge_blocks, target_date
+        )
+        # Map (hour, q) -> actual per-quarter price (cent/kWh). Used for
+        # the hard cap check on quarters that are NOT part of any charge
+        # cluster -- otherwise we'd compare against the hourly average,
+        # which can be misleading when the quarters within an hour have
+        # different real prices.
+        quarter_prices = Itemlist.get_quarter_prices(
+            self.market_items.get_current_list(), target_date
+        )
 
-            if tomorrow:
-                color = "gainsboro"
-
-            # Überprüfe Überlappung mit Streifen für rote und grüne Stunden
+        # Draw each hour as 4 stacked quarter-width slices.
+        # Each hour bar is wrapped in a <g> element with a <title>
+        # child -- browsers render this as a hover tooltip showing the
+        # individual quarter prices, so the user can see what's behind
+        # the hourly average.
+        slice_width = (width - 3) / 4.0  # leave 3px gap between hour groups
+        for hour in range(24):
+            price = data.get(hour)
             if price is not None:
-                if price < self.config.charging_price_limit or hour in green_hours:
-                    if price < self.config.charging_price_hard_cap:
-                        color = "green" if current_hour > hour else "#32CD32"
-                elif hour in red_hours and hour not in green_hours:
-                    color = "darkred" if current_hour > hour else "red"
-
-                if tomorrow:
-                    if price < self.config.charging_price_limit or hour in green_hours:
-                        if price < self.config.charging_price_hard_cap:
-                            color = "#32CD32"
-                    elif hour in red_hours and hour not in green_hours:
-                        color = "red"
-
-                # Berechne die Höhe und Ausrichtung des Balkens
-                height = (abs(price if price else 0) + 1) * factor
+                height = (abs(price) + 1) * factor
                 y = baseline_y - height if price >= 0 else baseline_y
             else:
                 height = factor
                 y = baseline_y - height
 
-            # Füge Balken hinzu
-            svg += f"""
-            <rect x="{hour * width}" y="{y}" width="{width - 3}" height="{height}" fill="{color}" stroke="#000" stroke-width="1" {f'fill="{pattern}"' if pattern else ""}/>
-            """
+            # Track slice colors so we can pick a "dominant" colour for
+            # the hour as a whole. The price label is rendered in that
+            # colour, matching the old behaviour where the label took
+            # the bar colour -- this keeps it visible on the dark theme.
+            slice_colors = []
+            slice_svg = ""
 
-            # Füge Stunden-Beschriftung hinzu innerhalb der Gruppe
-            svg += f"""
-            <text x="{hour * width + 15}" y="{baseline_y + 15}" text-anchor="middle" font-size="10">{hour}</text>
-            """
+            for q in range(4):
+                key = (hour, q)
+                base_color = self._slice_base_color(
+                    hour, current_hour, tomorrow
+                )
+                slice_color = base_color
+                if price is not None:
+                    in_charge = key in charge_quarters
+                    in_discharge = key in discharge_quarters
+                    # The per-quarter price -- falls back to the hourly
+                    # average if the quarter is missing from the data.
+                    q_price = quarter_prices.get(key, price)
+                    # Cap and limit checks both apply to the per-quarter
+                    # price. This means an expensive quarter inside an
+                    # otherwise cheap charge cluster shows up as olive
+                    # (would-charge-but-cap-blocks) rather than green --
+                    # so the user sees that the cluster has a temporarily
+                    # expensive quarter that the cap will skip.
+                    below_limit = q_price < self.config.charging_price_limit
+                    below_cap = q_price < self.config.charging_price_hard_cap
 
-            if price is None:
-                price = ""
+                    if (in_charge or below_limit) and below_cap:
+                        slice_color = self._green_color(hour, current_hour, tomorrow)
+                    elif in_charge and not below_cap:
+                        # Algorithm picked this quarter for charging, but
+                        # this individual quarter exceeds the hard cap so
+                        # SEUSS won't actually charge here. Show in olive
+                        # so the user can tell at a glance "would charge
+                        # but cap blocks it" rather than confusing it
+                        # with an unrelated grey hour.
+                        slice_color = self._olive_color(hour, current_hour, tomorrow)
+                    elif in_discharge and not in_charge:
+                        slice_color = self._red_color(hour, current_hour, tomorrow)
+
+                slice_colors.append(slice_color)
+                slice_x = hour * width + q * slice_width
+                slice_svg += (
+                    f'<rect x="{slice_x}" y="{y}" '
+                    f'width="{slice_width}" height="{height}" '
+                    f'fill="{slice_color}" stroke="none"/>'
+                )
+
+            # Hour-bar outline (drawn over the 4 slices)
+            outline_svg = (
+                f'<rect x="{hour * width}" y="{y}" '
+                f'width="{width - 3}" height="{height}" '
+                f'fill="none" stroke="#000" stroke-width="1"/>'
+            )
+
+            # Build the hover tooltip with per-quarter prices.
+            # Format: "11:00 = 16.40 | 11:15 = 16.20 | 11:30 = 16.10 | 11:45 = 15.90 ct/kWh"
+            # Falls back to "no price" when the quarter is missing.
+            tooltip_parts = []
+            for q in range(4):
+                qprice = quarter_prices.get((hour, q))
+                if qprice is None:
+                    label = "n/a"
+                elif float(qprice).is_integer():
+                    label = f"{int(qprice)}"
+                else:
+                    label = f"{qprice:.2f}"
+                tooltip_parts.append(f"{hour:02d}:{q*15:02d} = {label}")
+            tooltip_text = " | ".join(tooltip_parts) + " ct/kWh"
+            # XML-escape the tooltip just in case (no expected entities,
+            # but better safe).
+            tooltip_text = (tooltip_text
+                            .replace("&", "&amp;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;"))
+
+            # Wrap slices + outline in a group with a title for hover.
+            svg += (
+                f'<g><title>{tooltip_text}</title>'
+                f'{slice_svg}{outline_svg}</g>'
+            )
+
+            # Hour label at baseline. Uses CSS class "chart-text" so the
+            # styles.css can colour it appropriately for light vs. dark
+            # mode (white on dark, dark on light).
+            svg += (
+                f'<text x="{hour * width + 15}" y="{baseline_y + 15}" '
+                f'text-anchor="middle" font-size="10" '
+                f'class="chart-text">{hour}</text>'
+            )
+
+            # Price label (inside bar if very tall, otherwise above).
+            # Use the most common slice colour for the label. For grey
+            # slices (unmarked / past) we fall back to the CSS class
+            # "chart-text" so the colour adapts to light vs. dark mode.
+            # For coloured slices (green / red / olive) the colour is
+            # legible on either background, so we use it directly.
+            if price is not None:
+                # Format compactly: integers as int, otherwise 2 decimals.
+                # Avoids "12.345678" because of float averaging.
+                if float(price).is_integer():
+                    label_price = f"{int(price)}"
+                else:
+                    label_price = f"{price:.2f}"
+            else:
+                label_price = ""
+
+            dominant_color = max(set(slice_colors), key=slice_colors.count) \
+                if slice_colors else None
+
+            # Treat default/past greys as "use the theme text colour".
+            grey_colors = {"gray", "gainsboro"}
+            use_theme_text = dominant_color in grey_colors or dominant_color is None
 
             if height + 15 > baseline_y:
-                # Preis wird innerhalb des Balkens angezeigt (Kontrastfarbe)
-                price_color = "white" if (color != "gray" and color != "gainsboro") else "black"  # Kontrastfarbe wählen
-                svg += f"""
-                <text x="{hour * width + 15}" y="15" text-anchor="middle" font-size="10" fill="{price_color}">{price}</text>
-                """
+                # Tall bar: label inside near the top. Use chart-text so
+                # the colour matches the theme (visible on both modes).
+                svg += (
+                    f'<text x="{hour * width + 15}" y="15" '
+                    f'text-anchor="middle" font-size="10" '
+                    f'class="chart-text">{label_price}</text>'
+                )
             else:
-                # Standardposition für den Preis oberhalb des Balkens
-                svg += f"""
-                <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
-                """
-#            # Füge Preis-Beschriftung hinzu innerhalb der Gruppe
-#            svg += f"""
-#            <text x="{hour * width + 15}" y="{y - 5}" text-anchor="middle" font-size="10" fill="{color}">{price}</text>
-#            """
+                # Short bar: label above the bar.
+                if use_theme_text:
+                    svg += (
+                        f'<text x="{hour * width + 15}" y="{y - 5}" '
+                        f'text-anchor="middle" font-size="10" '
+                        f'class="chart-text">{label_price}</text>'
+                    )
+                else:
+                    svg += (
+                        f'<text x="{hour * width + 15}" y="{y - 5}" '
+                        f'text-anchor="middle" font-size="10" '
+                        f'fill="{dominant_color}">{label_price}</text>'
+                    )
 
-        charge_hard_cap_height = (abs(self.config.charging_price_hard_cap) + 1) * factor
-        svg += f"""
-        <line x1="0" y1="{baseline_y - charge_hard_cap_height}" x2="{width * 24}" y2="{baseline_y - charge_hard_cap_height}" stroke="blue" stroke-width="2"/>
-        """
+        # Hard-cap line (blue)
+        charge_hard_cap_height = (
+            abs(self.config.charging_price_hard_cap) + 1
+        ) * factor
+        svg += (
+            f'<line x1="0" y1="{baseline_y - charge_hard_cap_height}" '
+            f'x2="{width * 24}" y2="{baseline_y - charge_hard_cap_height}" '
+            f'stroke="blue" stroke-width="2"/>'
+        )
 
-        if self.fee != "":
-            # Berechne den x-Wert, um den Text zu zentrieren
-            x_center = width * 12  # Mitte des SVG (Breite / 2)
+        if self.fee:
+            x_center = width * 12
+            svg += (
+                f'<text x="{x_center}" y="{svg_height - 15}" '
+                f'text-anchor="middle" font-size="12" fill="yellow">'
+                f'"Prices exclude tax and include fees. Formula: '
+                f'Final price = Base price + {self.fee}"</text>'
+            )
 
-            svg += f"""
-            <text x="{x_center}" y="{svg_height - 15}" text-anchor="middle" font-size="12" fill="yellow">
-            "Prices exclude tax and include fees. Formula: Final price = Base price + {self.fee}"
-            </text>
-            """
-
-        # Schließe die Gruppe und SVG-Code
-        svg += """
-        </svg>
-        """
-
+        svg += "</svg>"
         return svg
 
+    # ------------------------------------------------------------------
+    # Chart helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _target_date(tomorrow):
+        """
+        Return today's or tomorrow's date in the configured timezone.
+        Using datetime.today() would silently fall back to the system
+        clock, which on Venus OS is often UTC -- giving an off-by-one
+        date error when the user's configured timezone differs from UTC.
+        """
+        from core.timeutilities import TimeUtilities
+        d = TimeUtilities.get_now().date()
+        if tomorrow:
+            d = d + timedelta(days=1)
+        return d
+
+    @staticmethod
+    def _collect_quarter_keys(blocks, target_date):
+        """
+        Build a set of (hour, quarter_index) keys covered by the given
+        blocks for the target_date. quarter_index is 0..3 within the
+        hour. Block items are quarter-resolution; we walk each block's
+        items, convert their start time to local, and add (hour, q) for
+        each item that falls on target_date.
+
+        Defensive against TimeUtilities returning a string instead of
+        a datetime (which can happen if the time_str argument default
+        ever drifts).
+        """
+        from core.timeutilities import TimeUtilities
+        from datetime import datetime as _dt
+        from core.log import CustomLogger
+        log = CustomLogger().log
+
+        keys = set()
+        skipped_wrong_date = 0
+        skipped_no_local = 0
+        for blk in blocks:
+            for item in blk.get_items():
+                local = TimeUtilities.convert_utc_to_local(
+                    item.get_start_datetime(), False
+                )
+                if local is None:
+                    skipped_no_local += 1
+                    continue
+                # Be tolerant about what convert_utc_to_local returns:
+                # if it ever returns a "YYYY-MM-DD HH:MM" string, parse
+                # it back to a datetime so .date() works either way.
+                if isinstance(local, str):
+                    try:
+                        local = _dt.strptime(local, "%Y-%m-%d %H:%M")
+                    except ValueError:
+                        skipped_no_local += 1
+                        continue
+                if local.date() != target_date:
+                    skipped_wrong_date += 1
+                    continue
+                hour = local.hour
+                q = local.minute // 15
+                keys.add((hour, q))
+
+        log.debug(
+            f"_collect_quarter_keys: target={target_date}, "
+            f"blocks={len(blocks)}, kept_quarters={len(keys)}, "
+            f"skipped_wrong_date={skipped_wrong_date}, "
+            f"skipped_no_local={skipped_no_local}"
+        )
+        return keys
+
+    @staticmethod
+    def _collect_quarter_block_avgs(blocks, target_date):
+        """
+        Map (hour, quarter_index) -> block_avg_price (in cent/kWh as float)
+        for the target_date. Used by the chart to check the hard cap
+        against the BLOCK average rather than the individual quarter
+        price -- so a single expensive quarter inside an otherwise cheap
+        cluster doesn't get painted grey.
+        """
+        from core.timeutilities import TimeUtilities
+        from datetime import datetime as _dt
+        out = {}
+        for blk in blocks:
+            try:
+                avg_cent = float(blk.get_avg_price(True))
+            except (TypeError, ValueError):
+                continue
+            for item in blk.get_items():
+                local = TimeUtilities.convert_utc_to_local(
+                    item.get_start_datetime(), False
+                )
+                if local is None:
+                    continue
+                if isinstance(local, str):
+                    try:
+                        local = _dt.strptime(local, "%Y-%m-%d %H:%M")
+                    except ValueError:
+                        continue
+                if local.date() != target_date:
+                    continue
+                out[(local.hour, local.minute // 15)] = avg_cent
+        return out
+
+    @staticmethod
+    def _slice_base_color(hour, current_hour, tomorrow):
+        if tomorrow:
+            return "gainsboro"
+        return "gray" if current_hour > hour else "gainsboro"
+
+    @staticmethod
+    def _green_color(hour, current_hour, tomorrow):
+        if tomorrow:
+            return "#32CD32"
+        return "green" if current_hour > hour else "#32CD32"
+
+    @staticmethod
+    def _red_color(hour, current_hour, tomorrow):
+        if tomorrow:
+            return "red"
+        return "darkred" if current_hour > hour else "red"
+
+    @staticmethod
+    def _olive_color(hour, current_hour, tomorrow):
+        """
+        Olive shade for "would-charge but blocked by hard cap".
+        Past hours use the darker shade, future hours the brighter one,
+        matching the green/red dimming convention.
+        """
+        if tomorrow:
+            return "#9ACD32"        # yellowgreen, bright
+        return "#556B2F" if current_hour > hour else "#9ACD32"  # darkolivegreen / yellowgreen
+
     def generate_legend_svg(self):
-        average_price_today, average_price_tomorow = self.market_items.get_average_price_by_date(True)
+        average_price_today, average_price_tomorrow = (
+            self.market_items.get_average_price_by_date(True)
+        )
 
-        # SVG-Code für die Legende
-        legend_svg = """
-        <svg width="240" height="195" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #ccc; margin-top: 18px;">
-        """
+        # Legend dimensions: enough room for 6 entries.
+        legend_svg = (
+            '<svg width="280" height="225" '
+            'xmlns="http://www.w3.org/2000/svg" '
+            'style="border: 1px solid #ccc; margin-top: 18px;">'
+        )
 
-        # Füge Rechteck für grüne Stunde hinzu
-        legend_svg += """
-        <rect x="10" y="10" width="20" height="20" fill="green" stroke="#000" stroke-width="1"/>
-        """
+        # Charging block (green)
+        legend_svg += (
+            '<rect x="10" y="10" width="20" height="20" '
+            'fill="green" stroke="#000" stroke-width="1"/>'
+            '<text x="40" y="25" font-size="12" class="chart-text">'
+            'Charging</text>'
+        )
 
-        # Füge Text für grüne Stunde hinzu
-        legend_svg += """
-        <text x="40" y="25" font-size="12">Charging</text>
-        """
+        # Charging blocked by hard cap (olive)
+        legend_svg += (
+            '<rect x="10" y="40" width="20" height="20" '
+            'fill="#556B2F" stroke="#000" stroke-width="1"/>'
+            '<text x="40" y="55" font-size="12" class="chart-text">'
+            'Charging blocked by hard cap</text>'
+        )
 
-        # Füge Rechteck für rote Stunde hinzu
-        legend_svg += """
-        <rect x="10" y="40" width="20" height="20" fill="red" stroke="#000" stroke-width="1"/>
-        """
+        # Discharging (red)
+        legend_svg += (
+            '<rect x="10" y="70" width="20" height="20" '
+            'fill="red" stroke="#000" stroke-width="1"/>'
+            '<text x="40" y="85" font-size="12" class="chart-text">'
+            'Discharging</text>'
+        )
 
-        # Füge Text für rote Stunde hinzu
-        legend_svg += """
-        <text x="40" y="55" font-size="12">Discharging</text>
-        """
+        # Average today line (magenta)
+        legend_svg += (
+            '<rect x="10" y="105" width="20" height="4" '
+            'fill="magenta" stroke="#000" stroke-width="1"/>'
+            f'<text x="40" y="115" font-size="12" class="chart-text">'
+            f'Average Today ({average_price_today})</text>'
+        )
 
-        legend_svg += """
-        <rect x="10" y="75" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
-        """
-        legend_svg += f"""
-        <text x="40" y="85" font-size="12">Average Today ({average_price_today})</text>
-        """
+        # Average tomorrow line (magenta)
+        legend_svg += (
+            '<rect x="10" y="135" width="20" height="4" '
+            'fill="magenta" stroke="#000" stroke-width="1"/>'
+            f'<text x="40" y="145" font-size="12" class="chart-text">'
+            f'Average Tomorrow ({average_price_tomorrow})</text>'
+        )
 
-        legend_svg += """
-        <rect x="10" y="105" width="20" height="4" fill="magenta" stroke="#000" stroke-width="1"/>
-        """
-        legend_svg += f"""
-        <text x="40" y="115" font-size="12">Average Tomorrow ({average_price_tomorow})</text>
-        """
+        # Charging price limit line (yellow)
+        legend_svg += (
+            '<rect x="10" y="165" width="20" height="4" '
+            'fill="yellow" stroke="#000" stroke-width="1"/>'
+            f'<text x="40" y="175" font-size="12" class="chart-text">'
+            f'Charging Price Limit ({self.config.charging_price_limit})</text>'
+        )
 
-        legend_svg += """
-        <rect x="10" y="135" width="20" height="4" fill="yellow" stroke="#000" stroke-width="1"/>
-        """
-        legend_svg += f"""
-        <text x="40" y="145" font-size="12">Charging Price Limit ({self.config.charging_price_limit})</text>
-        """
+        # Charging price hard cap line (blue)
+        legend_svg += (
+            '<rect x="10" y="195" width="20" height="4" '
+            'fill="blue" stroke="#000" stroke-width="1"/>'
+            f'<text x="40" y="205" font-size="12" class="chart-text">'
+            f'Charging Price Hard Cap ({self.config.charging_price_hard_cap})</text>'
+        )
 
-        legend_svg += """
-        <rect x="10" y="165" width="20" height="4" fill="blue" stroke="#000" stroke-width="1"/>
-        """
-        legend_svg += f"""
-        <text x="40" y="175" font-size="12">Charging Price Hard Cap ({self.config.charging_price_hard_cap})</text>
-        """
-
-        # Schließe die SVG-Code
-        legend_svg += """
-        </svg>
-        """
-
+        legend_svg += "</svg>"
         return legend_svg
 
     def calculate_slider_percentages(self, current_soc, solar_expectation):

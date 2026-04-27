@@ -42,6 +42,11 @@
                                 <option value="WARNING" {{ 'selected' if value == 'WARNING' else '' }}>WARNING</option>
                                 <option value="INFO" {{ 'selected' if value == 'INFO' else '' }}>INFO</option>
                             </select><br>
+                        % elif key == "tariff_resolution":
+                            <select id="{{ key }}" name="{{ key }}">
+                                <option value="hourly" {{ 'selected' if value == 'hourly' else '' }}>Hourly</option>
+                                <option value="quarterly" {{ 'selected' if value == 'quarterly' else '' }}>Quarterly (15 min)</option>
+                            </select><br>
                         % else:
                             <input type="text" id="{{ key }}" name="{{ key }} " value="{{ value }}"><br>
                         % end
