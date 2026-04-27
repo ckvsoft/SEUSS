@@ -100,8 +100,13 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.current_power = self.handler.get_power("AC_POWER")
                 self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
                 self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
+                # PV is optional in the user's MQTT setup -- get_power
+                # returns 0 if the topic isn't mapped, which is fine.
+                pv = self.handler.get_power("PV_POWER") or 0
                 timestamp = time.time()
-                self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
+                self.update(self.current_power, self.current_grid_power,
+                            self.P_DC_consumption_Battery, timestamp,
+                            pv_power=pv)
 
     def on_disconnect(self, client, userdata, *args):
         """Universal disconnect callback compatible with all Paho versions"""
@@ -115,7 +120,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 if self.client.is_connected():
                     cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
                     total_cost = sum(self.energy_costs_by_hour.values())
-                    self.energy_costs_by_day[str(self.current_day)] = total_cost
+                    # Use ISO-date keys (consistent with update() and
+                    # save_day()). Was str(tm_yday) -- a legacy bug
+                    # that silently overwrote last year's same-yday
+                    # entry every January.
+                    self.energy_costs_by_day[self._today_iso()] = total_cost
 
                     value = self.handler.get_power("TOTAL_POWER") or 0
                     loss = value
@@ -146,6 +155,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'loss': loss,
                             'efficiency': efficiency,
                             'consumptionD': self.get_daily_wh(),
+                            'gridD': self.get_daily_grid_wh(),
+                            'gridH': self.get_hour_grid_wh(),
+                            'pvD': self.get_daily_pv_wh(),
+                            'batteryThroughputD': self.get_daily_battery_throughput_wh(),
                             'soc' : self.soc
                         })
 

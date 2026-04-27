@@ -76,6 +76,7 @@ class SEUSSWeb:
         self.app.route('/', method='GET', callback=self.index)
         self.app.route('/editor', method='GET', callback=self.editor)
         self.app.route('/logview', method='GET', callback=self.logview)
+        self.app.route('/stats', method='GET', callback=self.stats)
         self.app.route('/save_config', method='POST', callback=self.save_config_route)
         self.app.route('/static/<filename:path>', method='GET', callback=self.serve_static)
         self.app.route('/download_log', method='POST', callback=self.download_log)
@@ -215,6 +216,58 @@ class SEUSSWeb:
         log_content = reader.get_log_data_for_frontend(not hide_debug)
 
         return template('logview', log_content=log_content, hide_debug=hide_debug)
+
+    def stats(self):
+        """
+        Statistics overview page. Reads the per-day history dicts that
+        the PowerConsumption layer accumulates into the StatsManager
+        (see powerconsumption/abstract_classes/powerconsumption.py).
+        Tabs Today / Yesterday are functional; longer ranges are stubbed
+        until Part 2 adds the necessary history depth.
+
+        We do all data preparation server-side rather than handing the
+        raw dicts to the template -- the template stays a presentation
+        layer, no logic.
+        """
+        from datetime import date, timedelta
+        from core.statsmanager import StatsManager
+
+        sm = StatsManager()
+
+        def _get_dict(key):
+            v = sm.get_data("powerconsumption", key)
+            return v if isinstance(v, dict) else {}
+
+        consumption_by_day = _get_dict("consumption_wh_by_day")
+        grid_by_day = _get_dict("grid_wh_by_day")
+        pv_by_day = _get_dict("pv_wh_by_day")
+        battery_by_day = _get_dict("battery_throughput_wh_by_day")
+        costs_by_day = _get_dict("energy_costs_by_day")
+
+        today_iso = date.today().isoformat()
+        yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+
+        def _row_for(iso_date):
+            return {
+                "iso": iso_date,
+                "consumption_wh": consumption_by_day.get(iso_date, 0),
+                "grid_wh": grid_by_day.get(iso_date, 0),
+                "pv_wh": pv_by_day.get(iso_date, 0),
+                "battery_throughput_wh": battery_by_day.get(iso_date, 0),
+                "cost_eur": costs_by_day.get(iso_date, 0),
+            }
+
+        stats_data = {
+            "today": _row_for(today_iso),
+            "yesterday": _row_for(yesterday_iso),
+            "history_days_available": len([
+                k for k in consumption_by_day.keys()
+                if k != today_iso
+            ]),
+        }
+
+        return template('stats', stats=stats_data,
+                        version=version.__version__, root=self.view_path)
 
     def update_log(self):
         reader = LogReader()

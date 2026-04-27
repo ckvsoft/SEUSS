@@ -6,6 +6,7 @@
         <ul>
             <li><a href="/">[ Status ]</a></li>
             <li><a href="/logview">[ Log View ]</a></li>
+            <li><a href="/stats">[ Statistics ]</a></li>
             <li><a href="/editor">[ Config Editor ]</a></li>
             <!-- Fügen Sie weitere Links nach Bedarf hinzu -->
         </ul>

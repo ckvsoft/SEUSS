@@ -50,6 +50,10 @@
                     <div class="realtime-right">
                         <div id="averageWhD">Average Now: -</div>
                         <div id="consumptionD">Consumption today: -</div>
+                        <div id="gridD">Grid today: -</div>
+                        <div id="gridH">Grid this hour: -</div>
+                        <div id="pvD">PV today: -</div>
+                        <div id="batteryThroughputD">Battery today: -</div>
                         <div id="costs">Current Hour Costs: -</div>
                         <div id="total_costs_today">Total Costs Today: -</div>
                         <div id="loss">Loss: -</div>
@@ -129,6 +133,10 @@
                     updateValue("efficiency", "Efficiency", data.efficiency, "%");
                     updateValue("pv", "PV", data.pv, "W");
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
+                    updateValue("gridD", "Grid today", data.gridD, "Wh");
+                    updateValue("gridH", "Grid this hour", data.gridH, "Wh");
+                    updateValue("pvD", "PV today", data.pvD, "Wh");
+                    updateValue("batteryThroughputD", "Battery today", data.batteryThroughputD, "Wh");
                     if (data.soc !== undefined && data.soc !== null) {
                         document.getElementById("soc-value").textContent = data.soc.toFixed(0) + " %";
                     }

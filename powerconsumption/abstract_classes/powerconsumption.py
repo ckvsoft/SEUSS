@@ -28,6 +28,7 @@
 import threading
 import time
 import calendar
+from datetime import date, datetime, timedelta
 
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
@@ -294,11 +295,18 @@ class PowerConsumptionBase:
         self.hourly_wh = 0          # Consumption for the current hour in kWh
         self.hour_grid_wh = 0
         self.energy_costs_by_hour = {}
-        self.energy_costs_by_day = {}
+        self.energy_costs_by_day = {}    # ISO-date-keyed: "2026-04-27" -> €
+        self.consumption_wh_by_day = {}  # ISO-date-keyed daily totals (Wh)
+        self.grid_wh_by_day = {}
+        self.pv_wh_by_day = {}
+        self.battery_throughput_wh_by_day = {}
         self.hourly_start_time = time.time()  # Start time of the current hour
 
-        self.daily_wh = 0           # Daily consumption in kWh
-        self.daily_grid_wh = 0
+        # Daily totals (Wh, in-RAM running sums; persisted across restarts).
+        self.daily_wh = 0           # House consumption
+        self.daily_grid_wh = 0      # Grid import only (positive flow)
+        self.daily_pv_wh = 0        # PV production
+        self.daily_battery_throughput_wh = 0   # |battery_power| over time -- charge + discharge combined
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
@@ -312,7 +320,10 @@ class PowerConsumptionBase:
         self.number_of_grid_phases = 3  # Default number of phases, adjust if needed
         self.current_power = 0
         self.current_grid_power = 0
-        self.consumption_diff = 0
+        # Last-seen instantaneous values for new daily accumulators.
+        # update() multiplies these by dt to integrate Wh.
+        self.last_pv_value = 0
+        self.last_battery_value = 0
         self.soc = None
 
         self.data_file = "consumption_data.json"
@@ -348,8 +359,69 @@ class PowerConsumptionBase:
     def set_current_price(self, current_price):
         self.current_price = current_price
 
+    @staticmethod
+    def _today_iso():
+        """Today's local date as ISO string (YYYY-MM-DD)."""
+        return date.today().isoformat()
+
+    @staticmethod
+    def _migrate_yday_to_iso(d, year=None):
+        """
+        Bring a `*_by_day` dict to the current ISO-date scheme.
+
+        Older builds keyed these dicts by `tm_yday` (e.g. "117" for
+        April 27 in a non-leap year). We now key them by ISO date
+        ("2026-04-27"). On load we walk the dict and:
+
+          * pass ISO-date keys through unchanged (10 chars, 2 dashes)
+          * convert numeric / numeric-string keys 1..366 to an ISO
+            date in the given year (defaults to today's year, which
+            is the assumption that fits the user's situation -- legacy
+            yday data was accumulated within the current calendar year)
+          * drop garbage keys
+
+        This is intentionally a one-way migration: once an entry is
+        rewritten with an ISO key, save_data() persists it that way
+        and subsequent loads see only ISO keys. There's no harm
+        running the migrator on already-migrated data; it just becomes
+        a no-op pass-through.
+        """
+        if not isinstance(d, dict):
+            return {}
+        if year is None:
+            year = date.today().year
+        days_in_year = 366 if calendar.isleap(year) else 365
+
+        out = {}
+        for k, v in d.items():
+            sk = str(k)
+            # Already ISO -> passthrough
+            if len(sk) == 10 and sk.count("-") == 2:
+                out[sk] = v
+                continue
+            # yday key -> convert
+            try:
+                yday = int(sk)
+            except (TypeError, ValueError):
+                # garbage key, drop
+                continue
+            if not (1 <= yday <= 366):
+                continue
+            yday = min(yday, days_in_year)
+            iso = (date(year, 1, 1) + timedelta(days=yday - 1)).isoformat()
+            # If both an ISO and a yday entry existed for the same day,
+            # the ISO one wins (it's the newer scheme; treat it as
+            # authoritative).
+            if iso not in out:
+                out[iso] = v
+        return out
+
     def load_data(self):
         self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh") or 0.0
+        self.daily_grid_wh = self.statsmanager.get_data("powerconsumption", "daily_grid_wh") or 0.0
+        self.daily_pv_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_wh") or 0.0
+        self.daily_battery_throughput_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_battery_throughput_wh") or 0.0
 
         hourly_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_wh")
         self.hourly_wh, self.hourly_start_time = hourly_wh_list if isinstance(hourly_wh_list, tuple) and len(hourly_wh_list) == 2 else (0, time.time())
@@ -363,15 +435,53 @@ class PowerConsumptionBase:
         self.last_value, self.last_time = last_value_list if isinstance(last_value_list, tuple) and len(last_value_list) == 2 else (0, time.time())
         self.last_grid_value, _ = last_grid_value_list if isinstance(last_grid_value_list, tuple) and len(last_grid_value_list) == 2 else (0, time.time())
 
-        energy_costs_by_hour = self.statsmanager.get_data("powerconsumption","energy_costs_by_hour")
-        energy_costs_by_day = self.statsmanager.get_data("powerconsumption","energy_costs_by_day")
+        energy_costs_by_hour = self.statsmanager.get_data("powerconsumption", "energy_costs_by_hour")
+
+        # All `*_by_day` dicts are now keyed by ISO-date. Earlier builds
+        # used tm_yday integers, which silently overwrote across years.
+        # The migrator converts legacy yday keys into ISO dates assuming
+        # the current calendar year -- per discussion with the user,
+        # legacy data from previous years is acceptable to lose, but
+        # current-year data should be preserved. Already-ISO keys pass
+        # through unchanged so it's safe to run unconditionally.
+        raw_costs = self.statsmanager.get_data("powerconsumption", "energy_costs_by_day") or {}
+        raw_consumption = self.statsmanager.get_data("powerconsumption", "consumption_wh_by_day") or {}
+        raw_grid = self.statsmanager.get_data("powerconsumption", "grid_wh_by_day") or {}
+        raw_pv = self.statsmanager.get_data("powerconsumption", "pv_wh_by_day") or {}
+        raw_battery = self.statsmanager.get_data("powerconsumption", "battery_throughput_wh_by_day") or {}
+
+        self.energy_costs_by_day = self._migrate_yday_to_iso(raw_costs)
+        self.consumption_wh_by_day = self._migrate_yday_to_iso(raw_consumption)
+        self.grid_wh_by_day = self._migrate_yday_to_iso(raw_grid)
+        self.pv_wh_by_day = self._migrate_yday_to_iso(raw_pv)
+        self.battery_throughput_wh_by_day = self._migrate_yday_to_iso(raw_battery)
+
+        # Log a migration summary if any keys were converted (i.e. the
+        # raw counts differ from the migrated dict's keys, or any raw
+        # key was numeric).
+        def _had_yday(raw):
+            for k in (raw or {}).keys():
+                sk = str(k)
+                if not (len(sk) == 10 and sk.count("-") == 2):
+                    return True
+            return False
+
+        if any(_had_yday(r) for r in [raw_costs, raw_consumption, raw_grid, raw_pv, raw_battery]):
+            self.logger.log.info(
+                "Migrated legacy yday-keyed entries in powerconsumption history "
+                f"to ISO dates (assumed year {date.today().year})."
+            )
 
         self.logger.log.debug(f"Loaded energy costs by hour: {energy_costs_by_hour}")
-        self.logger.log.debug(f"Loaded energy costs by day: {energy_costs_by_day}")
+        self.logger.log.debug(f"Loaded energy_costs_by_day (post-migration): {self.energy_costs_by_day}")
+        self.logger.log.debug(f"Loaded consumption_wh_by_day: {self.consumption_wh_by_day}")
+        self.logger.log.debug(f"Loaded grid_wh_by_day: {self.grid_wh_by_day}")
+        self.logger.log.debug(f"Loaded pv_wh_by_day: {self.pv_wh_by_day}")
+        self.logger.log.debug(
+            f"Loaded battery_throughput_wh_by_day: {self.battery_throughput_wh_by_day}")
 
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
-        self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
-        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption","current_hour_grid_wh")
+        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption", "current_hour_grid_wh")
         if current_hour_grid_wh and current_hour_grid_wh[1] == self.current_hour:
             self.hour_grid_wh = current_hour_grid_wh[0]
         else:
@@ -380,11 +490,21 @@ class PowerConsumptionBase:
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        # New per-day history dicts.
+        self.statsmanager.set_status_data("powerconsumption","consumption_wh_by_day", self.consumption_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","grid_wh_by_day", self.grid_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_wh_by_day", self.pv_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","battery_throughput_wh_by_day", self.battery_throughput_wh_by_day, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time), save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_grid_power_value", (self.last_grid_value, self.last_time))
         self.statsmanager.set_status_data("powerconsumption","current_hour_grid_wh", (self.hour_grid_wh, self.current_hour))
+        # New running daily totals -- persisted alongside daily_wh so a
+        # restart mid-day doesn't lose the day's accumulated values.
+        self.statsmanager.set_status_data("powerconsumption","daily_grid_wh", self.daily_grid_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_pv_wh", self.daily_pv_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_battery_throughput_wh", self.daily_battery_throughput_wh, save_data=False)
 
         if logging:
             self.logger.log.debug("data saved.")
@@ -411,21 +531,79 @@ class PowerConsumptionBase:
         self.save_data()
 
     def save_day(self):
-        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
-        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        """
+        Called from update() when the calendar day rolls over. The
+        day-rotation in update() happens AFTER this returns, so when
+        we're called the running totals (daily_wh, daily_grid_wh,
+        daily_pv_wh, daily_battery_throughput_wh) still hold the
+        just-finished day's values. We close them out here:
+
+          1. Update the daily_watt_average EWMA.
+          2. Compute the just-finished day's ISO date (yesterday from
+             the system clock's perspective at the moment of crossover).
+          3. Roll the four running daily totals plus total cost into
+             their respective `*_by_day` history dicts under that key.
+          4. Persist via save_data().
+
+        Reset of the running totals (daily_wh, daily_grid_wh, ...) is
+        done by update() right after we return -- we keep that
+        responsibility split because the existing code already structured
+        it that way.
+        """
+        self.statsmanager.update_percent_status_data(
+            "powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
+
+        # The day boundary was just crossed by update(); subtract one
+        # day from "now" to get the date we're closing out. (Using
+        # date.today() at exactly midnight could land on either side
+        # depending on scheduling; subtracting one day is unambiguous
+        # because update() only enters this branch AFTER tm_yday changed.)
+        yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+
         total_cost = sum(self.energy_costs_by_hour.values())
-        self.energy_costs_by_day[str(self.current_day)] = total_cost
+        self.energy_costs_by_day[yesterday_iso] = round(total_cost, 4)
+        self.consumption_wh_by_day[yesterday_iso] = round(self.daily_wh, 2)
+        self.grid_wh_by_day[yesterday_iso] = round(self.daily_grid_wh, 2)
+        self.pv_wh_by_day[yesterday_iso] = round(self.daily_pv_wh, 2)
+        self.battery_throughput_wh_by_day[yesterday_iso] = round(self.daily_battery_throughput_wh, 2)
+
+        # Reset the per-hour cost bucket for the new day.
         self.energy_costs_by_hour = {}
 
-        # Speichert die Daten
+        # Persist all of the above (save_data writes the history dicts
+        # plus the running totals; daily_wh/daily_grid_wh/etc are reset
+        # to 0 by update() right after we return).
         self.save_data()
 
-    def update(self, power, grid_power, battery_power, timestamp):
-        """Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit."""
+    def update(self, power, grid_power, battery_power, timestamp,
+               pv_power=0):
+        """
+        Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit.
+
+        Parameters
+        ----------
+        power : W
+            Aggregated AC house consumption.
+        grid_power : W
+            Grid power; positive = import, negative = export.
+        battery_power : W
+            DC battery power; sign convention depends on the source
+            (typically positive = discharge, negative = charge in
+            Victron). For now we only use abs() so the convention does
+            not matter for the throughput accumulator.
+        timestamp : float
+            Seconds since epoch (time.time()).
+        pv_power : W, optional
+            Solar production. Defaults to 0 so callers that don't yet
+            wire it through (or whose MQTT setup has no PV topic) keep
+            working without breaking.
+        """
         # Setze den Startwert, wenn es die erste Messung ist
         if self.last_time is None:
             self.last_value = power
             self.last_grid_value = grid_power
+            self.last_pv_value = pv_power or 0
+            self.last_battery_value = battery_power or 0
             self.last_time = timestamp
             self.current_hour = time.localtime(timestamp).tm_hour
             self.current_day = time.localtime(timestamp).tm_yday
@@ -435,7 +613,7 @@ class PowerConsumptionBase:
         # Berechne das Zeitintervall in Stunden
         time_diff = (timestamp - self.last_time) / 3600  # Zeitdifferenz in Stunden
 
-        # Berechne den kWh-Verbrauch für diesen Zeitraum
+        # Berechne den Wh-Verbrauch für diesen Zeitraum
         wh = (self.last_value * time_diff)
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
         self.daily_wh += wh   # Update des täglichen Verbrauchs
@@ -445,7 +623,32 @@ class PowerConsumptionBase:
             self.hour_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
 
+        # PV: positive only -- a negative reading would be a sensor
+        # glitch, not real reverse flow.
+        pv_wh = max(self.last_pv_value, 0) * time_diff
+        self.daily_pv_wh += pv_wh
+
+        # Battery throughput: |power| × dt. Charge and discharge both
+        # count as throughput (we don't separate them in Part 1 because
+        # the sign convention isn't confirmed yet -- splitting comes in
+        # Part 2). Throughput is what you compare to battery capacity
+        # for cycle counting later.
+        battery_wh = abs(self.last_battery_value) * time_diff
+        self.daily_battery_throughput_wh += battery_wh
+
         self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
+
+        # Mirror today's running totals into the per-day history dicts
+        # so the stats page can render "today" without waiting for the
+        # day boundary. These keys overwrite each tick which is fine --
+        # the values just walk up over the day, then save_day() seals
+        # them with the final values.
+        today_iso = self._today_iso()
+        self.consumption_wh_by_day[today_iso] = round(self.daily_wh, 2)
+        self.grid_wh_by_day[today_iso] = round(self.daily_grid_wh, 2)
+        self.pv_wh_by_day[today_iso] = round(self.daily_pv_wh, 2)
+        self.battery_throughput_wh_by_day[today_iso] = round(self.daily_battery_throughput_wh, 2)
+        self.energy_costs_by_day[today_iso] = round(sum(self.energy_costs_by_hour.values()), 4)
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
@@ -455,7 +658,13 @@ class PowerConsumptionBase:
         if current_day != self.current_day:
             self.save_day()  # Speichere den täglichen Verbrauch
             self.current_day = current_day
-            self.daily_wh = 0  # Setze den täglichen Verbrauch zurück
+            # Reset all four daily running totals. Note that
+            # daily_grid_wh used to NOT be reset here -- a bug that
+            # caused it to grow unbounded across days. Fixed now.
+            self.daily_wh = 0
+            self.daily_grid_wh = 0
+            self.daily_pv_wh = 0
+            self.daily_battery_throughput_wh = 0
 
         # Überprüfe, ob eine neue Stunde begonnen hat
         if current_hour != self.current_hour:
@@ -474,6 +683,8 @@ class PowerConsumptionBase:
         # Aktualisieren der letzten Werte
         self.last_value = power
         self.last_grid_value = grid_power
+        self.last_pv_value = pv_power or 0
+        self.last_battery_value = battery_power or 0
         self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
 
@@ -499,6 +710,27 @@ class PowerConsumptionBase:
         """Returns the current daily consumption in Wh."""
         return self.daily_wh
 
+    def get_daily_grid_wh(self):
+        """Returns the current daily grid import in Wh (positive flow only)."""
+        return self.daily_grid_wh
+
+    def get_daily_pv_wh(self):
+        """Returns the current daily PV production in Wh."""
+        return self.daily_pv_wh
+
+    def get_daily_battery_throughput_wh(self):
+        """
+        Returns the current daily battery energy throughput in Wh, i.e.
+        |battery_power| integrated over time. Charge and discharge both
+        count -- this is the basis for cycle counting later (Part 2 will
+        split it into directional totals).
+        """
+        return self.daily_battery_throughput_wh
+
+    def get_hour_grid_wh(self):
+        """Returns the current hour's grid import in Wh."""
+        return self.hour_grid_wh
+
     def get_minutes_since_until__midnight(self):
         """Berechnet die vergangenen Minuten seit Mitternacht."""
         now = TimeUtilities.get_now()  # Lokale Zeit holen
@@ -509,19 +741,30 @@ class PowerConsumptionBase:
     def reset_data(self):
         """Reset all tracked data to default values."""
         self.hourly_wh = 0
+        self.hour_grid_wh = 0
         self.daily_wh = 0
+        self.daily_grid_wh = 0
+        self.daily_pv_wh = 0
+        self.daily_battery_throughput_wh = 0
         self.hourly_start_time = time.time()
         self.last_value = 0
         self.last_grid_value = 0
+        self.last_pv_value = 0
+        self.last_battery_value = 0
         self.last_time = time.time()
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
 
     def get_monthly_cost(self, year, month):
-        """Berechnet die Gesamtkosten für einen bestimmten Monat anhand von yday."""
-        start_day = sum(calendar.monthrange(year, m)[1] for m in range(1, month)) + 1
-        end_day = start_day + calendar.monthrange(year, month)[1] - 1
-
-        # Summe der Kosten für alle yday im Bereich
-        return sum(self.energy_costs_by_day.get(day, 0) for day in range(start_day, end_day + 1))
+        """
+        Sum of grid energy costs for the given calendar month, taken
+        from `energy_costs_by_day` which is keyed by ISO-date strings
+        ("YYYY-MM-DD").
+        """
+        days_in_month = calendar.monthrange(year, month)[1]
+        total = 0.0
+        for day in range(1, days_in_month + 1):
+            iso_key = date(year, month, day).isoformat()
+            total += self.energy_costs_by_day.get(iso_key, 0)
+        return total
