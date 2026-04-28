@@ -172,6 +172,8 @@
          data-today-rte="{{ stats['today']['rte_pct'] }}"
          data-today-solar-skips="{{ stats['today']['solar_skips'] }}"
          data-today-battery-skips="{{ stats['today']['battery_skips'] }}"
+         data-today-battery-overnext-skips="{{ stats['today']['battery_overnext_skips'] }}"
+         data-today-battery-expensive-phase-skips="{{ stats['today']['battery_expensive_phase_skips'] }}"
          data-yesterday-iso="{{ stats['yesterday']['iso'] }}"
          data-yesterday-consumption="{{ stats['yesterday']['consumption_wh'] }}"
          data-yesterday-grid="{{ stats['yesterday']['grid_wh'] }}"
@@ -184,6 +186,8 @@
          data-yesterday-rte="{{ stats['yesterday']['rte_pct'] }}"
          data-yesterday-solar-skips="{{ stats['yesterday']['solar_skips'] }}"
          data-yesterday-battery-skips="{{ stats['yesterday']['battery_skips'] }}"
+         data-yesterday-battery-overnext-skips="{{ stats['yesterday']['battery_overnext_skips'] }}"
+         data-yesterday-battery-expensive-phase-skips="{{ stats['yesterday']['battery_expensive_phase_skips'] }}"
          data-week-iso="{{ stats['week']['iso'] }}"
          data-week-consumption="{{ stats['week']['consumption_wh'] }}"
          data-week-grid="{{ stats['week']['grid_wh'] }}"
@@ -196,6 +200,8 @@
          data-week-rte="{{ stats['week']['rte_pct'] }}"
          data-week-solar-skips="{{ stats['week']['solar_skips'] }}"
          data-week-battery-skips="{{ stats['week']['battery_skips'] }}"
+         data-week-battery-overnext-skips="{{ stats['week']['battery_overnext_skips'] }}"
+         data-week-battery-expensive-phase-skips="{{ stats['week']['battery_expensive_phase_skips'] }}"
          data-month-iso="{{ stats['month']['iso'] }}"
          data-month-consumption="{{ stats['month']['consumption_wh'] }}"
          data-month-grid="{{ stats['month']['grid_wh'] }}"
@@ -208,6 +214,8 @@
          data-month-rte="{{ stats['month']['rte_pct'] }}"
          data-month-solar-skips="{{ stats['month']['solar_skips'] }}"
          data-month-battery-skips="{{ stats['month']['battery_skips'] }}"
+         data-month-battery-overnext-skips="{{ stats['month']['battery_overnext_skips'] }}"
+         data-month-battery-expensive-phase-skips="{{ stats['month']['battery_expensive_phase_skips'] }}"
          data-year-iso="{{ stats['year']['iso'] }}"
          data-year-consumption="{{ stats['year']['consumption_wh'] }}"
          data-year-grid="{{ stats['year']['grid_wh'] }}"
@@ -219,7 +227,9 @@
          data-year-cycles="{{ stats['year']['cycles'] }}"
          data-year-rte="{{ stats['year']['rte_pct'] }}"
          data-year-solar-skips="{{ stats['year']['solar_skips'] }}"
-         data-year-battery-skips="{{ stats['year']['battery_skips'] }}">
+         data-year-battery-skips="{{ stats['year']['battery_skips'] }}"
+         data-year-battery-overnext-skips="{{ stats['year']['battery_overnext_skips'] }}"
+         data-year-battery-expensive-phase-skips="{{ stats['year']['battery_expensive_phase_skips'] }}">
 
         <div class="stats-tile">
             <div class="label">Range</div>
@@ -277,13 +287,13 @@
         <div class="stats-tile">
             <div class="label">Cycles</div>
             <div class="value"
-                 title="charge_wh / battery_capacity_wh ({{ stats['battery_capacity_wh'] }} Wh)">
+                 title="Battery cycles in this range = charge_wh / battery_capacity_wh. Capacity ({{ stats['battery_capacity_wh'] }} Wh) is auto-detected from the pack voltage on first essunit loop after start. If you see exactly 0.0 it usually means either (a) no charging has happened in the range yet, or (b) the essunit hasn't reported a valid battery voltage yet so capacity is still unknown -- check the log for 'Detected … LiFePO4 system' to confirm detection ran.">
                 <span id="tile-cycles">{{ "{:.3f}".format(active['cycles']) }}</span>
             </div>
         </div>
 
         <div class="stats-tile"
-             title="Round-trip efficiency: discharge_wh / charge_wh">
+             title="Round-trip efficiency: how much of the energy you put INTO the battery comes back OUT (discharge_wh / charge_wh × 100). For a healthy LFP system the long-term average is around 92-96%. Short ranges like Today can show very high or low values: if you only charged 200 Wh today but the battery discharged 1800 Wh of yesterday's stored energy, RTE will read way over 100% -- the metric only makes sense once a full charge AND discharge have happened in the same range. Look at the Month/Year tabs for a realistic figure.">
             <div class="label">RTE</div>
             <div class="value">
                 <span id="tile-rte">{{ "{:.1f}".format(active['rte_pct']) }}</span>
@@ -314,6 +324,22 @@
             <div class="label">Battery Skips</div>
             <div class="value">
                 <span id="tile-battery-skips">{{ active['battery_skips'] }}</span>
+            </div>
+        </div>
+
+        <div class="stats-tile skip"
+             title="How often the look-ahead 'covers until OVERNEXT cheap cluster' abort skipped a charge in this range. Only fires when the battery alone is enough to bridge through the next cheap cluster AND the expensive phase that follows.">
+            <div class="label">Overnext Skips</div>
+            <div class="value">
+                <span id="tile-battery-overnext-skips">{{ active['battery_overnext_skips'] }}</span>
+            </div>
+        </div>
+
+        <div class="stats-tile skip"
+             title="How often the 'covers entire expensive phase' abort skipped a charge in this range. Fires when the battery alone covers consumption until the next charge cluster of any price -- the recommended successor to the older battery-range / overnext aborts.">
+            <div class="label">Expensive Phase Skips</div>
+            <div class="value">
+                <span id="tile-battery-expensive-phase-skips">{{ active['battery_expensive_phase_skips'] }}</span>
             </div>
         </div>
     </div>
@@ -379,6 +405,16 @@
                 <td>{{ stats['yesterday']['battery_skips'] }}</td>
             </tr>
             <tr>
+                <td>Overnext-cluster skips</td>
+                <td>{{ stats['today']['battery_overnext_skips'] }}</td>
+                <td>{{ stats['yesterday']['battery_overnext_skips'] }}</td>
+            </tr>
+            <tr>
+                <td>Expensive-phase skips</td>
+                <td>{{ stats['today']['battery_expensive_phase_skips'] }}</td>
+                <td>{{ stats['yesterday']['battery_expensive_phase_skips'] }}</td>
+            </tr>
+            <tr>
                 <td>Grid cost</td>
                 <td title="{{ '{:.4f}'.format(stats['today']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['today']['cost_eur'] / 100.0) }} €</td>
                 <td title="{{ '{:.4f}'.format(stats['yesterday']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['yesterday']['cost_eur'] / 100.0) }} €</td>
@@ -402,6 +438,14 @@
             <tr>
                 <td>Battery-range skips total</td>
                 <td>{{ stats['battery_skip_total'] }}</td>
+            </tr>
+            <tr>
+                <td>Overnext-cluster skips total</td>
+                <td>{{ stats['battery_overnext_skip_total'] }}</td>
+            </tr>
+            <tr>
+                <td>Expensive-phase skips total</td>
+                <td>{{ stats['battery_expensive_phase_skip_total'] }}</td>
             </tr>
         </tbody>
     </table>
@@ -465,6 +509,8 @@
                 setText('tile-rte', formatNum(get('rte'), 1));
                 setText('tile-solar-skips', get('solar-skips') || '0');
                 setText('tile-battery-skips', get('battery-skips') || '0');
+                setText('tile-battery-overnext-skips', get('battery-overnext-skips') || '0');
+                setText('tile-battery-expensive-phase-skips', get('battery-expensive-phase-skips') || '0');
 
                 // Cost: stored in cents, shown as EUR; tooltip keeps cents.
                 const costRaw = parseFloat(get('cost')) || 0;

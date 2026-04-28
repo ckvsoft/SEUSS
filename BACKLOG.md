@@ -2,6 +2,16 @@
 
 Ideas and known small issues. Updated for fix6 / Statistics Part 1.
 
+## Victron DBus register audit
+
+The MaxDischargePower setter in `essunit/victron.py` writes to
+`/Settings/CGwacs/MaxDischargePower`. Since Venus OS 3.5 some of
+these settings have changed behavior -- a few are reportedly being
+ignored or not persisted to NVRAM. Worth a sweep through the
+codebase to verify each register path is still authoritative on
+current Venus OS, and to consider DVCC-based paths where the old
+ESS-menu options have been retired (e.g. "Limit Charge Power").
+
 ## Statistics Part 2
 
 `/stats` currently only has Today / Yesterday tabs functional;

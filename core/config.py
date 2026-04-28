@@ -52,7 +52,17 @@ class Config(Singleton):
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
         "use_solar_forecast_to_abort": False,
+        # DEPRECATED: replaced by skip_charge_when_battery_covers_expensive_phase
         "skip_charge_when_battery_sufficient": False,
+        # DEPRECATED: never useful in practice, replaced
+        "skip_charge_when_battery_covers_overnext": False,
+        # New: abort charge when the battery covers the entire upcoming
+        # expensive phase until the next charge cluster (any price).
+        "skip_charge_when_battery_covers_expensive_phase": False,
+        # New: when battery is too small to cover the full expensive
+        # phase, prioritise discharge to the most expensive blocks only;
+        # cheaper expensive-phase hours fall back to grid.
+        "smart_discharge_priority_to_expensive_hours": False,
         "delay_grid_charging_below_active_soc_limit": False,
         "stats_history_retention_days": 400,
         "solar_adj_ewma_alpha": 0.3,
@@ -229,6 +239,9 @@ class Config(Singleton):
             # from the actual config.json on startup.
             self.use_solar_forecast_to_abort = False
             self.skip_charge_when_battery_sufficient = False
+            self.skip_charge_when_battery_covers_overnext = False
+            self.skip_charge_when_battery_covers_expensive_phase = False
+            self.smart_discharge_priority_to_expensive_hours = False
             self.delay_grid_charging_below_active_soc_limit = False
             # Days of per-day history to retain (energy_costs_by_day,
             # consumption_wh_by_day, etc.). 400 covers a full year-over-

@@ -75,6 +75,11 @@ class Victron(ESSUnit):
             "mqtt_port": self.mqtt_port,
             "unit_id": self.unit_id
         }
+        # System pack voltage detection cache. Once detected, sticks
+        # for the lifetime of the process so we don't relog on every
+        # essunit cycle and don't flip if the pack briefly droops below
+        # a band threshold under load. None = not yet detected.
+        self._detected_pack_full_voltage = None
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -103,10 +108,56 @@ class Victron(ESSUnit):
             currentvoltage = 0.0  # Setze einen Standardwert
             return currentvoltage
 
+    def _detect_pack_full_voltage(self):
+        """
+        Auto-detect pack-full voltage (V) from the battery's current
+        voltage. We classify into 12V / 24V / 48V LiFePO4 systems and
+        return the corresponding "full" voltage (cell_count * 3.45V):
+
+            48V (16S):  full = 55.20V   -> voltage in [35.0, ...]
+            24V  (8S):  full = 27.60V   -> voltage in [17.5, 35.0)
+            12V  (4S):  full =  13.80V  -> voltage in [ 8.0, 17.5)
+            below 8V or no reading      -> 0.0  (don't guess)
+
+        The Wh figures (cycles, RTE display, capacity tiles) want a
+        STABLE pack voltage so they don't flip back and forth as the
+        battery cycles between empty and full. We therefore detect
+        once on first valid reading, log it, and cache the result for
+        the lifetime of the process. If a later voltage falls into a
+        different band (e.g. 48V system briefly droops to 39V under
+        load -- still in "48V band" by our threshold; safe), the
+        cache still wins.
+        """
+        if self._detected_pack_full_voltage is not None:
+            return self._detected_pack_full_voltage
+
+        v = self.get_battery_current_voltage() or 0
+        if v >= 35.0:
+            full = 55.20
+            label = "48V"
+        elif v >= 17.5:
+            full = 27.60
+            label = "24V"
+        elif v >= 8.0:
+            full = 13.80
+            label = "12V"
+        else:
+            # No usable reading yet; return 0 but DON'T cache -- so
+            # later calls retry until DBus delivers something useful.
+            return 0.0
+
+        self._detected_pack_full_voltage = full
+        self.logger.log.info(
+            f"{self._name} Detected {label} LiFePO4 system "
+            f"(current voltage {v}V); using {full}V as pack-full "
+            f"voltage for Wh calculations."
+        )
+        return full
+
     def get_battery_current_wh(self):
         soc = self.get_soc() or 0
         full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
-        battery_capacity_wh = full_capacity * 55.20
+        battery_capacity_wh = full_capacity * self._detect_pack_full_voltage()
         battery_current_wh = ((soc or 0) / 100) * battery_capacity_wh
         self.logger.log.debug(f"{self._name} Batterie Current wh: {battery_current_wh}Wh")
         return battery_current_wh
@@ -114,7 +165,7 @@ class Victron(ESSUnit):
     def get_battery_full_wh(self):
         soc = self.get_soc() or 0
         full_capacity = (self.get_battery_capacity() / soc) * 100 if soc > 0 else 0.0
-        battery_capacity_wh = full_capacity * 55.20
+        battery_capacity_wh = full_capacity * self._detect_pack_full_voltage()
         self.logger.log.debug(f"{self._name} Batterie Full wh: {battery_capacity_wh}Wh")
         return battery_capacity_wh
 

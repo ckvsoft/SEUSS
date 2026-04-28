@@ -256,6 +256,18 @@ class Conditions:
             remaining_seconds = max(0, (blk_end - now_utc).total_seconds())
             future_minutes += int(remaining_seconds / 60)
 
+        # Smart-discharge priority: if the user has enabled it AND the
+        # battery's usable energy can't cover the FULL remaining
+        # expensive phase, pre-compute a set of allowed discharge
+        # blocks that prioritises the most expensive ones. Cheaper
+        # discharge blocks get dropped from the allow-set so the grid
+        # covers them instead, saving the battery for the priciest
+        # hours. The set is rebuilt on every Conditions instantiation,
+        # so it reflects the current SOC each evaluation cycle.
+        self._discharge_allow_set = self._compute_smart_discharge_allow_set(
+            future_high, current_soc, min_soc
+        )
+
         self.conditions_by_operation_mode["discharging"].update({
             f"Discharge allowed: {self.available_surplus / 1000:.2f} kWh "
             f"surplus (SOC: {current_soc / 1000:.2f} kWh, expensive minutes: "
@@ -264,15 +276,136 @@ class Conditions:
                 lambda fh=future_high: self._calculate_discharge_conditions(fh)
         })
 
-        # Per-block "now active" conditions
+        # Per-block "now active" conditions. When smart-discharge is
+        # active and a block is NOT in the allow-set, we replace the
+        # active-now check with a constant False so the block never
+        # triggers discharge -- letting the grid cover that block's
+        # hours instead.
         for i, blk in enumerate(self._discharge_blocks, start=1):
             key = (
                 f"highestprice_block_{i} {blk.describe(localtime=True)} "
                 f"active"
             )
-            self.conditions_by_operation_mode["discharging"][key] = (
-                self._make_block_active_condition(blk)
-            )
+            if (self._discharge_allow_set is not None
+                    and blk not in self._discharge_allow_set):
+                # Smart-discharge says: skip this block, save the
+                # battery for pricier blocks. Mark with a clear key
+                # so the user can see in the log why discharge didn't
+                # fire here.
+                key = (
+                    f"highestprice_block_{i} {blk.describe(localtime=True)} "
+                    f"SKIPPED by smart-discharge (battery prioritised "
+                    f"to higher-priced blocks)"
+                )
+                self.conditions_by_operation_mode["discharging"][key] = (
+                    lambda: False
+                )
+            else:
+                self.conditions_by_operation_mode["discharging"][key] = (
+                    self._make_block_active_condition(blk)
+                )
+
+    def _compute_smart_discharge_allow_set(self, future_high, current_soc_wh, min_soc_wh):
+        """
+        Return a set of discharge-blocks that are allowed to actually
+        discharge, prioritising the most expensive ones. Returns None
+        if smart-discharge is disabled or doesn't apply (battery has
+        enough headroom for the full phase).
+
+        Algorithm:
+          1. If feature flag off -> None (legacy behaviour: every
+             discharge block is allowed if surplus permits).
+          2. Compute total energy needed to cover the full upcoming
+             expensive phase (future_high) at avg consumption.
+          3. If usable_soc >= total_required, the battery can cover
+             the whole phase -> allow all blocks (return None).
+          4. Otherwise, sort blocks by price descending and accumulate
+             expected consumption for each block until usable_soc is
+             exhausted. Return the set of blocks above the cut.
+
+        Returned: a set of block objects, or None.
+        """
+        if not getattr(self.config, "smart_discharge_priority_to_expensive_hours", False):
+            return None
+        if not future_high:
+            return None
+
+        usable_soc_wh = max(0.0, (current_soc_wh or 0) - (min_soc_wh or 0))
+        if usable_soc_wh <= 0:
+            # Nothing to allocate -- no discharge possible at all.
+            # Returning empty set means "no blocks allowed".
+            return set()
+
+        avg_list = self.statsmanager.get_data(
+            "powerconsumption", "hourly_watt_average"
+        )
+        avg_per_hour = round(avg_list[0], 2) if avg_list else 0
+        if avg_per_hour <= 0:
+            # No consumption history -- can't make a meaningful split,
+            # default to legacy behaviour.
+            return None
+
+        # Compute per-block remaining-duration energy needs.
+        # Use REMAINING duration for active blocks (block already partly
+        # used), full duration for future ones.
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+
+        block_costs = []  # list of (block, energy_wh, avg_price)
+        for blk in future_high:
+            blk_end = blk.get_end_datetime() if hasattr(blk, "get_end_datetime") else None
+            if blk_end is None:
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                blk_end = blk_start + timedelta(minutes=blk.get_duration_minutes() or 0)
+            if blk_end.tzinfo is None:
+                blk_end = blk_end.replace(tzinfo=timezone.utc)
+            remaining_h = max(0.0, (blk_end - now_utc).total_seconds() / 3600)
+            energy_wh = remaining_h * avg_per_hour
+            try:
+                price = blk.get_avg_price(convert=False)
+            except (TypeError, ValueError):
+                price = 0
+            block_costs.append((blk, energy_wh, price))
+
+        if not block_costs:
+            return None
+
+        # Total needed to cover full phase at avg consumption.
+        total_required = sum(e for _, e, _ in block_costs) * 1.10
+
+        if usable_soc_wh >= total_required:
+            # Comfortable -- allow all blocks (legacy behaviour).
+            return None
+
+        # Tight -- prioritise the most expensive blocks.
+        # Sort descending by price.
+        block_costs.sort(key=lambda t: t[2], reverse=True)
+        allow = set()
+        budget_wh = usable_soc_wh
+        for blk, energy_wh, _price in block_costs:
+            # Accept the block if at least its first slice fits. We
+            # don't partial-allow blocks (the discharge gate is binary
+            # per block); any block we accept consumes its full
+            # expected energy from the budget.
+            if energy_wh <= budget_wh:
+                allow.add(blk)
+                budget_wh -= energy_wh
+            else:
+                # Doesn't fully fit -- skip it. The remaining budget
+                # may still fit a cheaper-but-shorter later block.
+                continue
+
+        self.logger.log.info(
+            f"Smart-discharge: usable_soc={usable_soc_wh:.0f}Wh, "
+            f"phase_required={total_required:.0f}Wh -> "
+            f"allowing {len(allow)}/{len(block_costs)} discharge blocks "
+            f"(highest-price first)."
+        )
+        return allow
 
     def _build_switching_conditions(self):
         # Switching mirrors charging: per-block "now active" check.
@@ -334,8 +467,33 @@ class Conditions:
         if getattr(self.config, "skip_charge_when_battery_sufficient", False):
             self.abort_conditions_by_operation_mode["charging_abort"].update({
                 "Abort charge - battery covers consumption "
-                "until next equally-cheap charge cluster":
+                "until next equally-cheap charge cluster (DEPRECATED: "
+                "use skip_charge_when_battery_covers_expensive_phase)":
                     self._abort_charging_battery_reaches_next_cluster
+            })
+
+        # Deprecated -- redundant with the regular battery_reaches abort.
+        # Kept registered so users with the flag set don't see a silent
+        # change in behaviour, but the underlying method is documented
+        # as deprecated and will be removed in a future release.
+        if getattr(self.config, "skip_charge_when_battery_covers_overnext", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - battery covers consumption "
+                "until OVERNEXT equally-cheap charge cluster (DEPRECATED: "
+                "use skip_charge_when_battery_covers_expensive_phase)":
+                    self._abort_charging_battery_covers_until_overnext_cluster
+            })
+
+        # Current preferred check: abort if the battery covers the entire
+        # upcoming expensive phase by itself (until the next charge cluster
+        # of any price). Broader and more correct horizon than the older
+        # checks above. Conservative: doesn't model recharge from the
+        # next cluster, only counts what's in the pack right now.
+        if getattr(self.config, "skip_charge_when_battery_covers_expensive_phase", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - battery covers entire expensive phase "
+                "until next charge cluster":
+                    self._abort_charging_battery_covers_expensive_phase
             })
 
         # Switching uses the same hard cap rule by default.
@@ -486,6 +644,16 @@ class Conditions:
 
             result = condition_a and condition_b
             if result:
+                # Log the same numbers at INFO so the user sees WHY
+                # the skip fired without having to flip the log level.
+                self.logger.log.info(
+                    f"Solar-abort details: "
+                    f"forecast={total_forecast_wh:.0f}Wh, "
+                    f"2-day-consumption={two_day_consumption_wh:.0f}Wh, "
+                    f"usable_soc={usable_soc_wh:.0f}Wh, "
+                    f"required_until_solar={required_until_solar_wh:.0f}Wh "
+                    f"(over {hours_until_solar:.1f}h)."
+                )
                 self._record_abort_fired("solar_forecast")
             return result
 
@@ -541,6 +709,20 @@ class Conditions:
 
     def _abort_charging_battery_reaches_next_cluster(self):
         """
+        DEPRECATED -- replaced by
+        `_abort_charging_battery_covers_expensive_phase` which uses a
+        broader, more correct horizon (until the next charge cluster
+        of any price). This older check only looks for the next
+        equally-cheap-or-cheaper block, which can leave the system
+        short if a cheaper cluster comes too late.
+
+        Kept for now so existing setups with
+        `skip_charge_when_battery_sufficient = true` continue to work.
+        Migrate to `skip_charge_when_battery_covers_expensive_phase`
+        when convenient.
+
+        ----- original docstring follows -----
+
         True if the user has enabled `skip_charge_when_battery_sufficient`
         AND we can confidently skip the current charge attempt because
         the battery will hold us until a future, at-least-equally-cheap
@@ -643,12 +825,275 @@ class Conditions:
                 f"skip={should_skip}"
             )
             if should_skip:
+                # Same numbers at INFO so the user sees WHY the skip
+                # fired without flipping log level to DEBUG.
+                self.logger.log.info(
+                    f"Battery-range abort details: target_block "
+                    f"{target_block.describe(localtime=True)} "
+                    f"(starts in {hours_until:.1f}h), "
+                    f"required={required_wh:.0f}Wh, "
+                    f"usable_soc={usable_soc_wh:.0f}Wh."
+                )
                 self._record_abort_fired("battery_range")
             return should_skip
 
         except Exception as e:
             self.logger.log.error(
                 f"Battery-range abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _abort_charging_battery_covers_expensive_phase(self):
+        """
+        Skip the current charge attempt if the battery's currently-usable
+        SOC alone covers consumption all the way through the upcoming
+        expensive phase, until the next charge cluster (the next time
+        SEUSS would actively charge).
+
+        "Expensive phase" =
+            from now until the start of the next cheap charge cluster
+            (regardless of price -- it's the next moment SEUSS would
+            actively charge, which ends the phase by definition).
+
+        This is broader than `_abort_charging_battery_reaches_next_cluster`
+        which only looked for the next equally-cheap-or-cheaper block.
+        Here we look at the actual horizon: we don't care if the next
+        charge cluster is cheaper; we just care that there IS one
+        coming, because that's when we'd be re-charging anyway.
+
+        Conservative on purpose: doesn't model how much the next
+        charge cluster will recharge. Only counts what's already in
+        the pack. So a True here is genuinely safe -- if the user has
+        enough headroom right now to bridge the entire expensive phase
+        AND maintain min_soc, charging now is unnecessary.
+
+        Returns False (= don't skip) on missing data.
+        """
+        try:
+            if not self._charge_blocks:
+                return False
+
+            # Find the next charge cluster after now -- any price is
+            # fine, because the question is "when do we next get to
+            # actively charge again?" not "is it cheaper than now?".
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
+
+            future_charge_starts = []
+            for blk in self._charge_blocks:
+                if blk.is_expired():
+                    continue
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                if blk_start <= now_utc:
+                    # Active or already-started cluster -- treat as now.
+                    continue
+                future_charge_starts.append(blk_start)
+
+            if not future_charge_starts:
+                # No future charge cluster known -- can't define the
+                # phase end. Don't skip; let the normal evaluation
+                # handle the current cycle.
+                return False
+
+            phase_end = min(future_charge_starts)
+            total_hours = max(
+                0.0, (phase_end - now_utc).total_seconds() / 3600
+            )
+            if total_hours <= 0:
+                return False
+
+            # Required reserve = avg consumption × hours × 1.10 buffer.
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"
+            )
+            avg_consumption_per_hour = (
+                round(avg_list[0], 2) if avg_list else 0
+            )
+            if avg_consumption_per_hour <= 0:
+                return False
+            required_wh = total_hours * avg_consumption_per_hour * 1.10
+
+            # Current usable SOC = full × (current - min) %.
+            current_soc_wh = (
+                self.essunit.get_battery_current_wh()
+                if self.essunit else 0
+            ) or 0
+            min_soc_wh = (
+                self.essunit.get_battery_min_wh()
+                if self.essunit else 0
+            ) or 0
+            usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
+
+            should_skip = usable_soc_wh >= required_wh
+
+            self.logger.log.debug(
+                f"Expensive-phase abort: phase_end={phase_end.isoformat()}, "
+                f"total_hours={total_hours:.1f}h, "
+                f"required={required_wh:.0f}Wh, "
+                f"usable_soc={usable_soc_wh:.0f}Wh, "
+                f"skip={should_skip}"
+            )
+            if should_skip:
+                self.logger.log.info(
+                    f"Expensive-phase abort details: "
+                    f"phase ends at next charge cluster "
+                    f"{phase_end.astimezone().strftime('%Y-%m-%d %H:%M')} "
+                    f"({total_hours:.1f}h from now), "
+                    f"required={required_wh:.0f}Wh, "
+                    f"usable_soc={usable_soc_wh:.0f}Wh."
+                )
+                self._record_abort_fired("battery_expensive_phase")
+            return should_skip
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Expensive-phase abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _abort_charging_battery_covers_until_overnext_cluster(self):
+        """
+        DEPRECATED -- kept temporarily for backward compatibility.
+
+        This abort is logically redundant with
+        `_abort_charging_battery_reaches_next_cluster` (if the SOC
+        doesn't reach the next cheap cluster, it can't reach the
+        OVERNEXT one either). It will be removed in a future revision.
+        Use `skip_charge_when_battery_covers_expensive_phase` instead,
+        which addresses the actual look-ahead intent: "battery covers
+        the entire expensive phase until SEUSS next charges".
+        """
+        try:
+            # 1) Need a pre-computed list of charge clusters.
+            if not self._charge_blocks:
+                return False
+
+            # 2) Find the next cheaper-or-equal cluster (same logic as
+            #    the existing battery-range abort).
+            next_cluster = self._find_next_cheaper_or_equal_charge_block()
+            if next_cluster is None:
+                return False
+
+            # 3) Find the OVERNEXT cheaper-or-equal cluster -- the
+            #    first one whose start is after `next_cluster`'s end.
+            from datetime import datetime, timezone, timedelta
+            now_utc = datetime.now(timezone.utc)
+
+            next_end = next_cluster.get_end_datetime() if hasattr(
+                next_cluster, "get_end_datetime") else None
+            if next_end is None:
+                return False
+            if next_end.tzinfo is None:
+                next_end = next_end.replace(tzinfo=timezone.utc)
+
+            # Reference price = active block's avg if we'd be charging
+            # right now, else current quarter's price. Same definition
+            # as in _find_next_cheaper_or_equal_charge_block.
+            active_block = next(
+                (blk for blk in self._charge_blocks if blk.is_active_now()),
+                None,
+            )
+            if active_block is not None:
+                reference_price = active_block.get_avg_price(convert=False)
+            else:
+                cur = self.items.get_current_price(convert=False)
+                if cur is None:
+                    return False
+                try:
+                    reference_price = int(cur)
+                except (TypeError, ValueError):
+                    return False
+
+            overnext = None
+            for blk in sorted(
+                self._charge_blocks,
+                key=lambda b: b.get_start_datetime() or now_utc,
+            ):
+                if blk is active_block or blk is next_cluster:
+                    continue
+                if blk.is_expired():
+                    continue
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                if blk_start < next_end:
+                    continue
+                try:
+                    if blk.get_avg_price(convert=False) <= reference_price:
+                        overnext = blk
+                        break
+                except (TypeError, ValueError):
+                    continue
+
+            if overnext is None:
+                # No defined end of expensive phase -- can't make a
+                # confident skip decision.
+                return False
+
+            overnext_start = overnext.get_start_datetime()
+            if overnext_start is None:
+                return False
+            if overnext_start.tzinfo is None:
+                overnext_start = overnext_start.replace(tzinfo=timezone.utc)
+
+            # 4) Total hours we need to cover from now until the
+            #    overnext cluster STARTS (after that we'd charge again).
+            total_hours = max(
+                0.0, (overnext_start - now_utc).total_seconds() / 3600
+            )
+            if total_hours <= 0:
+                return False
+
+            # 5) Required energy = avg consumption * hours * 1.10 buffer.
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"
+            )
+            avg_consumption_per_hour = (
+                round(avg_list[0], 2) if avg_list else 0
+            )
+            required_wh = total_hours * avg_consumption_per_hour * 1.10
+
+            # 6) Current usable SOC = full_wh * (current_soc - min_soc).
+            current_soc = self.essunit.get_soc() or 0
+            min_soc = self.essunit.get_battery_minimum_soc_limit() or 0
+            full_wh = self.essunit.get_battery_full_wh() or 0
+            current_soc_wh = (current_soc / 100.0) * full_wh
+            min_soc_wh = (min_soc / 100.0) * full_wh
+            usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
+
+            should_skip = usable_soc_wh >= required_wh
+
+            self.logger.log.debug(
+                f"Overnext-cluster abort: next={next_cluster.describe(localtime=True)}, "
+                f"overnext={overnext.describe(localtime=True)}, "
+                f"total_hours={total_hours:.1f}h, "
+                f"required={required_wh:.0f}Wh, "
+                f"usable_soc={usable_soc_wh:.0f}Wh, "
+                f"skip={should_skip}"
+            )
+            if should_skip:
+                self.logger.log.info(
+                    f"Overnext-cluster abort details: "
+                    f"horizon to overnext cluster = "
+                    f"{overnext.describe(localtime=True)} "
+                    f"({total_hours:.1f}h from now), "
+                    f"required={required_wh:.0f}Wh, "
+                    f"usable_soc={usable_soc_wh:.0f}Wh."
+                )
+                self._record_abort_fired("battery_overnext")
+            return should_skip
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Overnext-cluster abort check failed: {e}. "
                 "Keeping charging allowed."
             )
             return False

@@ -26,6 +26,9 @@
                 ]
                 battery_keys = [
                     "skip_charge_when_battery_sufficient",
+                    "skip_charge_when_battery_covers_overnext",
+                    "skip_charge_when_battery_covers_expensive_phase",
+                    "smart_discharge_priority_to_expensive_hours",
                     "delay_grid_charging_below_active_soc_limit",
                 ]
                 grouped_keys = set(solar_keys + battery_keys)
