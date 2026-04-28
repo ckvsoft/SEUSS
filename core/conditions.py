@@ -484,7 +484,10 @@ class Conditions:
                 f"(over {hours_until_solar:.1f}h) -> {condition_b}"
             )
 
-            return condition_a and condition_b
+            result = condition_a and condition_b
+            if result:
+                self._record_abort_fired("solar_forecast")
+            return result
 
         except Exception as e:
             self.logger.log.error(
@@ -639,6 +642,8 @@ class Conditions:
                 f"usable_soc={usable_soc_wh:.0f}Wh, "
                 f"skip={should_skip}"
             )
+            if should_skip:
+                self._record_abort_fired("battery_range")
             return should_skip
 
         except Exception as e:
@@ -647,6 +652,49 @@ class Conditions:
                 "Keeping charging allowed."
             )
             return False
+
+    def _record_abort_fired(self, kind):
+        """
+        Increment the per-day skip counter for an abort condition so
+        the stats page can show how often each one actually saved a
+        charge. Counters are kept in StatsManager under the `aborts`
+        group, keyed by ISO date and abort kind.
+
+        Structure:
+            stats.aborts.skip_count_by_day = {
+                "solar_forecast":  {"2026-04-27": 3, "2026-04-26": 1},
+                "battery_range":   {"2026-04-27": 0, "2026-04-26": 2},
+            }
+
+        Plus a running total per kind (`solar_forecast_total`, etc.)
+        that survives history retention pruning.
+
+        Best-effort: any failure is swallowed because we never want
+        stats book-keeping to break a control-loop decision.
+        """
+        try:
+            from datetime import date as _date
+            today = _date.today().isoformat()
+
+            by_day = self.statsmanager.get_data("aborts", "skip_count_by_day")
+            if not isinstance(by_day, dict):
+                by_day = {}
+            kind_dict = by_day.get(kind)
+            if not isinstance(kind_dict, dict):
+                kind_dict = {}
+            kind_dict[today] = int(kind_dict.get(today, 0)) + 1
+            by_day[kind] = kind_dict
+            self.statsmanager.set_status_data(
+                "aborts", "skip_count_by_day", by_day, save_data=False
+            )
+
+            total_key = f"{kind}_total"
+            current_total = self.statsmanager.get_data("aborts", total_key) or 0
+            self.statsmanager.set_status_data(
+                "aborts", total_key, int(current_total) + 1, save_data=False
+            )
+        except Exception as e:
+            self.logger.log.debug(f"Skip-counter update failed: {e}")
 
     def _find_next_cheaper_or_equal_charge_block(self):
         """

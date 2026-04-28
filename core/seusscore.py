@@ -88,6 +88,24 @@ class SEUSS:
             unit_config = essunit.get_config()
             active_soc_limit = essunit.get_active_soc_limit()
             soc = essunit.get_soc()
+
+            # Persist battery capacity in Wh into the StatsManager so
+            # the web layer (stats page in particular) can read it
+            # without holding a reference to the essunit. Victron
+            # reports capacity in Ah; get_battery_full_wh() converts
+            # using the configured pack voltage. Best-effort -- if the
+            # essunit can't deliver values right now (D-Bus timeout
+            # etc.) we just skip this update.
+            try:
+                full_wh = essunit.get_battery_full_wh() or 0
+                if full_wh > 0:
+                    self.statsmanager.set_status_data(
+                        "ess_unit", "battery_full_wh", round(float(full_wh), 1),
+                        save_data=False
+                    )
+            except Exception as e:
+                self.logger.log.debug(f"battery_full_wh persist skipped: {e}")
+
             delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
             self.logger.log.debug(f"Active Soc Limit: {active_soc_limit} Soc: {soc}")
 

@@ -54,6 +54,7 @@ class Config(Singleton):
         "use_solar_forecast_to_abort": False,
         "skip_charge_when_battery_sufficient": False,
         "delay_grid_charging_below_active_soc_limit": False,
+        "stats_history_retention_days": 400,
         "solar_adj_ewma_alpha": 0.3,
         "solar_adj_min_theoretical_wh": 1000.0,
         "solar_adj_min_sun_hours": 4.0,
@@ -229,6 +230,13 @@ class Config(Singleton):
             self.use_solar_forecast_to_abort = False
             self.skip_charge_when_battery_sufficient = False
             self.delay_grid_charging_below_active_soc_limit = False
+            # Days of per-day history to retain (energy_costs_by_day,
+            # consumption_wh_by_day, etc.). 400 covers a full year-over-
+            # year comparison plus a month buffer. Set to 0 to disable
+            # cleanup entirely. The actual cleanup runs in save_day()
+            # right after the rotation, so old entries fall off one
+            # midnight at a time without a noticeable spike.
+            self.stats_history_retention_days = 400
             # Solar forecast adjustment-factor tunables. See README and
             # solar/openmeteo.py for what each does. These fields exist
             # so getattr() in openmeteo gets a value even if config.json
@@ -313,6 +321,7 @@ class Config(Singleton):
             ("solar_adj_min_theoretical_wh", 1000.0),
             ("solar_adj_min_sun_hours", 4.0),
             ("solar_adj_max_daily_change", 0.20),
+            ("stats_history_retention_days", 400),
         ):
             raw = config_data.get(attr, default)
             try:

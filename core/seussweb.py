@@ -219,59 +219,355 @@ class SEUSSWeb:
 
     def stats(self):
         """
-        Statistics overview page. Reads the per-day history dicts that
-        the PowerConsumption layer accumulates into the StatsManager
-        (see powerconsumption/abstract_classes/powerconsumption.py).
-        Tabs Today / Yesterday are functional; longer ranges are stubbed
-        until Part 2 adds the necessary history depth.
+        Statistics overview page. Reads per-day history dicts that the
+        PowerConsumption layer accumulates into the StatsManager and
+        derives:
+          * raw daily totals (consumption / grid / pv / etc.)
+          * battery cycles  = charge_wh / battery_capacity_wh
+          * battery RTE     = discharge_wh / charge_wh * 100
+          * abort skip counters per day + lifetime totals
+          * aggregated rows for the 7-day / month / year tabs
 
-        We do all data preparation server-side rather than handing the
-        raw dicts to the template -- the template stays a presentation
-        layer, no logic.
+        All data prep happens server-side; the template renders.
         """
         from datetime import date, timedelta
         from core.statsmanager import StatsManager
 
         sm = StatsManager()
 
-        def _get_dict(key):
-            v = sm.get_data("powerconsumption", key)
+        def _get_dict(group, key):
+            v = sm.get_data(group, key)
             return v if isinstance(v, dict) else {}
 
-        consumption_by_day = _get_dict("consumption_wh_by_day")
-        grid_by_day = _get_dict("grid_wh_by_day")
-        grid_export_by_day = _get_dict("grid_export_wh_by_day")
-        pv_by_day = _get_dict("pv_wh_by_day")
-        battery_charge_by_day = _get_dict("battery_charge_wh_by_day")
-        battery_discharge_by_day = _get_dict("battery_discharge_wh_by_day")
-        costs_by_day = _get_dict("energy_costs_by_day")
+        consumption_by_day = _get_dict("powerconsumption", "consumption_wh_by_day")
+        grid_by_day = _get_dict("powerconsumption", "grid_wh_by_day")
+        grid_export_by_day = _get_dict("powerconsumption", "grid_export_wh_by_day")
+        pv_by_day = _get_dict("powerconsumption", "pv_wh_by_day")
+        battery_charge_by_day = _get_dict("powerconsumption", "battery_charge_wh_by_day")
+        battery_discharge_by_day = _get_dict("powerconsumption", "battery_discharge_wh_by_day")
+        costs_by_day = _get_dict("powerconsumption", "energy_costs_by_day")
+
+        # Skip-counter dict from the abort-condition tracking.
+        skip_count_by_day = _get_dict("aborts", "skip_count_by_day")
+        solar_skip_by_day = skip_count_by_day.get("solar_forecast") if isinstance(skip_count_by_day.get("solar_forecast"), dict) else {}
+        battery_skip_by_day = skip_count_by_day.get("battery_range") if isinstance(skip_count_by_day.get("battery_range"), dict) else {}
+
+        # Lifetime skip totals.
+        solar_skip_total = sm.get_data("aborts", "solar_forecast_total") or 0
+        battery_skip_total = sm.get_data("aborts", "battery_range_total") or 0
+
+        # Battery capacity for cycle calc -- read from StatsManager
+        # where seusscore.run_essunit persists it. Victron reports
+        # capacity in Ah (changes with state-of-charge / aging), the
+        # essunit converts to Wh via the pack voltage; we pull the
+        # already-converted value. Falls back to 0 if not yet written
+        # (first run before the first essunit cycle); cycles then
+        # render as 0 too, which is honest -- we don't fake a number.
+        battery_capacity_wh = sm.get_data("ess_unit", "battery_full_wh") or 0
+        try:
+            battery_capacity_wh = float(battery_capacity_wh)
+        except (TypeError, ValueError):
+            battery_capacity_wh = 0
 
         today_iso = date.today().isoformat()
         yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
 
         def _row_for(iso_date):
+            charge_wh = battery_charge_by_day.get(iso_date, 0) or 0
+            discharge_wh = battery_discharge_by_day.get(iso_date, 0) or 0
+            cycles = (charge_wh / battery_capacity_wh) if battery_capacity_wh > 0 else 0
+            rte = (discharge_wh / charge_wh * 100.0) if charge_wh > 0 else 0
             return {
                 "iso": iso_date,
                 "consumption_wh": consumption_by_day.get(iso_date, 0),
                 "grid_wh": grid_by_day.get(iso_date, 0),
                 "grid_export_wh": grid_export_by_day.get(iso_date, 0),
                 "pv_wh": pv_by_day.get(iso_date, 0),
-                "battery_charge_wh": battery_charge_by_day.get(iso_date, 0),
-                "battery_discharge_wh": battery_discharge_by_day.get(iso_date, 0),
+                "battery_charge_wh": charge_wh,
+                "battery_discharge_wh": discharge_wh,
                 "cost_eur": costs_by_day.get(iso_date, 0),
+                "cycles": round(cycles, 3),
+                "rte_pct": round(rte, 1),
+                "solar_skips": int(solar_skip_by_day.get(iso_date, 0)),
+                "battery_skips": int(battery_skip_by_day.get(iso_date, 0)),
             }
+
+        # ---- Aggregation helpers for multi-day tabs ----
+        def _sum_range(d, start_iso, end_iso):
+            """Sum dict values for ISO keys in [start_iso, end_iso] inclusive."""
+            return sum(
+                (v or 0) for k, v in (d or {}).items()
+                if isinstance(k, str) and start_iso <= k <= end_iso
+            )
+
+        def _aggregate_range(start, end):
+            """Build a stats row for a date range (start..end inclusive)."""
+            start_iso = start.isoformat()
+            end_iso = end.isoformat()
+            charge_wh = _sum_range(battery_charge_by_day, start_iso, end_iso)
+            discharge_wh = _sum_range(battery_discharge_by_day, start_iso, end_iso)
+            cycles = (charge_wh / battery_capacity_wh) if battery_capacity_wh > 0 else 0
+            rte = (discharge_wh / charge_wh * 100.0) if charge_wh > 0 else 0
+            # For skip counters in a range we sum across days.
+            solar_skips = sum(
+                (v or 0) for k, v in (solar_skip_by_day or {}).items()
+                if isinstance(k, str) and start_iso <= k <= end_iso
+            )
+            battery_skips = sum(
+                (v or 0) for k, v in (battery_skip_by_day or {}).items()
+                if isinstance(k, str) and start_iso <= k <= end_iso
+            )
+            return {
+                "iso": f"{start_iso} \u2192 {end_iso}",
+                "consumption_wh": _sum_range(consumption_by_day, start_iso, end_iso),
+                "grid_wh": _sum_range(grid_by_day, start_iso, end_iso),
+                "grid_export_wh": _sum_range(grid_export_by_day, start_iso, end_iso),
+                "pv_wh": _sum_range(pv_by_day, start_iso, end_iso),
+                "battery_charge_wh": charge_wh,
+                "battery_discharge_wh": discharge_wh,
+                "cost_eur": _sum_range(costs_by_day, start_iso, end_iso),
+                "cycles": round(cycles, 3),
+                "rte_pct": round(rte, 1),
+                "solar_skips": int(solar_skips),
+                "battery_skips": int(battery_skips),
+            }
+
+        today = date.today()
+        # Last 7 days = today minus 6 .. today
+        week_row = _aggregate_range(today - timedelta(days=6), today)
+        # Current calendar month: month-start to today
+        month_start = today.replace(day=1)
+        month_row = _aggregate_range(month_start, today)
+        # Current calendar year: Jan 1 to today
+        year_start = today.replace(month=1, day=1)
+        year_row = _aggregate_range(year_start, today)
+
+        # ---- Chart series ----
+        # Hourly arrays for the intraday chart. 24 slots in Wh; missing
+        # slots default to 0.
+        hourly_by_day = _get_dict("powerconsumption", "hourly_wh_by_day")
+        hourly_today = hourly_by_day.get(today_iso) or [0] * 24
+        if not isinstance(hourly_today, list) or len(hourly_today) != 24:
+            hourly_today = [0] * 24
+        hourly_yesterday = hourly_by_day.get(yesterday_iso) or [0] * 24
+        if not isinstance(hourly_yesterday, list) or len(hourly_yesterday) != 24:
+            hourly_yesterday = [0] * 24
+
+        # 30-day daily history series.
+        history_days = []
+        for offset in range(29, -1, -1):
+            d = (today - timedelta(days=offset)).isoformat()
+            history_days.append({
+                "iso": d,
+                "consumption_wh": consumption_by_day.get(d, 0) or 0,
+                "grid_wh": grid_by_day.get(d, 0) or 0,
+                "pv_wh": pv_by_day.get(d, 0) or 0,
+            })
+
+        # SVG charts -- generated server-side so they work without
+        # Chart.js (no internet at the VenusOS host).
+        intraday_svg = self._render_intraday_svg(hourly_today, hourly_yesterday)
+        history_svg = self._render_history_svg(history_days)
 
         stats_data = {
             "today": _row_for(today_iso),
             "yesterday": _row_for(yesterday_iso),
+            "week": week_row,
+            "month": month_row,
+            "year": year_row,
             "history_days_available": len([
                 k for k in consumption_by_day.keys()
-                if k != today_iso
+                if isinstance(k, str) and k != today_iso
             ]),
+            "battery_capacity_wh": battery_capacity_wh,
+            "solar_skip_total": int(solar_skip_total),
+            "battery_skip_total": int(battery_skip_total),
+            "intraday_svg": intraday_svg,
+            "history_svg": history_svg,
         }
 
         return template('stats', stats=stats_data,
                         version=version.__version__, root=self.view_path)
+
+    # ------------------------------------------------------------------
+    # SVG chart helpers for the stats page. Server-side rendering keeps
+    # the page working in offline LAN setups (typical VenusOS).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _render_intraday_svg(today_arr, yesterday_arr):
+        """
+        24-hour bar chart, today (blue) overlaid on yesterday (grey).
+        Layout matches the price chart in style: SVG, border, fixed
+        width per hour.
+        """
+        bar_w = 30           # pixels per hour
+        gap_w = 8
+        chart_w = 24 * (bar_w + gap_w)
+        chart_h = 200
+        baseline_y = chart_h + 20  # leaves room for x-axis labels
+        svg_h = baseline_y + 25
+
+        max_v = max(max(today_arr or [0]), max(yesterday_arr or [0]), 1)
+        scale = chart_h / max_v if max_v > 0 else 1.0
+
+        parts = [
+            f'<svg width="{chart_w + 50}" height="{svg_h}" '
+            f'xmlns="http://www.w3.org/2000/svg" '
+            f'style="border:1px solid #ccc; background:#fff;">',
+            # Y-axis grid: 4 horizontal reference lines + scale labels.
+        ]
+        for frac, label in [(0.0, "0"), (0.25, ""), (0.5, ""), (0.75, ""),
+                            (1.0, f"{int(max_v)}")]:
+            y = baseline_y - chart_h * frac
+            parts.append(
+                f'<line x1="40" y1="{y}" x2="{chart_w + 40}" y2="{y}" '
+                f'stroke="#eee" stroke-width="1"/>'
+            )
+            if label:
+                parts.append(
+                    f'<text x="38" y="{y + 4}" font-size="10" '
+                    f'text-anchor="end" fill="#666">{label}</text>'
+                )
+
+        # Bars: yesterday (grey) drawn first, today (blue) drawn second
+        # so today wins overlap. Each pair shares its hour slot but is
+        # offset by a few pixels for readability.
+        for h in range(24):
+            x_base = 40 + h * (bar_w + gap_w)
+            y_h = today_arr[h] or 0
+            y_h_y = yesterday_arr[h] or 0
+
+            # Yesterday: full-width grey, behind
+            if y_h_y > 0:
+                bar_h = y_h_y * scale
+                parts.append(
+                    f'<rect x="{x_base}" y="{baseline_y - bar_h}" '
+                    f'width="{bar_w}" height="{bar_h}" '
+                    f'fill="#bbb" opacity="0.55"/>'
+                )
+            # Today: same width, blue, in front
+            if y_h > 0:
+                bar_h = y_h * scale
+                parts.append(
+                    f'<rect x="{x_base}" y="{baseline_y - bar_h}" '
+                    f'width="{bar_w}" height="{bar_h}" '
+                    f'fill="#4285f4"/>'
+                )
+            # Hour label below the bar
+            parts.append(
+                f'<text x="{x_base + bar_w / 2}" y="{baseline_y + 14}" '
+                f'font-size="10" text-anchor="middle" fill="#444">'
+                f'{h:02d}</text>'
+            )
+
+        # Legend: bottom right
+        legend_y = svg_h - 5
+        parts.append(
+            f'<rect x="{chart_w - 110}" y="{legend_y - 12}" '
+            f'width="10" height="10" fill="#bbb" opacity="0.55"/>'
+            f'<text x="{chart_w - 95}" y="{legend_y - 3}" font-size="10" '
+            f'fill="#444">Yesterday</text>'
+            f'<rect x="{chart_w - 40}" y="{legend_y - 12}" '
+            f'width="10" height="10" fill="#4285f4"/>'
+            f'<text x="{chart_w - 25}" y="{legend_y - 3}" font-size="10" '
+            f'fill="#444">Today</text>'
+        )
+        # Y-axis title
+        parts.append(
+            f'<text x="10" y="20" font-size="11" fill="#666">Wh</text>'
+        )
+        parts.append('</svg>')
+        return ''.join(parts)
+
+    @staticmethod
+    def _render_history_svg(history_days):
+        """
+        Multi-line chart over 30 days: consumption (blue), grid import
+        (red), PV (green). Lines are polylines without smoothing for
+        clarity.
+        """
+        if not history_days:
+            return '<p style="color:#888;">No history data.</p>'
+
+        chart_w = 900
+        chart_h = 220
+        margin_left = 50
+        margin_right = 20
+        margin_top = 20
+        margin_bottom = 40
+        plot_w = chart_w - margin_left - margin_right
+        plot_h = chart_h - margin_top - margin_bottom
+
+        consumption = [d["consumption_wh"] for d in history_days]
+        grid = [d["grid_wh"] for d in history_days]
+        pv = [d["pv_wh"] for d in history_days]
+        max_v = max(max(consumption + grid + pv), 1)
+
+        n = len(history_days)
+        x_step = plot_w / max(n - 1, 1)
+
+        def _polyline(values, color, dash=None):
+            pts = []
+            for i, v in enumerate(values):
+                x = margin_left + i * x_step
+                y = margin_top + plot_h - (v / max_v) * plot_h
+                pts.append(f"{x:.1f},{y:.1f}")
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ''
+            return (
+                f'<polyline points="{" ".join(pts)}" fill="none" '
+                f'stroke="{color}" stroke-width="2"{dash_attr}/>'
+            )
+
+        parts = [
+            f'<svg width="{chart_w}" height="{chart_h}" '
+            f'xmlns="http://www.w3.org/2000/svg" '
+            f'style="border:1px solid #ccc; background:#fff;">',
+        ]
+        # Y-axis grid + labels (5 levels)
+        for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            y = margin_top + plot_h - frac * plot_h
+            parts.append(
+                f'<line x1="{margin_left}" y1="{y}" '
+                f'x2="{chart_w - margin_right}" y2="{y}" '
+                f'stroke="#eee" stroke-width="1"/>'
+            )
+            label_v = int(frac * max_v)
+            parts.append(
+                f'<text x="{margin_left - 5}" y="{y + 4}" font-size="10" '
+                f'text-anchor="end" fill="#666">{label_v}</text>'
+            )
+        # X-axis labels: every 5th day (MM-DD)
+        for i, d in enumerate(history_days):
+            if i % 5 == 0 or i == n - 1:
+                x = margin_left + i * x_step
+                parts.append(
+                    f'<text x="{x}" y="{chart_h - margin_bottom + 14}" '
+                    f'font-size="10" text-anchor="middle" fill="#444">'
+                    f'{d["iso"][5:]}</text>'  # MM-DD
+                )
+
+        parts.append(_polyline(consumption, "#4285f4"))   # blue
+        parts.append(_polyline(grid, "#d04040"))          # red
+        parts.append(_polyline(pv, "#2a8a2a"))            # green
+
+        # Legend top right
+        lx = chart_w - margin_right - 220
+        ly = margin_top + 5
+        parts.append(
+            f'<rect x="{lx}" y="{ly}" width="14" height="3" fill="#4285f4"/>'
+            f'<text x="{lx + 18}" y="{ly + 5}" font-size="10" fill="#444">Consumption</text>'
+            f'<rect x="{lx + 90}" y="{ly}" width="14" height="3" fill="#d04040"/>'
+            f'<text x="{lx + 108}" y="{ly + 5}" font-size="10" fill="#444">Grid Import</text>'
+            f'<rect x="{lx + 175}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
+            f'<text x="{lx + 193}" y="{ly + 5}" font-size="10" fill="#444">PV</text>'
+        )
+        # Y-axis title
+        parts.append(
+            f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh / day</text>'
+        )
+        parts.append('</svg>')
+        return ''.join(parts)
 
     def update_log(self):
         reader = LogReader()

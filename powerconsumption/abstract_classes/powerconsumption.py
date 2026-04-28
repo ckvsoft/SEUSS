@@ -302,6 +302,7 @@ class PowerConsumptionBase:
         self.pv_wh_by_day = {}
         self.battery_charge_wh_by_day = {}
         self.battery_discharge_wh_by_day = {}
+        self.hourly_wh_by_day = {}  # ISO_date -> [24] hourly Wh array
         self.hourly_start_time = time.time()  # Start time of the current hour
 
         # Daily totals (Wh, in-RAM running sums; persisted across restarts).
@@ -433,18 +434,16 @@ class PowerConsumptionBase:
         self.daily_pv_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_wh") or 0.0
 
         # Battery split. New keys; if missing on first run after upgrade
-        # we fall back to the throughput value (split 50/50). The 50/50
-        # is rough but better than zero -- new totals start fresh next
-        # midnight rollover regardless.
+        # we just start at zero. (Earlier code split a legacy
+        # `daily_battery_throughput_wh` 50/50 into the two new daily
+        # counters, but that's a daily total -- inheriting yesterday's
+        # leftover throughput as today's starting balance is misleading.
+        # The history-dict migration in load_data() handles past days
+        # separately, which is the right place for it.)
         self.daily_battery_charge_wh = self.statsmanager.get_data(
-            "powerconsumption", "daily_battery_charge_wh")
+            "powerconsumption", "daily_battery_charge_wh") or 0.0
         self.daily_battery_discharge_wh = self.statsmanager.get_data(
-            "powerconsumption", "daily_battery_discharge_wh")
-        if self.daily_battery_charge_wh is None or self.daily_battery_discharge_wh is None:
-            legacy_throughput = self.statsmanager.get_data(
-                "powerconsumption", "daily_battery_throughput_wh") or 0.0
-            self.daily_battery_charge_wh = legacy_throughput / 2.0
-            self.daily_battery_discharge_wh = legacy_throughput / 2.0
+            "powerconsumption", "daily_battery_discharge_wh") or 0.0
 
         # JSON serialisation collapses Python tuples to lists, so on
         # reload `isinstance(x, tuple)` is always False -- the previous
@@ -527,6 +526,17 @@ class PowerConsumptionBase:
                 f"to ISO dates (assumed year {date.today().year})."
             )
 
+        # Per-day hourly arrays. Keys are ISO date strings, values
+        # are 24-element lists of Wh per hour. Populated in save_hour().
+        # No yday migration here -- yday never had hourly arrays.
+        raw_hourly = self.statsmanager.get_data(
+            "powerconsumption", "hourly_wh_by_day") or {}
+        self.hourly_wh_by_day = {
+            k: v for k, v in raw_hourly.items()
+            if isinstance(k, str) and len(k) == 10 and k.count("-") == 2
+            and isinstance(v, list) and len(v) == 24
+        }
+
         self.logger.log.debug(f"Loaded energy costs by hour: {energy_costs_by_hour}")
         self.logger.log.debug(f"Loaded energy_costs_by_day (post-migration): {self.energy_costs_by_day}")
         self.logger.log.debug(f"Loaded consumption_wh_by_day: {self.consumption_wh_by_day}")
@@ -582,11 +592,28 @@ class PowerConsumptionBase:
             value /= count
             self.average = (value, count)
 
+        # Persist the just-finished hour's Wh value into a per-day
+        # 24-slot array. Used by the stats page charts later.
+        # Structure: hourly_wh_by_day[ISO_date] = [h0, h1, ..., h23].
+        # Called from update() BEFORE current_hour is rotated, so
+        # self.current_hour is still the hour we're closing out.
+        try:
+            today_iso = self._today_iso()
+            day_arr = self.hourly_wh_by_day.get(today_iso)
+            if not isinstance(day_arr, list) or len(day_arr) != 24:
+                day_arr = [0] * 24
+            hour_idx = max(0, min(23, int(self.current_hour)))
+            day_arr[hour_idx] = round(self.hourly_wh, 2)
+            self.hourly_wh_by_day[today_iso] = day_arr
+        except Exception as e:
+            self.logger.log.debug(f"hourly_wh_by_day update failed: {e}")
+
         self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average, save_data=False)
         self.logger.log.debug(f"save ... update average: {self.average}")
         self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value, save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh_by_day", self.hourly_wh_by_day, save_data=False)
 
         # Speichert die Daten
         self.save_data()
@@ -634,10 +661,56 @@ class PowerConsumptionBase:
         # Reset the per-hour cost bucket for the new day.
         self.energy_costs_by_hour = {}
 
+        # Trim history dicts to the configured retention window. We do
+        # this once per day right after the rotation so old entries
+        # fall off gradually rather than all at once on a config change.
+        self._prune_history()
+
         # Persist all of the above (save_data writes the history dicts
         # plus the running totals; daily_wh/daily_grid_wh/etc are reset
         # to 0 by update() right after we return).
         self.save_data()
+
+    def _prune_history(self):
+        """
+        Drop ISO-date entries from all per-day history dicts that are
+        older than `stats_history_retention_days`. Retention=0 disables
+        pruning entirely.
+        """
+        try:
+            from core.config import Config
+            cfg = Config()
+            retention = int(getattr(cfg, "stats_history_retention_days", 400) or 0)
+        except Exception:
+            retention = 400
+
+        if retention <= 0:
+            return
+
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(days=retention)).isoformat()
+
+        history_dicts = [
+            self.energy_costs_by_day,
+            self.consumption_wh_by_day,
+            self.grid_wh_by_day,
+            self.grid_export_wh_by_day,
+            self.pv_wh_by_day,
+            self.battery_charge_wh_by_day,
+            self.battery_discharge_wh_by_day,
+            self.hourly_wh_by_day,
+        ]
+        dropped = 0
+        for d in history_dicts:
+            old_keys = [k for k in d.keys() if isinstance(k, str) and k < cutoff]
+            for k in old_keys:
+                del d[k]
+                dropped += 1
+        if dropped:
+            self.logger.log.info(
+                f"Pruned {dropped} history entries older than {cutoff} "
+                f"(retention={retention} days)."
+            )
 
     def update(self, power, grid_power, battery_power, timestamp,
                pv_power=0):
