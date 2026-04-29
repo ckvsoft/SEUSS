@@ -388,6 +388,39 @@ class Config(Singleton):
             tr = "hourly"
         self.tariff_resolution = tr
 
+        # Sanity warnings: if charge + discharge counts together leave
+        # a big chunk of the day unassigned, the price chart will show
+        # grey hours and there is a good chance the user just typo'd
+        # the config (e.g. 4 instead of 8 for charging). Log it once
+        # at startup so it's findable -- not an error, just a hint.
+        try:
+            from core.log import CustomLogger
+            log = CustomLogger().log
+            charge_count = int(getattr(self, "number_of_lowest_prices_for_charging", 0) or 0)
+            discharge_count = int(getattr(self, "number_of_highest_prices_for_discharging", 0) or 0)
+            assigned = charge_count + discharge_count
+            if assigned > 0 and assigned < 24:
+                log.warning(
+                    f"Config: number_of_lowest_prices_for_charging "
+                    f"({charge_count}) + number_of_highest_prices_for_discharging "
+                    f"({discharge_count}) = {assigned} hours. "
+                    f"{24 - assigned} hour(s) per day stay unassigned and will "
+                    f"appear grey in the price chart. If you wanted full "
+                    f"coverage, increase one of the two counts."
+                )
+            elif assigned > 24:
+                log.warning(
+                    f"Config: number_of_lowest_prices_for_charging "
+                    f"({charge_count}) + number_of_highest_prices_for_discharging "
+                    f"({discharge_count}) = {assigned} hours, exceeding the "
+                    f"24-hour day. Charging takes precedence over discharging "
+                    f"on overlap, but you may not see all expected discharge "
+                    f"hours."
+                )
+        except Exception:
+            # Defensive: never let validation break startup.
+            pass
+
         self._set_os_timezone()
 
     def get_market_info(self, market_name):

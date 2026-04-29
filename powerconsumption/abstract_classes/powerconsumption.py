@@ -1043,6 +1043,14 @@ class PowerConsumptionBase:
         """Returns Wh that came OUT of the battery today (sum of |negative battery_power| × dt)."""
         return self.daily_battery_discharge_wh
 
+    def get_daily_loss_wh(self):
+        """Returns the integrated daily energy loss in Wh (input - usable, clamped >= 0)."""
+        return self.daily_loss_wh
+
+    def get_daily_imbalance_wh(self):
+        """Returns the integrated daily signed imbalance in Wh (input - usable, signed)."""
+        return self.daily_imbalance_wh
+
     def get_hour_grid_wh(self):
         """Returns the current hour's grid import in Wh."""
         return self.hour_grid_wh

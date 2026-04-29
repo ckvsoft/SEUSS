@@ -138,7 +138,7 @@ When sliding-window placement (`tariff_resolution: quarterly`) leaves small gaps
 | Setting                                      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 |----------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `use_second_day`                             | `enable/disable` to compare today and tomorrow prices if they become available<br/>Note: If you activate this and the prices decrease over several days,it is possible that there will be no charging or switching for several days until the lowest prices are reached.                                                                                                                                                                                                                                                                                       |
-| `number_of_lowest_prices_for_charging`       | Number of cheapest charge **clusters** per day, where each cluster is `charging_block_minutes` long.<br/>**mode 1 (integer)**: the literal number of clusters, e.g. `8` with `charging_block_minutes=60` gives 8 hours of charging per day.<br/>**mode 2 (decimal in `(0, 1)`)**: thresholding mode, e.g. `0.85` selects every cluster whose average is below 85% of the day average — the count is computed.<br/>Legacy: `1.0` is treated as "1 cheapest cluster" (the old "100% of average" interpretation never made sense and is preserved as integer-1).   |
+| `number_of_lowest_prices_for_charging`       | Number of cheapest charge **clusters** per day, where each cluster is `charging_block_minutes` long.<br/>**mode 1 (integer)**: the literal number of clusters, e.g. `8` with `charging_block_minutes=60` gives 8 hours of charging per day.<br/>**mode 2 (decimal in `(0, 1)`)**: thresholding mode, e.g. `0.85` selects every cluster whose average is below 85% of the day average — the count is computed.<br/>Legacy: `1.0` is treated as "1 cheapest cluster" (the old "100% of average" interpretation never made sense and is preserved as integer-1).<br/>**Sanity tip:** if `charging + discharging` ≠ 24 (with `*_block_minutes=60`), SEUSS logs a startup `WARNING` so you know hours will be left unassigned (grey in the chart) or that the total exceeds the day.   |
 | `number_of_highest_prices_for_discharging`   | Number of most expensive discharge **clusters** per day, each `discharging_block_minutes` long. Same dual-mode semantics as the charging counterpart (integer = literal count, decimal `>1` = "above X×day-average").                                                                                                                                                                                                                                                                                                                                          |
 | `number_of_lowest_prices_for_switching`      | Independent cluster count for smart-switch operation. `0` (default) falls back to `number_of_lowest_prices_for_charging`. Set this when your smart switches should run on a different schedule than the ESS charging window (e.g. boilers that need longer runs).                                                                                                                                                                                                                                                                                              |
 | `charging_block_minutes`                     | Length of each charging cluster in minutes. Multiples of 15, no upper limit. Default `60` keeps the historical hour-cluster behaviour. Smaller values trade against switching-cycle wear.                                                                                                                                                                                                                                                                                                                                                                      |
@@ -165,7 +165,9 @@ The price chart in the SEUSS web UI now shows quarter-resolution colours on top 
 - **Green** — quarter is part of an active charging cluster and the per-quarter price is under `charging_price_hard_cap`. Past hours show as darker green.
 - **Olive** — quarter is part of a charging cluster but its price exceeds the hard cap, so SEUSS will skip that 15-minute slot. Distinguishes "would charge but cap blocks" from "unrelated grey hour".
 - **Red** — quarter is part of an active discharging cluster. Past hours show as darker red.
-- **Grey** — quarter is not part of any cluster (because the totals don't cover 24 h).
+- **Grey** — quarter is not part of any cluster (because `charging + discharging` totals don't cover 24 h).
+
+When `fill_gaps_with_short_clusters` produces a 3-quarter discharge or charge block (e.g. 12:00–12:45) the leftover quarter (12:45) inherits the hour's block colour instead of falling through to grey, so each block-hour paints solid red or green.
 
 Hovering over an hour bar shows a tooltip with the four real per-quarter prices for that hour — useful when `tariff_resolution=quarterly` makes them differ.
 
@@ -273,6 +275,45 @@ By default every IP under a smart-switch entry uses the global `number_of_lowest
 | `block_minutes_per_ip`  | Pipe-separated list, position-aligned with the **active** IPs in `ips`. Each entry is the cluster length in minutes (multiple of 15) for that IP. An empty entry means "use the global default". Example: `"60\|30\|"`.                                                |
 
 When **any** smart-switch entry uses one of these overrides, all switches are evaluated per-IP — the legacy "switch them all together based on a single condition" logic kicks in only when no override is configured anywhere.
+
+***
+
+# Statistics page
+
+The `/stats` route shows a multi-tab dashboard with daily, 7-day, monthly, and yearly aggregations of everything SEUSS has measured.
+
+## Tabs
+
+**Today / Yesterday / 7 Days / Month / Year** — each tab shows the same set of tiles for that range. Today updates live (see below); the other tabs are server-rendered snapshots that refresh on page reload.
+
+## Tiles
+
+| Tile                  | Meaning                                                                                                                                                                                                                                                                |
+|:----------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **House Consumption** | Wh consumed by AC loads in the range.                                                                                                                                                                                                                                  |
+| **Grid Import / Export** | Energy imported from / exported to the grid.                                                                                                                                                                                                                        |
+| **PV Production**     | Total PV yield.                                                                                                                                                                                                                                                        |
+| **Battery Charged / Discharged** | Wh in / Wh out of the battery.                                                                                                                                                                                                                              |
+| **Cycles**            | `charge_wh / battery_capacity_wh`. The capacity is auto-detected from the Victron battery monitor (live nominal voltage × installed Ah).                                                                                                                              |
+| **RTE**               | Round-trip efficiency (`discharge / charge × 100`). Renders as `--` when the range has more discharge than charge — that means the battery was net-drained, not that energy was magically created. Look at Month/Year for a realistic ~92–96% on healthy LFP packs.   |
+| **Loss**              | Integrated `max(input − usable, 0)` over the range, in Wh. Inverter / wiring loss should be a few percent of throughput.                                                                                                                                              |
+| **Imbalance (signed)**| Integrated `input − usable` WITHOUT the `max(…, 0)` clamp. Positive = normal (equals Loss). Negative = SEUSS recorded more consumption than known sources can supply, pointing at a missing source (PV inverter not registered with the GX) or a sensor sign issue.   |
+| **Grid Cost**         | Cost of the grid energy used in the range. Stored as cents, shown as €.                                                                                                                                                                                                |
+| **Skip Counters**     | How often each abort condition (Solar / Battery-range / Overnext / Expensive-phase / SOC-target) skipped a charge in the range. Useful to see which abort condition is actually doing work in your setup.                                                              |
+
+## Live updates
+
+The Today tab subscribes to the same WebSocket as the home status page. While Today is active, Consumption / Grid / Grid Export / PV / Battery Charge / Battery Discharge / Cost / Loss / Imbalance update without a page reload. Cycles, RTE, and the skip counters are server-derived and refresh on page reload.
+
+## Today's Hourly Energy Balance
+
+Below the comparison table, a per-hour breakdown of today's Loss and Imbalance shows when during the day the energy balance went off — a steady sensor offset shows up in every hour, while a bug tied to a specific event (e.g. inverter standby at night) shows up only in those hours. Hours with no activity yet (loss = 0 and imbalance = 0) are hidden so the table only contains real measurements.
+
+## History retention
+
+| Setting                       | Meaning                                                                                                                                  |
+|:------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
+| `stats_history_retention_days`| How many days of per-day history to keep (`consumption_wh_by_day`, `grid_wh_by_day`, etc.). Default `400` — covers a year-over-year comparison plus a month buffer. Set to `0` to disable cleanup. |
 
 ***
 

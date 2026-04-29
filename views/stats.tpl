@@ -308,10 +308,10 @@
         </div>
 
         <div class="stats-tile"
-             title="Round-trip efficiency: how much of the energy you put INTO the battery comes back OUT (discharge_wh / charge_wh × 100). For a healthy LFP system the long-term average is around 92-96%. Short ranges like Today can show very high or low values: if you only charged 200 Wh today but the battery discharged 1800 Wh of yesterday's stored energy, RTE will read way over 100% -- the metric only makes sense once a full charge AND discharge have happened in the same range. Look at the Month/Year tabs for a realistic figure.">
+             title="Round-trip efficiency: how much of the energy you put INTO the battery comes back OUT (discharge_wh / charge_wh × 100). For a healthy LFP system the long-term average is around 92-96%. Short ranges where the battery was net-drained (started high, no full charge yet) show '--' because RTE is only meaningful when a full charge AND discharge have both happened in the range. Look at the Month/Year tabs for a realistic figure.">
             <div class="label">RTE</div>
             <div class="value">
-                <span id="tile-rte">{{ "{:.1f}".format(active['rte_pct']) }}</span>
+                <span id="tile-rte">{{ "--" if active['rte_pct'] < 0 else "{:.1f}".format(active['rte_pct']) }}</span>
                 <span class="unit">%</span>
             </div>
         </div>
@@ -432,8 +432,8 @@
             </tr>
             <tr>
                 <td>RTE</td>
-                <td>{{ "{:.1f}".format(stats['today']['rte_pct']) }} %</td>
-                <td>{{ "{:.1f}".format(stats['yesterday']['rte_pct']) }} %</td>
+                <td>{{ "--" if stats['today']['rte_pct'] < 0 else "{:.1f} %".format(stats['today']['rte_pct']) }}</td>
+                <td>{{ "--" if stats['yesterday']['rte_pct'] < 0 else "{:.1f} %".format(stats['yesterday']['rte_pct']) }}</td>
             </tr>
             <tr>
                 <td>Loss</td>
@@ -484,7 +484,9 @@
         (input − usable when positive), typical inverter / wiring loss should be
         a few percent of throughput. <b>Imbalance</b> is signed: a NEGATIVE value
         means consumption exceeded the known sources for that hour, which points
-        at a missing source or a sensor sign issue. Empty hours haven't started yet.
+        at a missing source or a sensor sign issue. Hours with no activity yet
+        (loss = 0 and imbalance = 0) are hidden so the table only shows what's
+        actually happened today.
     </p>
     <table class="stats-compare">
         <thead>
@@ -495,7 +497,15 @@
             </tr>
         </thead>
         <tbody>
-            % for hb in stats.get('hourly_balance', []):
+            % nonzero_rows = [hb for hb in stats.get('hourly_balance', []) if hb['loss_wh'] != 0 or hb['imbalance_wh'] != 0]
+            % if not nonzero_rows:
+            <tr>
+                <td colspan="3" style="text-align:center; opacity:0.6; font-style:italic;">
+                    No activity recorded yet for today.
+                </td>
+            </tr>
+            % end
+            % for hb in nonzero_rows:
             <tr>
                 <td>{{ "{:02d}:00".format(hb['hour']) }}</td>
                 <td>{{ "{:.0f}".format(hb['loss_wh']) }} Wh</td>
@@ -593,7 +603,9 @@
                 setText('tile-battery-charge', formatNum(get('battery-charge'), 0));
                 setText('tile-battery-discharge', formatNum(get('battery-discharge'), 0));
                 setText('tile-cycles', formatNum(get('cycles'), 3));
-                setText('tile-rte', formatNum(get('rte'), 1));
+                // RTE -1 marker = invalid (discharge > charge), render as "--"
+                const rteRaw = parseFloat(get('rte'));
+                setText('tile-rte', (isNaN(rteRaw) || rteRaw < 0) ? '--' : rteRaw.toFixed(1));
                 setText('tile-loss', formatNum(get('loss'), 0));
                 // Imbalance: keep the explicit sign so users see + vs -.
                 const imb = parseFloat(get('imbalance')) || 0;
@@ -665,6 +677,7 @@
                     ['pvD',                'pv',                 'tile-pv',                 0],
                     ['batteryChargeD',     'battery-charge',     'tile-battery-charge',     0],
                     ['batteryDischargeD',  'battery-discharge',  'tile-battery-discharge',  0],
+                    ['lossD',              'loss',               'tile-loss',               0],
                 ];
 
                 map.forEach(entry => {
@@ -676,6 +689,17 @@
                         setText(tileId, v.toFixed(decimals));
                     }
                 });
+
+                // Imbalance is signed -- keep the +/- prefix when shown.
+                if (typeof data.imbalanceD === 'number') {
+                    grid.setAttribute('data-today-imbalance', data.imbalanceD);
+                    if (isTodayActive()) {
+                        const imbEl = document.getElementById('tile-imbalance');
+                        if (imbEl) {
+                            imbEl.textContent = (data.imbalanceD >= 0 ? '+' : '') + data.imbalanceD.toFixed(0);
+                        }
+                    }
+                }
 
                 // total_costs_today is in cents on the WS bus, EUR on the
                 // tile (matching the existing showRange() conversion).

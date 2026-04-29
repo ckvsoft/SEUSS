@@ -161,6 +161,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'pvD': self.get_daily_pv_wh(),
                             'batteryChargeD': self.get_daily_battery_charge_wh(),
                             'batteryDischargeD': self.get_daily_battery_discharge_wh(),
+                            'lossD': self.get_daily_loss_wh(),
+                            'imbalanceD': self.get_daily_imbalance_wh(),
                             'soc' : self.soc
                         })
 

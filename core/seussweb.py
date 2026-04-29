@@ -287,7 +287,18 @@ class SEUSSWeb:
             charge_wh = battery_charge_by_day.get(iso_date, 0) or 0
             discharge_wh = battery_discharge_by_day.get(iso_date, 0) or 0
             cycles = (charge_wh / battery_capacity_wh) if battery_capacity_wh > 0 else 0
-            rte = (discharge_wh / charge_wh * 100.0) if charge_wh > 0 else 0
+            # Round-trip efficiency only makes sense over completed
+            # charge/discharge cycles. When discharge > charge in the
+            # range (e.g. battery started high and was net-drained, or
+            # the day hasn't seen a real charge yet), the ratio yields
+            # nonsense like 155% -- the surplus is energy that was
+            # already in the battery before the range started, not a
+            # round-trip gain. Mark these as invalid (-1) so the UI
+            # can render them as "--" instead of a misleading number.
+            if charge_wh > 0 and discharge_wh <= charge_wh:
+                rte = discharge_wh / charge_wh * 100.0
+            else:
+                rte = -1
             return {
                 "iso": iso_date,
                 "consumption_wh": consumption_by_day.get(iso_date, 0),
@@ -323,7 +334,13 @@ class SEUSSWeb:
             charge_wh = _sum_range(battery_charge_by_day, start_iso, end_iso)
             discharge_wh = _sum_range(battery_discharge_by_day, start_iso, end_iso)
             cycles = (charge_wh / battery_capacity_wh) if battery_capacity_wh > 0 else 0
-            rte = (discharge_wh / charge_wh * 100.0) if charge_wh > 0 else 0
+            # Same clamp as _row_for above: discharge > charge means we
+            # are draining a pre-existing battery state, not closing a
+            # round-trip cycle. Mark as invalid so the UI shows "--".
+            if charge_wh > 0 and discharge_wh <= charge_wh:
+                rte = discharge_wh / charge_wh * 100.0
+            else:
+                rte = -1
             # For skip counters in a range we sum across days.
             solar_skips = sum(
                 (v or 0) for k, v in (solar_skip_by_day or {}).items()
