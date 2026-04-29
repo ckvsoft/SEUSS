@@ -170,10 +170,13 @@
          data-today-cost="{{ stats['today']['cost_eur'] }}"
          data-today-cycles="{{ stats['today']['cycles'] }}"
          data-today-rte="{{ stats['today']['rte_pct'] }}"
+         data-today-loss="{{ stats['today']['loss_wh'] }}"
+         data-today-imbalance="{{ stats['today']['imbalance_wh'] }}"
          data-today-solar-skips="{{ stats['today']['solar_skips'] }}"
          data-today-battery-skips="{{ stats['today']['battery_skips'] }}"
          data-today-battery-overnext-skips="{{ stats['today']['battery_overnext_skips'] }}"
          data-today-battery-expensive-phase-skips="{{ stats['today']['battery_expensive_phase_skips'] }}"
+         data-today-soc-target-skips="{{ stats['today']['soc_target_skips'] }}"
          data-yesterday-iso="{{ stats['yesterday']['iso'] }}"
          data-yesterday-consumption="{{ stats['yesterday']['consumption_wh'] }}"
          data-yesterday-grid="{{ stats['yesterday']['grid_wh'] }}"
@@ -184,10 +187,13 @@
          data-yesterday-cost="{{ stats['yesterday']['cost_eur'] }}"
          data-yesterday-cycles="{{ stats['yesterday']['cycles'] }}"
          data-yesterday-rte="{{ stats['yesterday']['rte_pct'] }}"
+         data-yesterday-loss="{{ stats['yesterday']['loss_wh'] }}"
+         data-yesterday-imbalance="{{ stats['yesterday']['imbalance_wh'] }}"
          data-yesterday-solar-skips="{{ stats['yesterday']['solar_skips'] }}"
          data-yesterday-battery-skips="{{ stats['yesterday']['battery_skips'] }}"
          data-yesterday-battery-overnext-skips="{{ stats['yesterday']['battery_overnext_skips'] }}"
          data-yesterday-battery-expensive-phase-skips="{{ stats['yesterday']['battery_expensive_phase_skips'] }}"
+         data-yesterday-soc-target-skips="{{ stats['yesterday']['soc_target_skips'] }}"
          data-week-iso="{{ stats['week']['iso'] }}"
          data-week-consumption="{{ stats['week']['consumption_wh'] }}"
          data-week-grid="{{ stats['week']['grid_wh'] }}"
@@ -198,10 +204,13 @@
          data-week-cost="{{ stats['week']['cost_eur'] }}"
          data-week-cycles="{{ stats['week']['cycles'] }}"
          data-week-rte="{{ stats['week']['rte_pct'] }}"
+         data-week-loss="{{ stats['week']['loss_wh'] }}"
+         data-week-imbalance="{{ stats['week']['imbalance_wh'] }}"
          data-week-solar-skips="{{ stats['week']['solar_skips'] }}"
          data-week-battery-skips="{{ stats['week']['battery_skips'] }}"
          data-week-battery-overnext-skips="{{ stats['week']['battery_overnext_skips'] }}"
          data-week-battery-expensive-phase-skips="{{ stats['week']['battery_expensive_phase_skips'] }}"
+         data-week-soc-target-skips="{{ stats['week']['soc_target_skips'] }}"
          data-month-iso="{{ stats['month']['iso'] }}"
          data-month-consumption="{{ stats['month']['consumption_wh'] }}"
          data-month-grid="{{ stats['month']['grid_wh'] }}"
@@ -212,10 +221,13 @@
          data-month-cost="{{ stats['month']['cost_eur'] }}"
          data-month-cycles="{{ stats['month']['cycles'] }}"
          data-month-rte="{{ stats['month']['rte_pct'] }}"
+         data-month-loss="{{ stats['month']['loss_wh'] }}"
+         data-month-imbalance="{{ stats['month']['imbalance_wh'] }}"
          data-month-solar-skips="{{ stats['month']['solar_skips'] }}"
          data-month-battery-skips="{{ stats['month']['battery_skips'] }}"
          data-month-battery-overnext-skips="{{ stats['month']['battery_overnext_skips'] }}"
          data-month-battery-expensive-phase-skips="{{ stats['month']['battery_expensive_phase_skips'] }}"
+         data-month-soc-target-skips="{{ stats['month']['soc_target_skips'] }}"
          data-year-iso="{{ stats['year']['iso'] }}"
          data-year-consumption="{{ stats['year']['consumption_wh'] }}"
          data-year-grid="{{ stats['year']['grid_wh'] }}"
@@ -226,10 +238,13 @@
          data-year-cost="{{ stats['year']['cost_eur'] }}"
          data-year-cycles="{{ stats['year']['cycles'] }}"
          data-year-rte="{{ stats['year']['rte_pct'] }}"
+         data-year-loss="{{ stats['year']['loss_wh'] }}"
+         data-year-imbalance="{{ stats['year']['imbalance_wh'] }}"
          data-year-solar-skips="{{ stats['year']['solar_skips'] }}"
          data-year-battery-skips="{{ stats['year']['battery_skips'] }}"
          data-year-battery-overnext-skips="{{ stats['year']['battery_overnext_skips'] }}"
-         data-year-battery-expensive-phase-skips="{{ stats['year']['battery_expensive_phase_skips'] }}">
+         data-year-battery-expensive-phase-skips="{{ stats['year']['battery_expensive_phase_skips'] }}"
+         data-year-soc-target-skips="{{ stats['year']['soc_target_skips'] }}">
 
         <div class="stats-tile">
             <div class="label">Range</div>
@@ -301,6 +316,24 @@
             </div>
         </div>
 
+        <div class="stats-tile"
+             title="Energy 'loss' integrated over the range: max(input − usable, 0). 'Input' = battery discharge + grid import + PV. 'Usable' = AC consumption + grid export + battery charge. Realistically this is mostly inverter / wiring losses and should be a single-digit percent of the total throughput.">
+            <div class="label">Loss</div>
+            <div class="value">
+                <span id="tile-loss">{{ "{:.0f}".format(active['loss_wh']) }}</span>
+                <span class="unit">Wh</span>
+            </div>
+        </div>
+
+        <div class="stats-tile"
+             title="Signed energy imbalance integrated over the range: input − usable WITHOUT the max(...,0) clamp. A POSITIVE value is normal -- it equals the inverter / wiring loss. A NEGATIVE value means SEUSS recorded more consumption than the known sources can supply, which points at a missing source (e.g. a PV inverter not registered with the GX) or a sign-convention issue with one of the sensors. Use this together with Loss to spot whether the daily energy balance actually closes.">
+            <div class="label">Imbalance</div>
+            <div class="value">
+                <span id="tile-imbalance">{{ "{:+.0f}".format(active['imbalance_wh']) }}</span>
+                <span class="unit">Wh</span>
+            </div>
+        </div>
+
         <div class="stats-tile cost"
              title="Stored as cents internally; shown as EUR.">
             <div class="label">Grid Cost</div>
@@ -340,6 +373,14 @@
             <div class="label">Expensive Phase Skips</div>
             <div class="value">
                 <span id="tile-battery-expensive-phase-skips">{{ active['battery_expensive_phase_skips'] }}</span>
+            </div>
+        </div>
+
+        <div class="stats-tile skip"
+             title="Always-on safety abort: how often charging was skipped because the battery already reached the SOC target configured in the Victron Scheduler (with 1% tolerance). If this is non-zero you've avoided pointless 'charge-to-100%-while-already-there' cycles.">
+            <div class="label">SOC Target Skips</div>
+            <div class="value">
+                <span id="tile-soc-target-skips">{{ active['soc_target_skips'] }}</span>
             </div>
         </div>
     </div>
@@ -395,6 +436,16 @@
                 <td>{{ "{:.1f}".format(stats['yesterday']['rte_pct']) }} %</td>
             </tr>
             <tr>
+                <td>Loss</td>
+                <td>{{ "{:.0f}".format(stats['today']['loss_wh']) }} Wh</td>
+                <td>{{ "{:.0f}".format(stats['yesterday']['loss_wh']) }} Wh</td>
+            </tr>
+            <tr>
+                <td>Imbalance (signed)</td>
+                <td>{{ "{:+.0f}".format(stats['today']['imbalance_wh']) }} Wh</td>
+                <td>{{ "{:+.0f}".format(stats['yesterday']['imbalance_wh']) }} Wh</td>
+            </tr>
+            <tr>
                 <td>Solar-forecast skips</td>
                 <td>{{ stats['today']['solar_skips'] }}</td>
                 <td>{{ stats['yesterday']['solar_skips'] }}</td>
@@ -415,10 +466,42 @@
                 <td>{{ stats['yesterday']['battery_expensive_phase_skips'] }}</td>
             </tr>
             <tr>
+                <td>SOC-target skips</td>
+                <td>{{ stats['today']['soc_target_skips'] }}</td>
+                <td>{{ stats['yesterday']['soc_target_skips'] }}</td>
+            </tr>
+            <tr>
                 <td>Grid cost</td>
                 <td title="{{ '{:.4f}'.format(stats['today']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['today']['cost_eur'] / 100.0) }} €</td>
                 <td title="{{ '{:.4f}'.format(stats['yesterday']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['yesterday']['cost_eur'] / 100.0) }} €</td>
             </tr>
+        </tbody>
+    </table>
+
+    <h3 class="stats-section-heading">Today's Hourly Energy Balance</h3>
+    <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+        Per-hour breakdown of today's energy balance. <b>Loss</b> is non-negative
+        (input − usable when positive), typical inverter / wiring loss should be
+        a few percent of throughput. <b>Imbalance</b> is signed: a NEGATIVE value
+        means consumption exceeded the known sources for that hour, which points
+        at a missing source or a sensor sign issue. Empty hours haven't started yet.
+    </p>
+    <table class="stats-compare">
+        <thead>
+            <tr>
+                <th>Hour</th>
+                <th>Loss</th>
+                <th>Imbalance (signed)</th>
+            </tr>
+        </thead>
+        <tbody>
+            % for hb in stats.get('hourly_balance', []):
+            <tr>
+                <td>{{ "{:02d}:00".format(hb['hour']) }}</td>
+                <td>{{ "{:.0f}".format(hb['loss_wh']) }} Wh</td>
+                <td>{{ "{:+.0f}".format(hb['imbalance_wh']) }} Wh</td>
+            </tr>
+            % end
         </tbody>
     </table>
 
@@ -446,6 +529,10 @@
             <tr>
                 <td>Expensive-phase skips total</td>
                 <td>{{ stats['battery_expensive_phase_skip_total'] }}</td>
+            </tr>
+            <tr>
+                <td>SOC-target skips total</td>
+                <td>{{ stats['soc_target_skip_total'] }}</td>
             </tr>
         </tbody>
     </table>
@@ -507,10 +594,16 @@
                 setText('tile-battery-discharge', formatNum(get('battery-discharge'), 0));
                 setText('tile-cycles', formatNum(get('cycles'), 3));
                 setText('tile-rte', formatNum(get('rte'), 1));
+                setText('tile-loss', formatNum(get('loss'), 0));
+                // Imbalance: keep the explicit sign so users see + vs -.
+                const imb = parseFloat(get('imbalance')) || 0;
+                const imbEl = document.getElementById('tile-imbalance');
+                if (imbEl) imbEl.textContent = (imb >= 0 ? '+' : '') + imb.toFixed(0);
                 setText('tile-solar-skips', get('solar-skips') || '0');
                 setText('tile-battery-skips', get('battery-skips') || '0');
                 setText('tile-battery-overnext-skips', get('battery-overnext-skips') || '0');
                 setText('tile-battery-expensive-phase-skips', get('battery-expensive-phase-skips') || '0');
+                setText('tile-soc-target-skips', get('soc-target-skips') || '0');
 
                 // Cost: stored in cents, shown as EUR; tooltip keeps cents.
                 const costRaw = parseFloat(get('cost')) || 0;
@@ -535,6 +628,92 @@
                     showRange(tab.getAttribute('data-range'));
                 });
             });
+
+            // Live updates via WebSocket: when the "Today" tab is the
+            // active one, refresh the daily totals from the same WS
+            // payload that the status page consumes. The data-* grid
+            // attributes are also updated so re-clicking "Today" later
+            // shows the fresh values, and other tabs stay snapshot-ed
+            // at their server-render time. Skips, RTE, Cycles and Loss
+            // are not in the WS payload (they're computed server-side
+            // from per-day history) so they remain at the server-rendered
+            // value until the page is reloaded.
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = window.location.hostname;
+            const wsPort = 8765;
+            const wsUrl = wsProtocol + '//' + wsHost + ':' + wsPort;
+
+            let ws;
+            let reconnectAttempts = 0;
+            const maxReconnectAttempts = 10;
+            const reconnectInterval = 5000;
+
+            function isTodayActive() {
+                const activeTab = document.querySelector('.stats-tabs a.active');
+                if (!activeTab) return false;
+                return activeTab.getAttribute('data-range') === 'today';
+            }
+
+            function applyLiveUpdate(data) {
+                if (!data || typeof data !== 'object') return;
+
+                // Map WS payload keys -> (data-today-* attribute, tile-id)
+                const map = [
+                    ['consumptionD',       'consumption',        'tile-consumption',        0],
+                    ['gridD',              'grid',               'tile-grid',               0],
+                    ['gridExportD',        'grid-export',        'tile-grid-export',        0],
+                    ['pvD',                'pv',                 'tile-pv',                 0],
+                    ['batteryChargeD',     'battery-charge',     'tile-battery-charge',     0],
+                    ['batteryDischargeD',  'battery-discharge',  'tile-battery-discharge',  0],
+                ];
+
+                map.forEach(entry => {
+                    const wsKey = entry[0], attrKey = entry[1], tileId = entry[2], decimals = entry[3];
+                    const v = data[wsKey];
+                    if (typeof v !== 'number') return;
+                    grid.setAttribute('data-today-' + attrKey, v);
+                    if (isTodayActive()) {
+                        setText(tileId, v.toFixed(decimals));
+                    }
+                });
+
+                // total_costs_today is in cents on the WS bus, EUR on the
+                // tile (matching the existing showRange() conversion).
+                if (typeof data.total_costs_today === 'number') {
+                    grid.setAttribute('data-today-cost', data.total_costs_today);
+                    if (isTodayActive()) {
+                        const tileCost = document.getElementById('tile-cost');
+                        if (tileCost) {
+                            tileCost.textContent = (data.total_costs_today / 100.0).toFixed(4);
+                            tileCost.setAttribute('title', data.total_costs_today.toFixed(4) + ' \u00a2');
+                        }
+                    }
+                }
+            }
+
+            function connectWS() {
+                ws = new WebSocket(wsUrl);
+                ws.onopen = function() {
+                    reconnectAttempts = 0;
+                };
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        applyLiveUpdate(data);
+                    } catch (err) {
+                        // Non-JSON payload or partial frame -- ignore.
+                    }
+                };
+                ws.onclose = function() {
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        setTimeout(connectWS, reconnectInterval);
+                    }
+                };
+                ws.onerror = function() { /* close handler will reconnect */ };
+            }
+
+            connectWS();
         })();
     </script>
 </body>

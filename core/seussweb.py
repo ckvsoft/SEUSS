@@ -245,6 +245,11 @@ class SEUSSWeb:
         pv_by_day = _get_dict("powerconsumption", "pv_wh_by_day")
         battery_charge_by_day = _get_dict("powerconsumption", "battery_charge_wh_by_day")
         battery_discharge_by_day = _get_dict("powerconsumption", "battery_discharge_wh_by_day")
+        loss_by_day = _get_dict("powerconsumption", "loss_wh_by_day")
+        imbalance_by_day = _get_dict("powerconsumption", "imbalance_wh_by_day")
+        # Today-only per-hour breakdown (24-element dict, keys "0".."23").
+        loss_by_hour_today = _get_dict("powerconsumption", "loss_wh_by_hour_today")
+        imbalance_by_hour_today = _get_dict("powerconsumption", "imbalance_wh_by_hour_today")
         costs_by_day = _get_dict("powerconsumption", "energy_costs_by_day")
 
         # Skip-counter dict from the abort-condition tracking.
@@ -253,12 +258,14 @@ class SEUSSWeb:
         battery_skip_by_day = skip_count_by_day.get("battery_range") if isinstance(skip_count_by_day.get("battery_range"), dict) else {}
         battery_overnext_skip_by_day = skip_count_by_day.get("battery_overnext") if isinstance(skip_count_by_day.get("battery_overnext"), dict) else {}
         battery_expensive_phase_skip_by_day = skip_count_by_day.get("battery_expensive_phase") if isinstance(skip_count_by_day.get("battery_expensive_phase"), dict) else {}
+        soc_target_skip_by_day = skip_count_by_day.get("soc_target") if isinstance(skip_count_by_day.get("soc_target"), dict) else {}
 
         # Lifetime skip totals.
         solar_skip_total = sm.get_data("aborts", "solar_forecast_total") or 0
         battery_skip_total = sm.get_data("aborts", "battery_range_total") or 0
         battery_overnext_skip_total = sm.get_data("aborts", "battery_overnext_total") or 0
         battery_expensive_phase_skip_total = sm.get_data("aborts", "battery_expensive_phase_total") or 0
+        soc_target_skip_total = sm.get_data("aborts", "soc_target_total") or 0
 
         # Battery capacity for cycle calc -- read from StatsManager
         # where seusscore.run_essunit persists it. Victron reports
@@ -292,10 +299,13 @@ class SEUSSWeb:
                 "cost_eur": costs_by_day.get(iso_date, 0),
                 "cycles": round(cycles, 3),
                 "rte_pct": round(rte, 1),
+                "loss_wh": loss_by_day.get(iso_date, 0) or 0,
+                "imbalance_wh": imbalance_by_day.get(iso_date, 0) or 0,
                 "solar_skips": int(solar_skip_by_day.get(iso_date, 0)),
                 "battery_skips": int(battery_skip_by_day.get(iso_date, 0)),
                 "battery_overnext_skips": int(battery_overnext_skip_by_day.get(iso_date, 0)),
                 "battery_expensive_phase_skips": int(battery_expensive_phase_skip_by_day.get(iso_date, 0)),
+                "soc_target_skips": int(soc_target_skip_by_day.get(iso_date, 0)),
             }
 
         # ---- Aggregation helpers for multi-day tabs ----
@@ -331,6 +341,10 @@ class SEUSSWeb:
                 (v or 0) for k, v in (battery_expensive_phase_skip_by_day or {}).items()
                 if isinstance(k, str) and start_iso <= k <= end_iso
             )
+            soc_target_skips = sum(
+                (v or 0) for k, v in (soc_target_skip_by_day or {}).items()
+                if isinstance(k, str) and start_iso <= k <= end_iso
+            )
             return {
                 "iso": f"{start_iso} \u2192 {end_iso}",
                 "consumption_wh": _sum_range(consumption_by_day, start_iso, end_iso),
@@ -342,10 +356,13 @@ class SEUSSWeb:
                 "cost_eur": _sum_range(costs_by_day, start_iso, end_iso),
                 "cycles": round(cycles, 3),
                 "rte_pct": round(rte, 1),
+                "loss_wh": _sum_range(loss_by_day, start_iso, end_iso),
+                "imbalance_wh": _sum_range(imbalance_by_day, start_iso, end_iso),
                 "solar_skips": int(solar_skips),
                 "battery_skips": int(battery_skips),
                 "battery_overnext_skips": int(battery_overnext_skips),
                 "battery_expensive_phase_skips": int(battery_expensive_phase_skips),
+                "soc_target_skips": int(soc_target_skips),
             }
 
         today = date.today()
@@ -400,8 +417,24 @@ class SEUSSWeb:
             "battery_skip_total": int(battery_skip_total),
             "battery_overnext_skip_total": int(battery_overnext_skip_total),
             "battery_expensive_phase_skip_total": int(battery_expensive_phase_skip_total),
+            "soc_target_skip_total": int(soc_target_skip_total),
             "intraday_svg": intraday_svg,
             "history_svg": history_svg,
+            # Per-hour energy balance for today: list of 24 dicts with
+            # hour, loss_wh, imbalance_wh. Hour slots without data show
+            # 0 so the table always has 24 rows. Lets the user spot
+            # WHEN during the day the balance went negative -- a steady
+            # sensor offset shows up in every hour, while a bug tied to
+            # a specific event (e.g. inverter standby at night) shows
+            # up only in those hours.
+            "hourly_balance": [
+                {
+                    "hour": h,
+                    "loss_wh": float(loss_by_hour_today.get(str(h), 0) or 0),
+                    "imbalance_wh": float(imbalance_by_hour_today.get(str(h), 0) or 0),
+                }
+                for h in range(24)
+            ],
         }
 
         return template('stats', stats=stats_data,
@@ -805,6 +838,16 @@ class SEUSSWeb:
             self.market_items.get_current_list(), target_date
         )
 
+        # Pre-compute hour-level membership: if any quarter of an hour
+        # is in a charge/discharge block, the WHOLE hour visually
+        # belongs to that block. This kills the "white sliver" effect
+        # that used to appear when fill_gaps_with_short_clusters
+        # produced 3-quarter blocks (e.g. 12:00-12:45 discharge): the
+        # remaining 12:45 quarter used to fall through to gainsboro;
+        # now it inherits the hour's block colour.
+        charge_hours = {h for (h, _q) in charge_quarters}
+        discharge_hours = {h for (h, _q) in discharge_quarters}
+
         # Draw each hour as 4 stacked quarter-width slices.
         # Each hour bar is wrapped in a <g> element with a <title>
         # child -- browsers render this as a hover tooltip showing the
@@ -813,6 +856,20 @@ class SEUSSWeb:
         slice_width = (width - 3) / 4.0  # leave 3px gap between hour groups
         for hour in range(24):
             price = data.get(hour)
+            # If hourly aggregation lost this hour but per-quarter prices
+            # exist for it (e.g. due to upstream item-list filtering),
+            # rebuild the hourly average from the quarter prices we have.
+            # This was the cause of the "white bar despite known cheap
+            # price" symptom: data[hour] was None, so the inner branch
+            # never ran and the bar fell through to gainsboro.
+            if price is None:
+                hour_q_prices = [
+                    quarter_prices[(hour, qi)]
+                    for qi in range(4)
+                    if (hour, qi) in quarter_prices
+                ]
+                if hour_q_prices:
+                    price = sum(hour_q_prices) / len(hour_q_prices)
             if price is not None:
                 height = (abs(price) + 1) * factor
                 y = baseline_y - height if price >= 0 else baseline_y
@@ -826,6 +883,9 @@ class SEUSSWeb:
             # the bar colour -- this keeps it visible on the dark theme.
             slice_colors = []
             slice_svg = ""
+
+            hour_has_charge = hour in charge_hours
+            hour_has_discharge = hour in discharge_hours
 
             for q in range(4):
                 key = (hour, q)
@@ -859,6 +919,15 @@ class SEUSSWeb:
                         # with an unrelated grey hour.
                         slice_color = self._olive_color(hour, current_hour, tomorrow)
                     elif in_discharge and not in_charge:
+                        slice_color = self._red_color(hour, current_hour, tomorrow)
+                    elif hour_has_charge and below_cap:
+                        # This quarter is the leftover of a 3-quarter
+                        # charge block (fill-gap result). Inherit the
+                        # hour's charge colour so the bar looks solid.
+                        slice_color = self._green_color(hour, current_hour, tomorrow)
+                    elif hour_has_discharge:
+                        # Leftover quarter inside an otherwise discharge
+                        # hour. Inherit the discharge colour.
                         slice_color = self._red_color(hour, current_hour, tomorrow)
 
                 slice_colors.append(slice_color)

@@ -432,6 +432,19 @@ class Conditions:
                 self._abort_charging_block_above_hard_cap
         })
 
+        # Always-on safety abort: don't try to charge past the SOC
+        # target the user has set in the Victron Scheduler. Without
+        # this, SEUSS happily reports "charging is turned on" while
+        # the battery is already at 100% and the inverter has nothing
+        # left to charge -- the symptom that triggered this fix. The
+        # check uses the live scheduler-SOC value from D-Bus so a
+        # change in the Victron UI takes effect immediately on the
+        # next evaluation cycle.
+        self.abort_conditions_by_operation_mode["charging_abort"].update({
+            "Abort charge - SOC target reached":
+                self._abort_charging_soc_target_reached
+        })
+
         # Solar forecast abort: skip charging when both
         #   (a) total expected solar (today + tomorrow) covers two days
         #       of average consumption, AND
@@ -522,6 +535,52 @@ class Conditions:
         where such quarters show as olive instead of green.
         """
         return self._current_quarter_above_hard_cap()
+
+    def _abort_charging_soc_target_reached(self):
+        """
+        True if the battery has already reached (or exceeded) the SOC
+        target configured in the Victron Scheduler. Always-on safety:
+        there's no scenario where charging past this target is useful,
+        and without the check SEUSS keeps reporting "charging on" while
+        the inverter has nothing to do.
+
+        Reads the live values:
+          * current_soc           -- via essunit.get_soc()
+          * scheduler_soc target  -- via essunit.get_scheduler_soc()
+
+        Falls back to "don't abort" on any read failure, so a transient
+        D-Bus glitch can't lock charging out entirely.
+
+        Includes a 1% tolerance so the abort doesn't oscillate around
+        the threshold due to SOC measurement noise (e.g. 99.6 vs 100.1
+        flapping at the boundary).
+        """
+        try:
+            if not self.essunit:
+                return False
+            current_soc = self.essunit.get_soc()
+            scheduler_soc = self.essunit.get_scheduler_soc()
+            if current_soc is None or scheduler_soc is None:
+                return False
+
+            # 1% tolerance: trip the abort once we're within 1 of the
+            # target, not only AT or above it. Avoids stop/start churn
+            # when the BMS hovers just below 100%.
+            should_abort = float(current_soc) >= (float(scheduler_soc) - 1.0)
+            if should_abort:
+                self.logger.log.info(
+                    f"SOC-target abort: current_soc={current_soc}% "
+                    f">= scheduler_soc_target={scheduler_soc}% "
+                    f"(with 1% tolerance), charging is unnecessary."
+                )
+                self._record_abort_fired("soc_target")
+            return should_abort
+        except Exception as e:
+            self.logger.log.warning(
+                f"SOC-target abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
 
     def _abort_switching_block_above_hard_cap(self):
         return self._current_quarter_above_hard_cap()

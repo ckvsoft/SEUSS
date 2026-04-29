@@ -118,7 +118,7 @@ class SEUSS:
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
                 t_soc = soc #(soc // 5) * 5
                 if t_soc < active_soc_limit:
-                    essunit.set_active_soc_limit(t_soc)
+                    self._apply_active_soc_limit(essunit, t_soc)
 
             else:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
@@ -128,7 +128,7 @@ class SEUSS:
                         if soc > active_soc_limit:
                             t_soc = soc # (soc // 5) * 5
                             if t_soc < check_limit:
-                                essunit.set_active_soc_limit(t_soc)
+                                self._apply_active_soc_limit(essunit, t_soc)
 
                         if active_soc_limit > check_limit:
                             self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
@@ -136,7 +136,7 @@ class SEUSS:
 
                         if abs(soc - check_limit) <= 1:
                                 # Auf gespeicherten Wert zurücksetzen und Delay beenden
-                                essunit.set_active_soc_limit(check_limit)
+                                self._apply_active_soc_limit(essunit, check_limit)
                                 self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
                                 self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
                                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
@@ -308,29 +308,31 @@ class SEUSS:
             self.logger.log.info(f"Solar forecast until now is zero. Current Adj-Factor: {efficiency_display}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
-        only_observation = False
-        if essunit:
-            info = self.config.get_essunit_info(essunit.get_name())
-            only_observation = info.get("only_observation", False)
+        # Previously this method was completely skipped when an essunit
+        # was in observation mode -- which meant no condition evaluation
+        # at all, and the user couldn't see WHAT SEUSS would do. We now
+        # always run the evaluation, and let the _apply_* wrappers (in
+        # control_charging / control_discharging / control_switching)
+        # decide whether to actually touch the hardware. Lines prefixed
+        # with [OBSERVATION] mark the points where a real run would
+        # have changed state.
+        condition_charging_result = ConditionResult()
+        condition_discharging_result = ConditionResult()
+        condition_switching_result = ConditionResult()
+        conditions_instance = Conditions(self.items, essunit, self.solardata)
+        conditions_instance.info()
+        conditions_instance.evaluate_conditions(condition_charging_result, "charging")
+        conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+        conditions_instance.evaluate_conditions(condition_switching_result, "switching")
 
-        if not only_observation:
-            condition_charging_result = ConditionResult()
-            condition_discharging_result = ConditionResult()
-            condition_switching_result = ConditionResult()
-            conditions_instance = Conditions(self.items, essunit, self.solardata)
-            conditions_instance.info()
-            conditions_instance.evaluate_conditions(condition_charging_result, "charging")
-            conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
-            conditions_instance.evaluate_conditions(condition_switching_result, "switching")
-
-            self.control_charging(essunit, condition_charging_result)
-            self.control_discharging(essunit, condition_discharging_result)
-            self.control_switching(condition_switching_result)
+        self.control_charging(essunit, condition_charging_result)
+        self.control_discharging(essunit, condition_discharging_result)
+        self.control_switching(condition_switching_result, essunit=essunit)
 
         self.items.log_items()
         self.no_data[0] = 0
 
-    def control_switching(self, condition_switching_result):
+    def control_switching(self, condition_switching_result, essunit=None):
         # Per-IP switching: when at least one configured smart switch
         # has per-IP overrides (lowest_prices_per_ip / block_minutes_per_ip),
         # we delegate the on/off decision to the manager's per-IP
@@ -339,6 +341,11 @@ class SEUSS:
         # configurations without any per-IP overrides, so existing setups
         # behave exactly as before.
         if self._smart_switches_have_per_ip_overrides():
+            if self._is_observation_mode(essunit):
+                self.logger.log.info(
+                    "[OBSERVATION] Would evaluate per-IP smartswitch logic"
+                )
+                return
             charging_count = getattr(
                 self.config, "number_of_lowest_prices_for_charging", 0
             ) or 0
@@ -349,17 +356,17 @@ class SEUSS:
             self.logger.log.info(
                 f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
             )
-            self.smartswitches.turn_on_all()
+            self._apply_smartswitches(turn_on=True, essunit=essunit)
 
         elif condition_switching_result.condition:
             self.logger.log.info(
                 f"{condition_switching_result.condition}, switching mode is turned off."
             )
-            self.smartswitches.turn_off_all()
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
 
         else:
             self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
-            self.smartswitches.turn_off_all()
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
 
     def _smart_switches_have_per_ip_overrides(self):
         """Return True iff any configured smart switch has a non-empty
@@ -376,8 +383,8 @@ class SEUSS:
         if condition_charging_result.execute and essunit is not None:
             self.logger.log.info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
-            essunit.set_charge("on")
-            self.smartswitches.turn_on_all()
+            self._apply_charge(essunit, "on")
+            self._apply_smartswitches(turn_on=True, essunit=essunit)
 
             initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
             if not initial_data:
@@ -387,27 +394,27 @@ class SEUSS:
 
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log.info(f"{condition_charging_result.condition}, charging is turned off.")
-            essunit.set_charge("off")
-            self.smartswitches.turn_off_all()
+            self._apply_charge(essunit, "off")
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
             self.statsmanager.remove_data('energy', "initial_charge_state_wh")
 
         elif essunit is not None:
             self.logger.log.info("Since none of the charging conditions are true, charging is turned off.")
-            essunit.set_charge("off")
-            self.smartswitches.turn_off_all()
+            self._apply_charge(essunit, "off")
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
             self.statsmanager.remove_data('energy', "initial_charge_state_wh")
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:
             self.logger.log.info(
                 f"Condition {condition_discharging_result.condition} result: {condition_discharging_result.execute}, discharging is turned on.")
-            essunit.set_discharge("on")
+            self._apply_discharge(essunit, "on")
         elif condition_discharging_result.condition and essunit is not None:
             self.logger.log.info(f"{condition_discharging_result.condition}, discharging is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
         elif essunit is not None:
             self.logger.log.info("Since none of the discharging conditions are true, discharging is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
 
     def update_charging_statistics(self, essunit):
         current_wh = essunit.get_battery_current_wh()
@@ -437,14 +444,90 @@ class SEUSS:
         self.no_data[0] += 1
         if essunit is not None:
             self.logger.log.info("There are currently no prices, so the charging mode is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
             self.logger.log.info("There are currently no prices, so the discharging mode is turned on.")
-            essunit.set_discharge("on")
+            self._apply_discharge(essunit, "on")
 
     def perform_test_run(self):
         test_run = os.environ.get('TESTRUN')
         if test_run is not None:
             self.graceful_exit(signal.SIGINT, None)
+
+    # ------------------------------------------------------------------
+    # Hardware-write wrappers that respect `only_observation`.
+    #
+    # When an essunit is in observation mode, we still let SEUSS run
+    # the full conditions/abort evaluation (so the user can see in the
+    # log what would happen), but we do NOT actually flip charge state,
+    # discharge state, the active SOC limit, or the smartswitch relays.
+    # Each wrapper logs an [OBSERVATION] line describing what would
+    # have happened.
+    #
+    # IMPORTANT: every direct call to `essunit.set_charge(...)`,
+    # `essunit.set_discharge(...)`, `essunit.set_active_soc_limit(...)`
+    # and `self.smartswitches.turn_on_all()/turn_off_all()` in the
+    # control flow goes through one of these wrappers instead. New
+    # places that need to write hardware must use these wrappers --
+    # bypassing them would silently break observation mode.
+    # ------------------------------------------------------------------
+
+    def _is_observation_mode(self, essunit):
+        """True if the given essunit is configured `only_observation: true`."""
+        if essunit is None:
+            return False
+        try:
+            info = self.config.get_essunit_info(essunit.get_name())
+            return bool(info.get("only_observation", False))
+        except Exception:
+            return False
+
+    def _apply_charge(self, essunit, state):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set charge -> {state} on {essunit.get_name()}"
+            )
+            return
+        essunit.set_charge(state)
+
+    def _apply_discharge(self, essunit, state):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set discharge -> {state} on {essunit.get_name()}"
+            )
+            return
+        essunit.set_discharge(state)
+
+    def _apply_active_soc_limit(self, essunit, value):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set active SOC limit -> {value}% on {essunit.get_name()}"
+            )
+            return
+        essunit.set_active_soc_limit(value)
+
+    def _apply_smartswitches(self, turn_on, essunit=None):
+        """
+        Smartswitches don't belong to a single essunit, but they're part
+        of the same control decision. We treat them as observation-bound
+        when ANY essunit currently in scope is in observation mode --
+        the typical setup has one essunit, so this is a clean rule.
+        """
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would turn smartswitches "
+                f"{'on' if turn_on else 'off'}"
+            )
+            return
+        if turn_on:
+            self.smartswitches.turn_on_all()
+        else:
+            self.smartswitches.turn_off_all()
 
     def handle_no_data_sleep(self):
         if 0 < self.no_data[0] < 4:
