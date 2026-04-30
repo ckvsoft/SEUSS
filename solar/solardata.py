@@ -29,14 +29,30 @@
 class Solardata:
     """
     Solar data container -- holds the OpenMeteo forecast outputs and
-    the day-so-far yield, used by:
+    the day-so-far measured yield, used by:
 
-      * solar/openmeteo.py        -- writes forecast / sun-time fields
+      * solar/openmeteo.py        -- writes forecast / sun-time fields,
+                                     reads pv_measured_today_wh for the
+                                     adjustment-factor learning logic
       * core/conditions.py        -- reads sunrise_tomorrow_day,
-                                     total_current_day, total_tomorrow_day
+                                     forecast_today_wh, forecast_tomorrow_wh
                                      for the solar abort condition
-      * core/seusscore.py         -- writes current_hour_solar_yield
-                                     after summing inverter Wh
+      * core/seusscore.py         -- writes pv_measured_today_wh from
+                                     the authoritative PowerConsumption
+                                     daily_pv_wh value (GX-bus integrated)
+
+    Naming history: the field now called `pv_measured_today_wh` was
+    previously `current_hour_solar_yield`, fed from the sum of inverter
+    forward-counters. That sum drifted ~25% from the actual PV yield
+    (e.g. 26500 Wh vs ~21000 Wh real), which both poisoned the stats
+    page and biased the openmeteo learning loop. The authoritative
+    source is now `PowerConsumption.daily_pv_wh`, which integrates
+    live PV power on the GX bus and matches both the Victron VRM total
+    and the home-page "PV today" tile.
+
+    Similarly `forecast_today_wh` / `forecast_tomorrow_wh` were
+    previously `total_current_day` / `total_tomorrow_day` -- the new
+    names match the statsmanager keys that have always been correct.
 
     Earlier revisions of this class had a `Battery / SOC` block plus a
     `need_soc` value pushed through SolarBatteryCalculator. Both were
@@ -58,10 +74,16 @@ class Solardata:
         self.sunrise_tomorrow_day = None
         self.sunset_tomorrow_day = None
 
-        # PV yields (Wh)
-        self.total_current_day = 0.0    # measured-so-far + forecast-rest
-        self.total_tomorrow_day = 0.0   # forecast tomorrow
-        self.current_hour_solar_yield = 0.0  # measured Wh today, summed across inverters
+        # PV yields (Wh).
+        #
+        # forecast_today_wh is a hybrid: pv_measured_today_wh (actual,
+        # so far) plus the adjusted forecast for the rest of the day.
+        # forecast_tomorrow_wh is a pure forecast.
+        # pv_measured_today_wh is the authoritative measured yield
+        # since 00:00, sourced from PowerConsumption.daily_pv_wh.
+        self.forecast_today_wh = 0.0
+        self.forecast_tomorrow_wh = 0.0
+        self.pv_measured_today_wh = 0.0
 
     # --------------------------------------------------
     # Time-related updates
@@ -81,11 +103,11 @@ class Solardata:
     # --------------------------------------------------
     # PV yield updates
     # --------------------------------------------------
-    def update_total_current_day(self, value):
-        self.total_current_day = value
+    def update_forecast_today_wh(self, value):
+        self.forecast_today_wh = value
 
-    def update_total_tomorrow_day(self, value):
-        self.total_tomorrow_day = value
+    def update_forecast_tomorrow_wh(self, value):
+        self.forecast_tomorrow_wh = value
 
-    def update_current_hour_solar_yield(self, value):
-        self.current_hour_solar_yield = value
+    def update_pv_measured_today_wh(self, value):
+        self.pv_measured_today_wh = value

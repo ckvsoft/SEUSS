@@ -246,7 +246,14 @@ class OpenMeteo:
             # can tune behaviour without code changes. Defaults match
             # "EWMA alpha=0.3, threshold 1000 Wh, min 4 sun hours, cap
             # 20%/day" -- a moderate setting.
-            measured_today = solar_data.current_hour_solar_yield or 0.0
+            # The authoritative measured-today value comes from
+            # PowerConsumption.daily_pv_wh (GX-bus integrated PV power),
+            # pushed onto solar_data.pv_measured_today_wh by
+            # seusscore.collect_meters_and_inverter_sum. This is
+            # deliberately NOT the inverter forward-counter sum -- that
+            # sum has been observed to drift ~25% from reality, which
+            # would poison the EWMA learning loop below.
+            pv_measured_today_wh = solar_data.pv_measured_today_wh or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * inverter_efficiency
 
             adj_data = self.statsmanager.get_data('solar', 'efficiency')
@@ -271,7 +278,7 @@ class OpenMeteo:
             )
 
             if should_learn:
-                instantaneous = measured_today / theoretical_past_net
+                instantaneous = pv_measured_today_wh / theoretical_past_net
                 # Clamp the same hard limits as before -- the model can't
                 # be off by more than 5x in either direction, that would
                 # be a configuration / data problem we shouldn't paper over.
@@ -302,11 +309,11 @@ class OpenMeteo:
                 )
 
             rest_today_final = sum_forecast_rest_today_raw * inverter_efficiency * adj
-            total_today = measured_today + rest_today_final
+            total_today = pv_measured_today_wh + rest_today_final
             total_tomorrow = sum_forecast_tomorrow_raw * inverter_efficiency * adj
 
-            solar_data.update_total_current_day(round(total_today, 2))
-            solar_data.update_total_tomorrow_day(round(total_tomorrow, 2))
+            solar_data.update_forecast_today_wh(round(total_today, 2))
+            solar_data.update_forecast_tomorrow_wh(round(total_tomorrow, 2))
 
             # Persist the forecast totals so the stats page can display
             # them. We must use save_data=True (not False), because the
@@ -318,13 +325,13 @@ class OpenMeteo:
             # cheap.
             self.statsmanager.set_status_data('solar', 'forecast_today_wh', round(total_today, 2))
             self.statsmanager.set_status_data('solar', 'forecast_tomorrow_wh', round(total_tomorrow, 2))
-            self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(measured_today, 2))
+            self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(pv_measured_today_wh, 2))
             self.statsmanager.set_status_data('solar', 'forecast_rest_today_wh', round(rest_today_final, 2))
 
             self.logger.log.debug(
                 f"RAW API (Total): Today {debug_api_today_raw:.0f} Wh, Tomorrow {debug_api_tomorrow_raw:.0f} Wh")
             self.logger.log.info(
-                f"Forecast: Today {total_today:.2f} Wh (Measured: {measured_today:.0f}, Rest: {rest_today_final:.0f}), "
+                f"Forecast: Today {total_today:.2f} Wh (Measured: {pv_measured_today_wh:.0f}, Rest: {rest_today_final:.0f}), "
                 f"Tomorrow {total_tomorrow:.2f} Wh (Adj: {adj:.2f})"
             )
             return {

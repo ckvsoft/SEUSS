@@ -150,8 +150,8 @@ class SEUSS:
 
             # if essunit is not None:
             #    essunit.get_data()
-            total_solar = self.process_solar_data(essunit)
-            self.process_solar_forecast(total_solar)
+            inverter_sum_today_wh = self.process_solar_data(essunit)
+            self.process_solar_forecast(inverter_sum_today_wh)
             if self.items.get_item_count() > 0:
                 self.evaluate_conditions_and_control_charging_discharging(essunit)
             else:
@@ -234,16 +234,39 @@ class SEUSS:
         return GenericLoaderFactory.create_loader("essunit", self.config.essunit)
 
     def process_solar_data(self, essunit):
-        total_solar = 0.0
+        inverter_sum_today_wh = 0.0
         if essunit is not None:
-            total_solar = self.get_total_solar_yield(essunit)
+            inverter_sum_today_wh = self.collect_meters_and_inverter_sum(essunit)
 
-        return total_solar
+        return inverter_sum_today_wh
 
-    def get_total_solar_yield(self, essunit):
+    def collect_meters_and_inverter_sum(self, essunit):
+        """
+        Walks the configured grid meters (for logging + the
+        forward_hourly stats update) and the configured PV inverters
+        (to sum their forward-counter Wh for today).
+
+        Two outputs are produced:
+
+        * `inverter_sum_today_wh` -- the sum of inverter forward
+          counters since 00:00, returned to the caller. Used downstream
+          ONLY for the "solar hour performance" log line in
+          process_solar_forecast (observed-vs-forecast ratio for ops
+          visibility). NOT pushed to solardata anymore -- it has been
+          observed to drift ~25% from reality (e.g. 26500 Wh inverter
+          sum vs ~21000 Wh actual yield), so feeding it into the
+          adjustment-factor learning loop poisoned that loop.
+
+        * `pv_measured_today_wh` -- the authoritative measured yield,
+          read from PowerConsumption.daily_pv_wh (GX-bus integrated
+          PV power, matches Victron VRM and the home-page "PV today"
+          tile). This is what gets pushed to solardata for downstream
+          consumers (openmeteo learning loop, conditions abort logic,
+          stats page).
+        """
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
-        total_solar = 0.0
+        inverter_sum_today_wh = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
@@ -260,9 +283,11 @@ class SEUSS:
         total_forward_hourly_list = self.statsmanager.get_data("powerconsumption","hourly_watt_average")
         total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
         manager_instance = self.power_consumption_manager.get_instance()
+        pv_measured_today_wh = 0.0
         if manager_instance:
             value = manager_instance.get_hourly_average()
             consumption = manager_instance.get_daily_wh()
+            pv_measured_today_wh = float(manager_instance.get_daily_pv_wh() or 0.0)
             if value > 0.0:
                 total_forward_hourly = (total_forward_hourly + value) / 2
             self.logger.log.info(
@@ -274,18 +299,22 @@ class SEUSS:
             customname = inverters.get_value(key_outer, 'CustomName')
             productname = inverters.get_value(key_outer, 'ProductName')
             forward = inverters.get_forward_kwh(key_outer)
-            total_solar += float(forward)
+            inverter_sum_today_wh += float(forward)
             self.logger.log.debug(f"Found PV Inverter:  {productname} {customname}.")
             self.logger.log.info(f"{productname} {customname} yield today:  {round(forward, 2)} Wh.")
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log.debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        self.logger.log.info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
-        self.solardata.update_current_hour_solar_yield(round(total_solar, 2))
-        return total_solar
+        self.logger.log.info(
+            f"All Inverters yield today (forward-counter sum):  {round(inverter_sum_today_wh, 2)} Wh, "
+            f"authoritative PV measured today (GX-bus): {round(pv_measured_today_wh, 2)} Wh.")
+        # Push the authoritative value to solardata, NOT the inverter
+        # forward-counter sum -- see method docstring for why.
+        self.solardata.update_pv_measured_today_wh(round(pv_measured_today_wh, 2))
+        return inverter_sum_today_wh
 
-    def process_solar_forecast(self, total_solar):
+    def process_solar_forecast(self, inverter_sum_today_wh):
         forecast_provider = OpenMeteo()
         # Now returns a dictionary
         forecast_results = forecast_provider.forecast(self.solardata)
@@ -299,10 +328,16 @@ class SEUSS:
         expected_until_now = (forecast_results["past_today"] + forecast_results["current_hour"]) * adj_factor
 
         if expected_until_now > 0.0:
-            # Compare actual yield (since 00:00) with adjusted forecast (since 00:00)
-            solar_performance = round((total_solar / expected_until_now) * 100, 2)
+            # Ops-visibility log: how does the inverter forward-counter
+            # sum compare to the adjusted forecast for the same window?
+            # We deliberately use the inverter sum here (not the
+            # authoritative pv_measured_today_wh) because this metric
+            # is meant to surface inverter-vs-model drift -- the same
+            # drift that motivated switching the learning loop OFF the
+            # inverter sum.
+            solar_performance = round((inverter_sum_today_wh / expected_until_now) * 100, 2)
 
-            self.logger.log.info(f"Solar hour performance: {solar_performance}% of adjusted forecast.")
+            self.logger.log.info(f"Solar hour performance (inverter sum vs adjusted forecast): {solar_performance}%.")
             self.logger.log.info(f"Current System Efficiency (Adj-Factor): {efficiency_display}%")
         else:
             self.logger.log.info(f"Solar forecast until now is zero. Current Adj-Factor: {efficiency_display}%")

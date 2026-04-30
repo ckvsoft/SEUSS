@@ -444,15 +444,19 @@ class SEUSSWeb:
             # unreachable). The template renders "--" in that case.
             #
             # Measured Today / Rest Today: openmeteo persists its own
-            # `forecast_measured_today_wh` from solar_data.current_hour_solar_yield,
-            # which is the SUM of inverter forward counters via mqttclient
-            # get_forward_kwh(). That value has been observed to drift
-            # significantly from reality (e.g. 26500 Wh stats vs. ~21000 Wh
-            # actual yield). Use the authoritative daily_pv_wh from
-            # PowerConsumption instead, which integrates the live PV power
-            # on the GX bus and matches both the Victron VRM total and the
-            # home-page "PV today" tile. The forecast's "rest of day" is
-            # then derived as model_total - measured_today, clamped >= 0.
+            # `forecast_measured_today_wh` from
+            # solar_data.pv_measured_today_wh, which is now the
+            # authoritative GX-bus integrated PV value
+            # (PowerConsumption.daily_pv_wh) -- it used to be the sum
+            # of inverter forward counters via mqttclient
+            # get_forward_kwh(), and that drifted significantly from
+            # reality (e.g. 26500 Wh inverter sum vs. ~21000 Wh actual
+            # yield). For the stats page we still read directly from
+            # pv_by_day, both because that's the same dict the rest of
+            # this view already uses and because it doesn't depend on
+            # whether a forecast cycle has run yet today. The forecast's
+            # "rest of day" is then derived as model_total -
+            # measured_today, clamped >= 0.
             "solar_forecast": (lambda: {
                 "today_wh": sm.get_data("solar", "forecast_today_wh"),
                 "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),

@@ -619,8 +619,8 @@ class Conditions:
                 return False
 
             # ---- (a) Two-day horizon: forecast vs consumption ----
-            forecast_today = sd.total_current_day or 0.0
-            forecast_tomorrow = sd.total_tomorrow_day or 0.0
+            forecast_today = sd.forecast_today_wh or 0.0
+            forecast_tomorrow = sd.forecast_tomorrow_wh or 0.0
             total_forecast_wh = forecast_today + forecast_tomorrow
 
             # Consumption baseline. `daily_watt_average` from the stats
