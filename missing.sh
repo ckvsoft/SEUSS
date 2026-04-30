@@ -80,13 +80,13 @@ while IFS= read -r line; do
         continue
     fi
 
-    # Extract package name
+    # Extract package name (strip any version pin like pkg==1.2 or pkg>=1.0)
     package_name=$(echo "$line" | awk -F '[=~><]' '{print $1}')
 
     # Get installed version (if any)
-    installed_version=$(pip3 show "$package_name" | awk '/Version:/ {print $2}')
+    installed_version=$(pip3 show "$package_name" 2>/dev/null | awk '/^Version:/ {print $2}')
 
-    # If package is not installed, install it
+    # Case 1: package missing -> install it
     if [ -z "$installed_version" ]; then
         echo "Installing $package_name..."
         if pip3 install "$line"; then
@@ -96,18 +96,46 @@ while IFS= read -r line; do
             echo "Error: Failed to install $package_name."
             exit 1
         fi
-    else
-        # Update the package if a newer version is available
-        echo "Checking for newer version of $package_name..."
+        continue
+    fi
 
-        # Attempt to install the latest version
-        if pip3 install --upgrade "$package_name"; then
-            echo "$package_name updated successfully."
+    # Case 2: package present -> check if a newer version is even available
+    # before running the actual upgrade. `pip index versions` returns the
+    # available versions on PyPI; we compare the highest one against what's
+    # installed. This avoids the noisy "Requirement already satisfied"
+    # output for every package on every run, and -- more importantly --
+    # avoids touching the LAST_MODIFIED timestamp when nothing changed.
+    latest_version=$(pip3 index versions "$package_name" 2>/dev/null \
+        | awk -F'[()]' '/Available versions:/ {split($0, a, "Available versions: "); split(a[2], b, ","); print b[1]}' \
+        | tr -d ' ')
+
+    if [ -z "$latest_version" ]; then
+        # `pip index versions` not available on older pip, or network
+        # hiccup. Fall back to the old "always upgrade" behaviour but
+        # silently, and only mark as updated if pip actually says it
+        # installed something (return code is unfortunately 0 in both
+        # cases, so we look at the output).
+        upgrade_output=$(pip3 install --upgrade "$package_name" 2>&1)
+        if echo "$upgrade_output" | grep -q "Successfully installed"; then
+            echo "$package_name updated to a newer version."
             update_required=true
-        else
-            echo "Error: Failed to update $package_name."
-            exit 1
         fi
+        # Already-up-to-date case: stay silent
+        continue
+    fi
+
+    if [ "$installed_version" = "$latest_version" ]; then
+        # Already at the latest -- skip in silence to keep the log clean.
+        continue
+    fi
+
+    echo "Updating $package_name $installed_version -> $latest_version..."
+    if pip3 install --upgrade "$package_name"; then
+        echo "$package_name updated successfully."
+        update_required=true
+    else
+        echo "Error: Failed to update $package_name."
+        exit 1
     fi
 done < "$REQUIREMENTS_FILE"
 
