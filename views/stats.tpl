@@ -494,9 +494,6 @@
             The <b>adjustment factor</b> is the EWMA-smoothed ratio of yesterday's actual yield vs. the raw API forecast,
             clipped to [0.2, 2.0]. SEUSS multiplies every raw API number by this before showing it, so the values below
             are what the abort logic actually compares against.
-            % if sf.get('updated_at'):
-                <br>Last update: {{ sf.get('updated_at') }}.
-            % end
         </p>
         <div class="stats-grid">
             <div class="stats-tile"

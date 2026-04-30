@@ -447,7 +447,6 @@ class SEUSSWeb:
                 "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
                 "measured_today_wh": sm.get_data("solar", "forecast_measured_today_wh"),
                 "rest_today_wh": sm.get_data("solar", "forecast_rest_today_wh"),
-                "updated_at": sm.get_data("solar", "forecast_updated_at"),
                 "adjustment_factor": (sm.get_data("solar", "adjustment_factor") or [None])[0],
                 "efficiency_pct": (sm.get_data("solar", "efficiency") or [None])[0],
             },

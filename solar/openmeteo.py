@@ -309,16 +309,17 @@ class OpenMeteo:
             solar_data.update_total_tomorrow_day(round(total_tomorrow, 2))
 
             # Persist the forecast totals so the stats page can display
-            # them without holding a reference to the live SolarData
-            # instance. measured_today is the sum of inverter-reported
-            # PV up to now; rest_today_final is the adjusted forecast
-            # for the rest of today; total_tomorrow is the adjusted
-            # forecast for the whole next day.
-            self.statsmanager.set_status_data('solar', 'forecast_today_wh', round(total_today, 2), save_data=False)
-            self.statsmanager.set_status_data('solar', 'forecast_tomorrow_wh', round(total_tomorrow, 2), save_data=False)
-            self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(measured_today, 2), save_data=False)
-            self.statsmanager.set_status_data('solar', 'forecast_rest_today_wh', round(rest_today_final, 2), save_data=False)
-            self.statsmanager.set_status_data('solar', 'forecast_updated_at', datetime.now().isoformat(timespec='seconds'), save_data=False)
+            # them. We must use save_data=True (not False), because the
+            # StatsManager singleton's __init__ calls load_data() which
+            # overwrites the class-level dict from disk -- any RAM-only
+            # values would be lost the moment the stats handler creates
+            # a fresh StatsManager() instance. The forecast runs at
+            # most once per evaluation cycle, so the disk write is
+            # cheap.
+            self.statsmanager.set_status_data('solar', 'forecast_today_wh', round(total_today, 2))
+            self.statsmanager.set_status_data('solar', 'forecast_tomorrow_wh', round(total_tomorrow, 2))
+            self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(measured_today, 2))
+            self.statsmanager.set_status_data('solar', 'forecast_rest_today_wh', round(rest_today_final, 2))
 
             self.logger.log.debug(
                 f"RAW API (Total): Today {debug_api_today_raw:.0f} Wh, Tomorrow {debug_api_tomorrow_raw:.0f} Wh")
