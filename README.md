@@ -309,6 +309,10 @@ The Today tab subscribes to the same WebSocket as the home status page. While To
 
 Below the comparison table, a per-hour breakdown of today's Loss and Imbalance shows when during the day the energy balance went off — a steady sensor offset shows up in every hour, while a bug tied to a specific event (e.g. inverter standby at night) shows up only in those hours. Hours with no activity yet (loss = 0 and imbalance = 0) are hidden so the table only contains real measurements.
 
+## Solar Forecast
+
+When `use_solar_forecast_to_abort` is on (or PV panels are configured), the stats page also shows the adjusted Open-Meteo forecast that the abort logic uses. **Forecast Today** is `measured PV so far + adjusted forecast for the rest of the day`; **Forecast Tomorrow** is the adjusted forecast for the full next day; **Measured Today** and **Rest Today** are the two components that make up Forecast Today. The **Adjustment Factor** is the EWMA-smoothed ratio of recent actual yield vs. the raw API forecast (clipped to [0.2, 2.0]) — `1.00` = forecast on target, `<1.0` = consistently below forecast (dirty panels, shading), `>1.0` = better than forecast. SEUSS multiplies every raw API number by this before applying any abort logic, so the displayed values are exactly what the conditions compare against.
+
 ## History retention
 
 | Setting                       | Meaning                                                                                                                                  |

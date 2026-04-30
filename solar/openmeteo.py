@@ -308,6 +308,18 @@ class OpenMeteo:
             solar_data.update_total_current_day(round(total_today, 2))
             solar_data.update_total_tomorrow_day(round(total_tomorrow, 2))
 
+            # Persist the forecast totals so the stats page can display
+            # them without holding a reference to the live SolarData
+            # instance. measured_today is the sum of inverter-reported
+            # PV up to now; rest_today_final is the adjusted forecast
+            # for the rest of today; total_tomorrow is the adjusted
+            # forecast for the whole next day.
+            self.statsmanager.set_status_data('solar', 'forecast_today_wh', round(total_today, 2), save_data=False)
+            self.statsmanager.set_status_data('solar', 'forecast_tomorrow_wh', round(total_tomorrow, 2), save_data=False)
+            self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(measured_today, 2), save_data=False)
+            self.statsmanager.set_status_data('solar', 'forecast_rest_today_wh', round(rest_today_final, 2), save_data=False)
+            self.statsmanager.set_status_data('solar', 'forecast_updated_at', datetime.now().isoformat(timespec='seconds'), save_data=False)
+
             self.logger.log.debug(
                 f"RAW API (Total): Today {debug_api_today_raw:.0f} Wh, Tomorrow {debug_api_tomorrow_raw:.0f} Wh")
             self.logger.log.info(

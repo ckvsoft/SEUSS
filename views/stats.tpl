@@ -478,6 +478,70 @@
         </tbody>
     </table>
 
+    <h3 class="stats-section-heading">Solar Forecast</h3>
+    % sf = stats.get('solar_forecast', {}) or {}
+    % has_forecast = sf.get('today_wh') is not None
+    % if not has_forecast:
+        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+            No solar forecast recorded yet. The forecast runs as part of the
+            normal evaluation cycle when at least one PV panel is enabled in
+            the configuration and Open-Meteo is reachable.
+        </p>
+    % else:
+        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+            Adjusted Open-Meteo forecast. <b>Today</b> = measured PV so far + adjusted forecast for the rest of the day.
+            <b>Tomorrow</b> = adjusted forecast for the full next day.
+            The <b>adjustment factor</b> is the EWMA-smoothed ratio of yesterday's actual yield vs. the raw API forecast,
+            clipped to [0.2, 2.0]. SEUSS multiplies every raw API number by this before showing it, so the values below
+            are what the abort logic actually compares against.
+            % if sf.get('updated_at'):
+                <br>Last update: {{ sf.get('updated_at') }}.
+            % end
+        </p>
+        <div class="stats-grid">
+            <div class="stats-tile"
+                 title="Total expected PV yield for today: measured-so-far ({{ '{:.0f}'.format(sf.get('measured_today_wh') or 0) }} Wh) plus adjusted forecast for the rest of the day ({{ '{:.0f}'.format(sf.get('rest_today_wh') or 0) }} Wh).">
+                <div class="label">Forecast Today</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('today_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Adjusted forecast for tomorrow.">
+                <div class="label">Forecast Tomorrow</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('tomorrow_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Measured PV yield since 00:00 across all inverters.">
+                <div class="label">Measured Today</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('measured_today_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Adjusted forecast for the rest of today (after now).">
+                <div class="label">Rest Today</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('rest_today_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="System-efficiency multiplier learned from history. 1.00 = forecast is right on target; below 1.0 = real yield consistently below forecast (e.g. dirty panels, partial shading); above 1.0 = better than forecast.">
+                <div class="label">Adjustment Factor</div>
+                <div class="value">
+                    % adj = sf.get('adjustment_factor')
+                    <span>{{ "--" if adj is None else "{:.2f}".format(adj) }}</span>
+                </div>
+            </div>
+        </div>
+    % end
+
     <h3 class="stats-section-heading">Today's Hourly Energy Balance</h3>
     <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
         Per-hour breakdown of today's energy balance. <b>Loss</b> is non-negative

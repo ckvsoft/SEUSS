@@ -437,6 +437,20 @@ class SEUSSWeb:
             "soc_target_skip_total": int(soc_target_skip_total),
             "intraday_svg": intraday_svg,
             "history_svg": history_svg,
+            # Solar forecast snapshot, persisted by openmeteo.py at the
+            # end of each successful forecast run. None when the
+            # forecast hasn't run yet (use_solar_forecast_to_abort
+            # disabled, no PV panels configured, or open-meteo
+            # unreachable). The template renders "--" in that case.
+            "solar_forecast": {
+                "today_wh": sm.get_data("solar", "forecast_today_wh"),
+                "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
+                "measured_today_wh": sm.get_data("solar", "forecast_measured_today_wh"),
+                "rest_today_wh": sm.get_data("solar", "forecast_rest_today_wh"),
+                "updated_at": sm.get_data("solar", "forecast_updated_at"),
+                "adjustment_factor": (sm.get_data("solar", "adjustment_factor") or [None])[0],
+                "efficiency_pct": (sm.get_data("solar", "efficiency") or [None])[0],
+            },
             # Per-hour energy balance for today: list of 24 dicts with
             # hour, loss_wh, imbalance_wh. Hour slots without data show
             # 0 so the table always has 24 rows. Lets the user spot
