@@ -442,14 +442,34 @@ class SEUSSWeb:
             # forecast hasn't run yet (use_solar_forecast_to_abort
             # disabled, no PV panels configured, or open-meteo
             # unreachable). The template renders "--" in that case.
-            "solar_forecast": {
+            #
+            # Measured Today / Rest Today: openmeteo persists its own
+            # `forecast_measured_today_wh` from solar_data.current_hour_solar_yield,
+            # which is the SUM of inverter forward counters via mqttclient
+            # get_forward_kwh(). That value has been observed to drift
+            # significantly from reality (e.g. 26500 Wh stats vs. ~21000 Wh
+            # actual yield). Use the authoritative daily_pv_wh from
+            # PowerConsumption instead, which integrates the live PV power
+            # on the GX bus and matches both the Victron VRM total and the
+            # home-page "PV today" tile. The forecast's "rest of day" is
+            # then derived as model_total - measured_today, clamped >= 0.
+            "solar_forecast": (lambda: {
                 "today_wh": sm.get_data("solar", "forecast_today_wh"),
                 "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
-                "measured_today_wh": sm.get_data("solar", "forecast_measured_today_wh"),
-                "rest_today_wh": sm.get_data("solar", "forecast_rest_today_wh"),
+                # Authoritative measured-today: integrated PV power on
+                # the GX bus, the same number shown on the home page.
+                "measured_today_wh": pv_by_day.get(today_iso, 0) or 0,
+                # Rest of today = model total - measured so far,
+                # clamped to >= 0 (in case the day already exceeded
+                # the forecast).
+                "rest_today_wh": max(
+                    0,
+                    (sm.get_data("solar", "forecast_today_wh") or 0)
+                    - (pv_by_day.get(today_iso, 0) or 0),
+                ),
                 "adjustment_factor": (sm.get_data("solar", "adjustment_factor") or [None])[0],
                 "efficiency_pct": (sm.get_data("solar", "efficiency") or [None])[0],
-            },
+            })(),
             # Per-hour energy balance for today: list of 24 dicts with
             # hour, loss_wh, imbalance_wh. Hour slots without data show
             # 0 so the table always has 24 rows. Lets the user spot
