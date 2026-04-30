@@ -205,8 +205,7 @@ class SEUSSWeb:
         chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
-                        version=version.__version__, root=self.view_path,
-                        web_socket_url=getattr(self.config, "web_socket_url", "") or "")
+                        version=version.__version__, root=self.view_path)
 
     def logview(self):
         reader = LogReader()
@@ -456,8 +455,7 @@ class SEUSSWeb:
         }
 
         return template('stats', stats=stats_data,
-                        version=version.__version__, root=self.view_path,
-                        web_socket_url=getattr(self.config, "web_socket_url", "") or "")
+                        version=version.__version__, root=self.view_path)
 
     # ------------------------------------------------------------------
     # SVG chart helpers for the stats page. Server-side rendering keeps

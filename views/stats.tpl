@@ -650,16 +650,21 @@
             // are not in the WS payload (they're computed server-side
             // from per-day history) so they remain at the server-rendered
             // value until the page is reloaded.
-            // Server may supply a fully-qualified WebSocket URL via
-            // the `web_socket_url` config option (e.g.
-            // "wss://he60.example.com/ws" for reverse-proxy setups).
-            // When empty, fall back to the legacy same-host port-8765
-            // direct connection.
-            const configuredWsUrl = "{{ web_socket_url }}";
+            // Two-candidate auto-detect for the WS URL:
+            //   slot 0: same-host:same-port/ws  -- works behind a reverse
+            //           proxy that routes /ws by path
+            //   slot 1: same-host:8765           -- direct LAN connection
+            // The first candidate that connects wins and is locked in.
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsHost = window.location.hostname;
-            const wsPort = 8765;
-            const wsUrl = configuredWsUrl || (wsProtocol + '//' + wsHost + ':' + wsPort);
+            const wsPagePort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+            const wsCandidates = [
+                wsProtocol + '//' + wsHost + ':' + wsPagePort + '/ws',
+                wsProtocol + '//' + wsHost + ':8765',
+            ];
+            let wsCandidateIndex = 0;
+            let wsUrl = wsCandidates[0];
+            let wsLockedIn = false;
 
             let ws;
             let reconnectAttempts = 0;
@@ -723,8 +728,16 @@
 
             function connectWS() {
                 ws = new WebSocket(wsUrl);
+                console.log('Trying WebSocket: ' + wsUrl);
+                let probeTimer = setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.CONNECTING) {
+                        try { ws.close(); } catch (e) { /* noop */ }
+                    }
+                }, 3000);
                 ws.onopen = function() {
+                    clearTimeout(probeTimer);
                     reconnectAttempts = 0;
+                    wsLockedIn = true;
                 };
                 ws.onmessage = function(event) {
                     try {
@@ -735,6 +748,11 @@
                     }
                 };
                 ws.onclose = function() {
+                    clearTimeout(probeTimer);
+                    if (!wsLockedIn) {
+                        wsCandidateIndex = (wsCandidateIndex + 1) % wsCandidates.length;
+                        wsUrl = wsCandidates[wsCandidateIndex];
+                    }
                     if (reconnectAttempts < maxReconnectAttempts) {
                         reconnectAttempts++;
                         setTimeout(connectWS, reconnectInterval);

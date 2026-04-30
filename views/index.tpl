@@ -73,16 +73,32 @@
         let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
         let reconnectAttempts = 0; // Count of reconnection attempts
         const maxReconnectAttempts = 10; // Optional: Maximum reconnection attempts (or use infinite retries)
-        // Server may supply a fully-qualified WebSocket URL via the
-        // `web_socket_url` config option (e.g. "wss://he60.example.com/ws"
-        // when the install sits behind a reverse proxy that terminates
-        // TLS and routes by path). When empty, fall back to the legacy
-        // direct-port behaviour: same hostname as the page, port 8765.
-        const configuredWsUrl = "{{ web_socket_url }}";
+        // Build a list of WebSocket URL candidates and try them in order.
+        // Slot 0: same-host same-port path /ws -- the right answer when
+        //   SEUSS sits behind a reverse proxy that terminates TLS on a
+        //   non-default port (e.g. https://example.com:50000/) and routes
+        //   /ws by path. The browser only ever sees the proxy's URL, so
+        //   a path-based route is the cleanest way to keep WS working.
+        // Slot 1: legacy direct-port (same hostname, port 8765) -- the
+        //   right answer for plain LAN installs where the page is served
+        //   directly from SEUSS on port 5000 and 8765 is reachable too.
+        // The first candidate that connects within ~2.5s wins; otherwise
+        // we move on. After a successful connection that later drops,
+        // reconnect uses the same winning URL until 10 failures, then
+        // restarts the scan.
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname; // Get only the hostname, not the port
-        const port = 8765; // Desired port
-        const wsUrl = configuredWsUrl || `${protocol}//${host}:${port}`;
+        const host = window.location.hostname;
+        const pagePort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        const wsCandidates = [
+            `${protocol}//${host}:${pagePort}/ws`,
+            `${protocol}//${host}:8765`,
+        ];
+        let wsCandidateIndex = 0;
+        let wsUrl = wsCandidates[0];
+        // Once we successfully open a WS to a candidate, lock onto it.
+        // Reconnects after a working session retry the same URL --
+        // candidate-cycling only matters during initial discovery.
+        let wsLockedIn = false;
         let lastUpdatedHour = -1;  // Flag für die letzte aktualisierte Stunde
         let lastUpdatedMinute = -1;  // Flag für die letzte aktualisierte Minute
 
@@ -109,12 +125,28 @@
         }, 1000); // Jede Sekunde laufen lassen
 
         function connectWebSocket() {
+            // If we've burned through all candidates without ever
+            // reaching ws.onopen, cycle back and start over rather
+            // than retrying the same dead URL forever.
             ws = new WebSocket(wsUrl);
-            console.log('Connected to ' + wsUrl);
+            console.log('Trying WebSocket: ' + wsUrl);
+
+            // Failsafe: a dead URL on the first slot may not raise
+            // onerror/onclose for a long time on some browsers (ERR_
+            // CONNECTION_REFUSED takes ~30s). Time out after 3s and
+            // hop to the next candidate ourselves.
+            let probeTimer = setTimeout(() => {
+                if (ws && ws.readyState === WebSocket.CONNECTING) {
+                    console.log('WebSocket probe timeout for ' + wsUrl);
+                    try { ws.close(); } catch (e) { /* noop */ }
+                }
+            }, 3000);
 
             ws.onopen = function () {
-                console.log('Connected to the WebSocket server');
-                reconnectAttempts = 0; // Reset reconnection attempts after successful connection
+                clearTimeout(probeTimer);
+                console.log('Connected to the WebSocket server at ' + wsUrl);
+                reconnectAttempts = 0;
+                wsLockedIn = true;  // remember the working URL across reconnects
             };
 
             ws.onmessage = function (event) {
@@ -167,11 +199,21 @@
             };
 
             ws.onerror = function (error) {
-                console.error('WebSocket error:', error);
+                console.error('WebSocket error on ' + wsUrl + ':', error);
             };
 
             ws.onclose = function () {
-                console.log('Connection to server closed');
+                clearTimeout(probeTimer);
+                console.log('Connection to ' + wsUrl + ' closed');
+                // If we've never had a successful connection on this
+                // URL, advance to the next candidate. Once a candidate
+                // worked (wsLockedIn=true), stick with it -- a drop
+                // after a successful session is a transient network
+                // issue, not a config problem.
+                if (!wsLockedIn) {
+                    wsCandidateIndex = (wsCandidateIndex + 1) % wsCandidates.length;
+                    wsUrl = wsCandidates[wsCandidateIndex];
+                }
                 attemptReconnect();
             };
         }
