@@ -495,7 +495,7 @@
             clipped to [0.2, 2.0]. SEUSS multiplies every raw API number by this before showing it, so the values below
             are what the abort logic actually compares against.
         </p>
-        <div class="stats-grid">
+        <div class="stats-tile-grid">
             <div class="stats-tile"
                  title="Total expected PV yield for today: measured-so-far ({{ '{:.0f}'.format(sf.get('measured_today_wh') or 0) }} Wh) plus adjusted forecast for the rest of the day ({{ '{:.0f}'.format(sf.get('rest_today_wh') or 0) }} Wh).">
                 <div class="label">Forecast Today</div>
