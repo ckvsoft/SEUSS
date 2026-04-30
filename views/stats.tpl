@@ -650,10 +650,16 @@
             // are not in the WS payload (they're computed server-side
             // from per-day history) so they remain at the server-rendered
             // value until the page is reloaded.
+            // Server may supply a fully-qualified WebSocket URL via
+            // the `web_socket_url` config option (e.g.
+            // "wss://he60.example.com/ws" for reverse-proxy setups).
+            // When empty, fall back to the legacy same-host port-8765
+            // direct connection.
+            const configuredWsUrl = "{{ web_socket_url }}";
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsHost = window.location.hostname;
             const wsPort = 8765;
-            const wsUrl = wsProtocol + '//' + wsHost + ':' + wsPort;
+            const wsUrl = configuredWsUrl || (wsProtocol + '//' + wsHost + ':' + wsPort);
 
             let ws;
             let reconnectAttempts = 0;

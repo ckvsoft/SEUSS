@@ -73,10 +73,16 @@
         let reconnectInterval = 5000; // Time (in ms) to wait before trying to reconnect
         let reconnectAttempts = 0; // Count of reconnection attempts
         const maxReconnectAttempts = 10; // Optional: Maximum reconnection attempts (or use infinite retries)
+        // Server may supply a fully-qualified WebSocket URL via the
+        // `web_socket_url` config option (e.g. "wss://he60.example.com/ws"
+        // when the install sits behind a reverse proxy that terminates
+        // TLS and routes by path). When empty, fall back to the legacy
+        // direct-port behaviour: same hostname as the page, port 8765.
+        const configuredWsUrl = "{{ web_socket_url }}";
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.hostname; // Get only the hostname, not the port
         const port = 8765; // Desired port
-        const wsUrl = `${protocol}//${host}:${port}`;
+        const wsUrl = configuredWsUrl || `${protocol}//${host}:${port}`;
         let lastUpdatedHour = -1;  // Flag für die letzte aktualisierte Stunde
         let lastUpdatedMinute = -1;  // Flag für die letzte aktualisierte Minute
 

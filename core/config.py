@@ -65,6 +65,7 @@ class Config(Singleton):
         "smart_discharge_priority_to_expensive_hours": False,
         "delay_grid_charging_below_active_soc_limit": False,
         "stats_history_retention_days": 400,
+        "web_socket_url": "",
         "solar_adj_ewma_alpha": 0.3,
         "solar_adj_min_theoretical_wh": 1000.0,
         "solar_adj_min_sun_hours": 4.0,
