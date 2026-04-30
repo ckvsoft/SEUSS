@@ -74,6 +74,8 @@ fi
 
 update_required=false
 
+echo "Checking Python packages against $REQUIREMENTS_FILE..."
+
 while IFS= read -r line; do
     # Ignore comments and empty lines
     if [[ "$line" =~ ^[[:space:]]*# || -z "$line" ]]; then
@@ -88,12 +90,12 @@ while IFS= read -r line; do
 
     # Case 1: package missing -> install it
     if [ -z "$installed_version" ]; then
-        echo "Installing $package_name..."
+        echo "  $package_name: not installed -> installing..."
         if pip3 install "$line"; then
-            echo "$package_name installed successfully."
+            echo "  $package_name: installed."
             update_required=true
         else
-            echo "Error: Failed to install $package_name."
+            echo "  $package_name: install FAILED."
             exit 1
         fi
         continue
@@ -105,6 +107,7 @@ while IFS= read -r line; do
     # installed. This avoids the noisy "Requirement already satisfied"
     # output for every package on every run, and -- more importantly --
     # avoids touching the LAST_MODIFIED timestamp when nothing changed.
+    printf "  %s: installed %s, checking PyPI..." "$package_name" "$installed_version"
     latest_version=$(pip3 index versions "$package_name" 2>/dev/null \
         | awk -F'[()]' '/Available versions:/ {split($0, a, "Available versions: "); split(a[2], b, ","); print b[1]}' \
         | tr -d ' ')
@@ -117,24 +120,25 @@ while IFS= read -r line; do
         # cases, so we look at the output).
         upgrade_output=$(pip3 install --upgrade "$package_name" 2>&1)
         if echo "$upgrade_output" | grep -q "Successfully installed"; then
-            echo "$package_name updated to a newer version."
+            echo " updated."
             update_required=true
+        else
+            echo " up-to-date."
         fi
-        # Already-up-to-date case: stay silent
         continue
     fi
 
     if [ "$installed_version" = "$latest_version" ]; then
-        # Already at the latest -- skip in silence to keep the log clean.
+        echo " up-to-date."
         continue
     fi
 
-    echo "Updating $package_name $installed_version -> $latest_version..."
+    echo " updating to $latest_version..."
     if pip3 install --upgrade "$package_name"; then
-        echo "$package_name updated successfully."
+        echo "  $package_name: updated."
         update_required=true
     else
-        echo "Error: Failed to update $package_name."
+        echo "  $package_name: update FAILED."
         exit 1
     fi
 done < "$REQUIREMENTS_FILE"
