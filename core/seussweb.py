@@ -1300,7 +1300,17 @@ class SEUSSWeb:
         bottle.TEMPLATE_PATH.insert(0, self.view_path)
         bottle.DEBUG = debug
         self.logger.log.info(f"start bottle host:{host}, port:{port}")
-        # serve(self.app, host=host, port=port)
+
+        # Bottle's default wsgiref-based dev server prints every HTTP
+        # request to stderr ("127.0.0.1 - - [date] GET /stats 200 ..."),
+        # which floods /tmp/seuss_error.log because service/run pipes
+        # stderr there to capture real Python tracebacks. We patch the
+        # wsgiref request handler globally to drop those access-log
+        # lines. Real error output (tracebacks, sys.stderr writes,
+        # bottle's log_error()) still goes through, so crashes are
+        # still recorded in the error log.
+        from wsgiref.simple_server import WSGIRequestHandler
+        WSGIRequestHandler.log_message = lambda *a, **kw: None
 
         self.app.run(host=host, port=port, debug=debug)
 
