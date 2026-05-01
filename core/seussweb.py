@@ -399,6 +399,21 @@ class SEUSSWeb:
         hourly_today = hourly_by_day.get(today_iso) or [0] * 24
         if not isinstance(hourly_today, list) or len(hourly_today) != 24:
             hourly_today = [0] * 24
+        # Defensive: zero out FUTURE hours in today's array. Without
+        # this, if the hourly_wh_by_day dict still has yesterday's
+        # 24-hour array under today's key (because the seed-on-rollover
+        # added in this version hadn't run yet for the day this
+        # process started in, or because save_hour() updated only one
+        # slot leaving the others stale), the intraday chart would
+        # show e.g. a "today 23:00" bar at 14:00 from leftover
+        # yesterday data. After the next clean midnight rollover this
+        # is moot, but we keep the filter so the chart is correct
+        # immediately after a deploy / restart too.
+        hourly_today = list(hourly_today)
+        from datetime import datetime as _dt
+        cur_hour = _dt.now().hour
+        for h in range(cur_hour + 1, 24):
+            hourly_today[h] = 0
         hourly_yesterday = hourly_by_day.get(yesterday_iso) or [0] * 24
         if not isinstance(hourly_yesterday, list) or len(hourly_yesterday) != 24:
             hourly_yesterday = [0] * 24
@@ -418,6 +433,53 @@ class SEUSSWeb:
         # Chart.js (no internet at the VenusOS host).
         intraday_svg = self._render_intraday_svg(hourly_today, hourly_yesterday)
         history_svg = self._render_history_svg(history_days)
+        # Solar forecast vs. actual chart -- one line for the morning
+        # forecast openmeteo captured for each past day, one line for
+        # the actual PV yield on that day. Lets the user see how well
+        # the adjustment factor is tracking reality. We only feed
+        # COMPLETED days (today excluded), so partial-day comparisons
+        # don't muddy the picture.
+        solar_forecast_by_day = sm.get_data(
+            "solar", "forecast_pv_wh_by_day"
+        ) or {}
+        if not isinstance(solar_forecast_by_day, dict):
+            solar_forecast_by_day = {}
+        solar_history_svg = self._render_solar_history_svg(
+            history_days, solar_forecast_by_day, today_iso
+        )
+
+        # Today's solar chart -- two cumulative curves over the day:
+        # the morning forecast (frozen at openmeteo's first run today)
+        # and the actual PV yield as it accumulates. Renders nothing
+        # useful before sunrise / first forecast run, but starts
+        # showing daylight as soon as either side has data.
+        forecast_hourly_by_day = sm.get_data(
+            "solar", "forecast_hourly_wh_by_day"
+        ) or {}
+        if not isinstance(forecast_hourly_by_day, dict):
+            forecast_hourly_by_day = {}
+        forecast_hourly_today = forecast_hourly_by_day.get(today_iso) or [0] * 24
+        if not isinstance(forecast_hourly_today, list) or len(forecast_hourly_today) != 24:
+            forecast_hourly_today = [0] * 24
+
+        pv_hour_today_dict = sm.get_data(
+            "powerconsumption", "pv_wh_by_hour_today"
+        ) or {}
+        if not isinstance(pv_hour_today_dict, dict):
+            pv_hour_today_dict = {}
+        # Convert {"0": wh, "1": wh, ...} -> [24]
+        actual_hourly_today = [0.0] * 24
+        for hkey, v in pv_hour_today_dict.items():
+            try:
+                idx = int(hkey)
+                if 0 <= idx < 24 and isinstance(v, (int, float)):
+                    actual_hourly_today[idx] = float(v)
+            except (ValueError, TypeError):
+                pass
+
+        today_solar_svg = self._render_today_solar_svg(
+            forecast_hourly_today, actual_hourly_today
+        )
 
         stats_data = {
             "today": _row_for(today_iso),
@@ -437,40 +499,45 @@ class SEUSSWeb:
             "soc_target_skip_total": int(soc_target_skip_total),
             "intraday_svg": intraday_svg,
             "history_svg": history_svg,
-            # Solar forecast snapshot, persisted by openmeteo.py at the
-            # end of each successful forecast run. None when the
-            # forecast hasn't run yet (use_solar_forecast_to_abort
-            # disabled, no PV panels configured, or open-meteo
-            # unreachable). The template renders "--" in that case.
+            "solar_history_svg": solar_history_svg,
+            "today_solar_svg": today_solar_svg,
+            # Solar forecast snapshot for the tile section. Two
+            # values that don't pretend to be the same thing:
             #
-            # Measured Today / Rest Today: openmeteo persists its own
-            # `forecast_measured_today_wh` from
-            # solar_data.pv_measured_today_wh, which is now the
-            # authoritative GX-bus integrated PV value
-            # (PowerConsumption.daily_pv_wh) -- it used to be the sum
-            # of inverter forward counters via mqttclient
-            # get_forward_kwh(), and that drifted significantly from
-            # reality (e.g. 26500 Wh inverter sum vs. ~21000 Wh actual
-            # yield). For the stats page we still read directly from
-            # pv_by_day, both because that's the same dict the rest of
-            # this view already uses and because it doesn't depend on
-            # whether a forecast cycle has run yet today. The forecast's
-            # "rest of day" is then derived as model_total -
-            # measured_today, clamped >= 0.
+            #   today_wh         = the morning forecast for today,
+            #                      frozen at the first openmeteo run
+            #                      of the day. Static for the rest
+            #                      of the day -- this is "what we
+            #                      expected this morning".
+            #   measured_today_wh= cumulative PV yield since 00:00
+            #                      (PowerConsumption.daily_pv_wh,
+            #                      GX-bus integrated). Grows over
+            #                      the day -- this is "what we
+            #                      actually got so far".
+            #
+            # Previously the tile also showed a "Rest Today" derived
+            # from `forecast_today_wh - measured_today_wh`, which
+            # itself was the HYBRID `pv_measured_today_wh +
+            # rest_today_final` rebuilt by openmeteo on every run.
+            # That made "Forecast Today" converge to the actual
+            # value over the day (rest_today_final shrinks as the
+            # day passes), which is mathematically tidy but
+            # destroys the tile's information value -- by 23:59 it
+            # always equals "Measured Today" exactly, no matter how
+            # off the morning forecast was. The frozen morning
+            # forecast preserves that comparison.
+            #
+            # The frozen value lives in statsmanager('solar',
+            # 'forecast_pv_wh_by_day') under today's ISO date,
+            # written write-once by openmeteo on the first run of
+            # the day. None until the first run completes.
             "solar_forecast": (lambda: {
-                "today_wh": sm.get_data("solar", "forecast_today_wh"),
-                "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
-                # Authoritative measured-today: integrated PV power on
-                # the GX bus, the same number shown on the home page.
-                "measured_today_wh": pv_by_day.get(today_iso, 0) or 0,
-                # Rest of today = model total - measured so far,
-                # clamped to >= 0 (in case the day already exceeded
-                # the forecast).
-                "rest_today_wh": max(
-                    0,
-                    (sm.get_data("solar", "forecast_today_wh") or 0)
-                    - (pv_by_day.get(today_iso, 0) or 0),
+                "today_wh": (
+                    (sm.get_data("solar", "forecast_pv_wh_by_day") or {})
+                    .get(today_iso)
                 ),
+                "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
+                "measured_today_wh": pv_by_day.get(today_iso, 0) or 0,
                 "adjustment_factor": (sm.get_data("solar", "adjustment_factor") or [None])[0],
                 "efficiency_pct": (sm.get_data("solar", "efficiency") or [None])[0],
             })(),
@@ -499,16 +566,31 @@ class SEUSSWeb:
     # the page working in offline LAN setups (typical VenusOS).
     # ------------------------------------------------------------------
 
+    # Shared chart width so the Intraday, History and Solar History
+    # charts all line up vertically on the stats page. Internal layout
+    # within each chart adapts to fit this width.
+    STATS_CHART_W = 920
+
     @staticmethod
     def _render_intraday_svg(today_arr, yesterday_arr):
         """
         24-hour bar chart, today (blue) overlaid on yesterday (grey).
         Layout matches the price chart in style: SVG, border, fixed
-        width per hour.
+        width per hour. Each hour's pair of bars is wrapped in a <g>
+        with a <title> child so the user can hover for the exact
+        Today/Yesterday Wh numbers -- otherwise yesterday's bar gets
+        completely hidden when today's value is larger (today is fully
+        opaque blue and is drawn on top of the same x-position as
+        yesterday's grey bar).
         """
-        bar_w = 30           # pixels per hour
+        # Width is allocated to the chart area uniformly across the
+        # 24 hours; bar_w and gap_w adapt so the total matches
+        # STATS_CHART_W. The +50 left/right margin is for the y-axis
+        # tick labels (40px) and a small right padding (10px).
+        chart_w = SEUSSWeb.STATS_CHART_W - 50
+        bar_w_total = chart_w / 24.0
         gap_w = 8
-        chart_w = 24 * (bar_w + gap_w)
+        bar_w = max(8.0, bar_w_total - gap_w)
         chart_h = 200
         baseline_y = chart_h + 20  # leaves room for x-axis labels
         svg_h = baseline_y + 25
@@ -517,7 +599,7 @@ class SEUSSWeb:
         scale = chart_h / max_v if max_v > 0 else 1.0
 
         parts = [
-            f'<svg width="{chart_w + 50}" height="{svg_h}" '
+            f'<svg width="{SEUSSWeb.STATS_CHART_W}" height="{svg_h}" '
             f'xmlns="http://www.w3.org/2000/svg" '
             f'style="border:1px solid #ccc; background:#fff;">',
             # Y-axis grid: 4 horizontal reference lines + scale labels.
@@ -536,17 +618,29 @@ class SEUSSWeb:
                 )
 
         # Bars: yesterday (grey) drawn first, today (blue) drawn second
-        # so today wins overlap. Each pair shares its hour slot but is
-        # offset by a few pixels for readability.
+        # so today wins overlap. Each pair shares its hour slot. We
+        # wrap the pair in a <g> with a <title> so the user can hover
+        # to see the actual Wh values -- without this, yesterday is
+        # invisible whenever today >= yesterday.
         for h in range(24):
-            x_base = 40 + h * (bar_w + gap_w)
+            x_base = 40 + h * bar_w_total
             y_h = today_arr[h] or 0
             y_h_y = yesterday_arr[h] or 0
+
+            tooltip = (
+                f"{h:02d}:00  Today: {y_h:.0f} Wh  Yesterday: {y_h_y:.0f} Wh"
+            )
+            tooltip = (tooltip
+                       .replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+
+            group_parts = [f'<g><title>{tooltip}</title>']
 
             # Yesterday: full-width grey, behind
             if y_h_y > 0:
                 bar_h = y_h_y * scale
-                parts.append(
+                group_parts.append(
                     f'<rect x="{x_base}" y="{baseline_y - bar_h}" '
                     f'width="{bar_w}" height="{bar_h}" '
                     f'fill="#bbb" opacity="0.55"/>'
@@ -554,12 +648,26 @@ class SEUSSWeb:
             # Today: same width, blue, in front
             if y_h > 0:
                 bar_h = y_h * scale
-                parts.append(
+                group_parts.append(
                     f'<rect x="{x_base}" y="{baseline_y - bar_h}" '
                     f'width="{bar_w}" height="{bar_h}" '
                     f'fill="#4285f4"/>'
                 )
-            # Hour label below the bar
+            # Invisible hover-target rectangle so the tooltip fires
+            # over the entire hour slot, not just where bars exist.
+            # Pointer-events:all + fill:transparent gives us a hit
+            # target that doesn't paint anything visible.
+            group_parts.append(
+                f'<rect x="{x_base}" y="0" '
+                f'width="{bar_w}" height="{baseline_y}" '
+                f'fill="transparent" pointer-events="all"/>'
+            )
+            group_parts.append('</g>')
+            parts.extend(group_parts)
+
+            # Hour label below the bar (outside the <g> so the tooltip
+            # of one hour doesn't trigger when hovering the label of
+            # the neighbour).
             parts.append(
                 f'<text x="{x_base + bar_w / 2}" y="{baseline_y + 14}" '
                 f'font-size="10" text-anchor="middle" fill="#444">'
@@ -595,7 +703,7 @@ class SEUSSWeb:
         if not history_days:
             return '<p style="color:#888;">No history data.</p>'
 
-        chart_w = 900
+        chart_w = SEUSSWeb.STATS_CHART_W
         chart_h = 220
         margin_left = 50
         margin_right = 20
@@ -656,6 +764,34 @@ class SEUSSWeb:
         parts.append(_polyline(grid, "#d04040"))          # red
         parts.append(_polyline(pv, "#2a8a2a"))            # green
 
+        # Per-day hover targets. Each day gets a thin vertical strip
+        # spanning the full plot height with a <title> showing all
+        # three numbers. Without these, hovering the lines themselves
+        # only fires on the exact pixels the polyline passes through,
+        # which is fiddly. The strip is transparent, full-height, and
+        # only catches the pointer when actually over it.
+        strip_w = max(2.0, x_step)
+        for i, d in enumerate(history_days):
+            x_center = margin_left + i * x_step
+            x_strip = x_center - strip_w / 2.0
+            tooltip = (
+                f'{d["iso"]}  '
+                f'Consumption: {consumption[i]:.0f} Wh  '
+                f'Grid: {grid[i]:.0f} Wh  '
+                f'PV: {pv[i]:.0f} Wh'
+            )
+            tooltip = (tooltip
+                       .replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+            parts.append(
+                f'<g><title>{tooltip}</title>'
+                f'<rect x="{x_strip}" y="{margin_top}" '
+                f'width="{strip_w}" height="{plot_h}" '
+                f'fill="transparent" pointer-events="all"/>'
+                f'</g>'
+            )
+
         # Legend top right
         lx = chart_w - margin_right - 220
         ly = margin_top + 5
@@ -670,6 +806,394 @@ class SEUSSWeb:
         # Y-axis title
         parts.append(
             f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh / day</text>'
+        )
+        parts.append('</svg>')
+        return ''.join(parts)
+
+    @staticmethod
+    def _render_solar_history_svg(history_days, forecast_by_day, today_iso):
+        """
+        Forecast vs. actual PV yield over the retention window. Two
+        lines plotted on the same axes:
+
+        * solid green: actual PV yield per day (`pv_wh_by_day`,
+          captured at midnight rollover by powerconsumption.save_day)
+        * dashed orange: morning forecast for that day
+          (`forecast_pv_wh_by_day`, captured by openmeteo on the
+          first forecast run of each day)
+
+        Today IS included even though its actual is partial-day, so a
+        fresh deployment shows life immediately on the chart instead
+        of a "No history yet" placeholder for the whole first day.
+        The rightmost point will appear "below forecast" until the
+        day completes -- the per-day hover tooltip carries the exact
+        numbers so it's easy to confirm.
+
+        Each day gets a vertical hover strip with a <title> showing
+        forecast + actual + delta, matching the style of the other
+        history chart on this page.
+        """
+        # Build the aligned series by ISO date. We only plot days
+        # where BOTH a forecast and an actual exist -- a day with
+        # actual-but-no-forecast (e.g. forecasts disabled at the
+        # time) would draw a phantom 0 on the dashed line, and a
+        # day with forecast-but-no-actual would do the inverse.
+        # Pulling from history_days preserves the same ordering
+        # and date filtering as the main 30-day chart.
+        #
+        # Today IS included even though its actual is partial-day --
+        # this trades a temporary visual "below forecast" on the
+        # rightmost point for immediate feedback that the data
+        # pipeline is alive (otherwise a fresh deployment would just
+        # show "No history yet" for the whole first day, which is
+        # disorienting). The hover tooltip carries the precise number
+        # so anyone curious can confirm the day-in-progress effect.
+        rows = []
+        for d in history_days:
+            iso = d.get("iso")
+            if not iso:
+                continue
+            forecast_v = forecast_by_day.get(iso)
+            actual_v = d.get("pv_wh")
+            if forecast_v is None or actual_v is None:
+                continue
+            rows.append((iso, float(forecast_v), float(actual_v)))
+
+        if not rows:
+            return (
+                '<p style="color:#888;">'
+                'No solar forecast history yet. The chart will populate as '
+                "openmeteo's morning forecast accumulates day by day."
+                '</p>'
+            )
+
+        chart_w = SEUSSWeb.STATS_CHART_W
+        chart_h = 220
+        margin_left = 50
+        margin_right = 20
+        margin_top = 20
+        margin_bottom = 40
+        plot_w = chart_w - margin_left - margin_right
+        plot_h = chart_h - margin_top - margin_bottom
+
+        forecast_vals = [r[1] for r in rows]
+        actual_vals = [r[2] for r in rows]
+        max_v = max(max(forecast_vals + actual_vals), 1)
+
+        n = len(rows)
+        x_step = plot_w / max(n - 1, 1)
+
+        def _polyline(values, color, dash=None):
+            """
+            Render polyline AND circle markers at each data point.
+            Polyline alone is invisible when there is only ONE
+            datapoint (which is the normal case on day 1 of running
+            this feature -- the user sees "no history" even though
+            the data is there). Markers anchor the eye for the few-
+            day case as well.
+            """
+            pts = []
+            circles = []
+            for i, v in enumerate(values):
+                x = margin_left + i * x_step
+                y = margin_top + plot_h - (v / max_v) * plot_h
+                pts.append(f"{x:.1f},{y:.1f}")
+                circles.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" '
+                    f'fill="{color}"/>'
+                )
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ''
+            polyline = (
+                f'<polyline points="{" ".join(pts)}" fill="none" '
+                f'stroke="{color}" stroke-width="2"{dash_attr}/>'
+            )
+            return polyline + "".join(circles)
+
+        parts = [
+            f'<svg width="{chart_w}" height="{chart_h}" '
+            f'xmlns="http://www.w3.org/2000/svg" '
+            f'style="border:1px solid #ccc; background:#fff;">',
+        ]
+        # Y-axis grid + labels (5 levels)
+        for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            y = margin_top + plot_h - frac * plot_h
+            parts.append(
+                f'<line x1="{margin_left}" y1="{y}" '
+                f'x2="{chart_w - margin_right}" y2="{y}" '
+                f'stroke="#eee" stroke-width="1"/>'
+            )
+            label_v = int(frac * max_v)
+            parts.append(
+                f'<text x="{margin_left - 5}" y="{y + 4}" font-size="10" '
+                f'text-anchor="end" fill="#666">{label_v}</text>'
+            )
+        # X-axis labels: every 5th day (MM-DD)
+        for i, (iso, _f, _a) in enumerate(rows):
+            if i % 5 == 0 or i == n - 1:
+                x = margin_left + i * x_step
+                parts.append(
+                    f'<text x="{x}" y="{chart_h - margin_bottom + 14}" '
+                    f'font-size="10" text-anchor="middle" fill="#444">'
+                    f'{iso[5:]}</text>'  # MM-DD
+                )
+
+        # Forecast: dashed orange.
+        parts.append(_polyline(forecast_vals, "#e09020", dash="6,3"))
+        # Actual: solid green (matching the PV colour used elsewhere).
+        parts.append(_polyline(actual_vals, "#2a8a2a"))
+
+        # Per-day hover strips with forecast / actual / delta tooltip.
+        strip_w = max(2.0, x_step)
+        for i, (iso, f_v, a_v) in enumerate(rows):
+            x_center = margin_left + i * x_step
+            x_strip = x_center - strip_w / 2.0
+            delta = a_v - f_v
+            sign = "+" if delta >= 0 else ""
+            tooltip = (
+                f'{iso}  '
+                f'Forecast: {f_v:.0f} Wh  '
+                f'Actual: {a_v:.0f} Wh  '
+                f'Delta: {sign}{delta:.0f} Wh'
+            )
+            tooltip = (tooltip
+                       .replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+            parts.append(
+                f'<g><title>{tooltip}</title>'
+                f'<rect x="{x_strip}" y="{margin_top}" '
+                f'width="{strip_w}" height="{plot_h}" '
+                f'fill="transparent" pointer-events="all"/>'
+                f'</g>'
+            )
+
+        # Legend top right
+        lx = chart_w - margin_right - 220
+        ly = margin_top + 5
+        parts.append(
+            f'<rect x="{lx}" y="{ly}" width="14" height="3" fill="#e09020"/>'
+            f'<text x="{lx + 18}" y="{ly + 5}" font-size="10" fill="#444">Forecast (morning)</text>'
+            f'<rect x="{lx + 130}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
+            f'<text x="{lx + 148}" y="{ly + 5}" font-size="10" fill="#444">Actual</text>'
+        )
+        # Y-axis title
+        parts.append(
+            f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh / day</text>'
+        )
+        parts.append('</svg>')
+        return ''.join(parts)
+
+    @staticmethod
+    def _render_today_solar_svg(forecast_hourly, actual_hourly):
+        """
+        Today's PV: cumulative forecast curve vs cumulative actual
+        curve over the 24 hours of the current day.
+
+        Both inputs are 24-slot lists of per-hour Wh:
+
+        * forecast_hourly: openmeteo's morning forecast for today,
+          one bucket per hour-of-day. Frozen at the first forecast
+          run of the day so the line stays put.
+        * actual_hourly: PowerConsumption's pv_wh_by_hour_today,
+          one bucket per hour-of-day. Grows as the day progresses;
+          hours in the future are 0.
+
+        We plot the CUMULATIVE sums rather than the per-hour values:
+        two curves that climb from 0 at midnight up to the day's
+        total at 23:00. This makes the "are we ahead of plan or
+        behind?" question instantly readable as "is the green
+        actual line above or below the orange forecast line?", and
+        the right-end gap is the day's total miss in Wh.
+
+        The actual curve only extends to the current hour (later
+        hours haven't happened yet), while the forecast curve goes
+        all the way through hour 23 -- the user can see both
+        "where we should have been by now" and "where we'll end up
+        if the morning forecast holds".
+
+        Hover strip per hour shows the cumulative numbers + delta
+        for that hour, matching the other charts on this page.
+        """
+        chart_w = SEUSSWeb.STATS_CHART_W
+        chart_h = 220
+        margin_left = 50
+        margin_right = 20
+        margin_top = 20
+        margin_bottom = 40
+        plot_w = chart_w - margin_left - margin_right
+        plot_h = chart_h - margin_top - margin_bottom
+
+        # Empty-state guard: if there's literally nothing on either
+        # side (no forecast yet AND no actual yet, e.g. middle of the
+        # night before the first forecast run), don't draw an empty
+        # frame -- match the other empty states.
+        if not any(forecast_hourly) and not any(actual_hourly):
+            return (
+                '<p style="color:#888;">'
+                "Today's solar chart will populate after the first openmeteo "
+                "forecast run of the day and the first PV measurements."
+                '</p>'
+            )
+
+        # Cumulative curves. For the actual curve we stop at the
+        # current hour -- past 23:00 hasn't happened yet so a
+        # cumulative value there would just be a flat line at the
+        # current total, misleadingly suggesting "yield finished".
+        cum_forecast = []
+        running = 0.0
+        for v in forecast_hourly:
+            running += float(v or 0)
+            cum_forecast.append(running)
+
+        from datetime import datetime as _dt
+        cur_hour = _dt.now().hour
+        cum_actual = []
+        running = 0.0
+        for h in range(24):
+            running += float(actual_hourly[h] or 0)
+            # Render the actual curve up to and including the
+            # current hour; future hours get None which we handle
+            # below (we just stop the polyline at cur_hour).
+            cum_actual.append(running if h <= cur_hour else None)
+
+        max_v = max(
+            max(cum_forecast) if cum_forecast else 1,
+            max((v for v in cum_actual if v is not None), default=1),
+            1,
+        )
+
+        # 25 sample points for 24 hours -- start at midnight (h=0,
+        # value=0) so the cumulative curve actually starts on the
+        # baseline and the first hour's contribution is a visible
+        # rise. Without this, hour 0 starts already above zero and
+        # the curve looks like it begins mid-day. We do this by
+        # prepending a zero to both series and giving them x-step
+        # plot_w / 24.
+        n_x = 25
+        x_step = plot_w / (n_x - 1)
+
+        def _cumulative_polyline(cum_values, color, dash=None,
+                                 stop_at=None):
+            """
+            cum_values: 24 values (one per finished hour). We
+            prepend a leading zero so the line starts at the
+            baseline at midnight.
+            stop_at: integer hour index (inclusive) past which to
+            stop drawing -- used to truncate the actual curve at
+            the current hour. None = draw all 24 hours.
+
+            Returns the polyline plus a circle marker at the
+            line's last point. The marker matters most for the
+            actual curve early in the day: at e.g. 03:00 the line
+            has only 4 points and is thin, hard to see; at 00:30
+            the line has only 2 points (midnight and one
+            in-progress hour) and the small segment alone is
+            easily overlooked. The marker anchors the eye to
+            "current state".
+            """
+            pts = [(margin_left, margin_top + plot_h)]  # midnight at 0 Wh
+            for i, v in enumerate(cum_values):
+                if v is None:
+                    break
+                if stop_at is not None and i > stop_at:
+                    break
+                x = margin_left + (i + 1) * x_step
+                y = margin_top + plot_h - (v / max_v) * plot_h
+                pts.append((x, y))
+            if len(pts) < 2:
+                return ""
+            pts_str = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ''
+            polyline = (
+                f'<polyline points="{pts_str}" fill="none" '
+                f'stroke="{color}" stroke-width="2"{dash_attr}/>'
+            )
+            last_x, last_y = pts[-1]
+            marker = (
+                f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" '
+                f'r="3" fill="{color}"/>'
+            )
+            return polyline + marker
+
+        parts = [
+            f'<svg width="{chart_w}" height="{chart_h}" '
+            f'xmlns="http://www.w3.org/2000/svg" '
+            f'style="border:1px solid #ccc; background:#fff;">',
+        ]
+        # Y-axis grid + labels (5 levels)
+        for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            y = margin_top + plot_h - frac * plot_h
+            parts.append(
+                f'<line x1="{margin_left}" y1="{y}" '
+                f'x2="{chart_w - margin_right}" y2="{y}" '
+                f'stroke="#eee" stroke-width="1"/>'
+            )
+            label_v = int(frac * max_v)
+            parts.append(
+                f'<text x="{margin_left - 5}" y="{y + 4}" font-size="10" '
+                f'text-anchor="end" fill="#666">{label_v}</text>'
+            )
+        # X-axis hour labels: every 3rd hour (0, 3, 6, ..., 21, 23).
+        for h in [0, 3, 6, 9, 12, 15, 18, 21, 23]:
+            x = margin_left + h * x_step
+            parts.append(
+                f'<text x="{x}" y="{chart_h - margin_bottom + 14}" '
+                f'font-size="10" text-anchor="middle" fill="#444">'
+                f'{h:02d}</text>'
+            )
+
+        # Forecast: dashed orange (full 24 hours).
+        parts.append(_cumulative_polyline(cum_forecast, "#e09020", dash="6,3"))
+        # Actual: solid green, truncated at current hour.
+        parts.append(_cumulative_polyline(cum_actual, "#2a8a2a", stop_at=cur_hour))
+
+        # Per-hour hover strips with cumulative forecast / actual /
+        # delta. Hours past the current hour show "--" for actual.
+        strip_w = max(2.0, x_step)
+        for h in range(24):
+            x_center = margin_left + (h + 1) * x_step
+            x_strip = x_center - strip_w / 2.0
+            f_v = cum_forecast[h] if h < len(cum_forecast) else 0
+            a_v = cum_actual[h] if h < len(cum_actual) else None
+            if a_v is None:
+                tooltip = (
+                    f'{h:02d}:00  '
+                    f'Forecast (cum): {f_v:.0f} Wh  '
+                    f'Actual: --'
+                )
+            else:
+                delta = a_v - f_v
+                sign = "+" if delta >= 0 else ""
+                tooltip = (
+                    f'{h:02d}:00  '
+                    f'Forecast (cum): {f_v:.0f} Wh  '
+                    f'Actual (cum): {a_v:.0f} Wh  '
+                    f'Delta: {sign}{delta:.0f} Wh'
+                )
+            tooltip = (tooltip
+                       .replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+            parts.append(
+                f'<g><title>{tooltip}</title>'
+                f'<rect x="{x_strip}" y="{margin_top}" '
+                f'width="{strip_w}" height="{plot_h}" '
+                f'fill="transparent" pointer-events="all"/>'
+                f'</g>'
+            )
+
+        # Legend top right
+        lx = chart_w - margin_right - 230
+        ly = margin_top + 5
+        parts.append(
+            f'<rect x="{lx}" y="{ly}" width="14" height="3" fill="#e09020"/>'
+            f'<text x="{lx + 18}" y="{ly + 5}" font-size="10" fill="#444">Forecast (cumulative)</text>'
+            f'<rect x="{lx + 140}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
+            f'<text x="{lx + 158}" y="{ly + 5}" font-size="10" fill="#444">Actual (cumulative)</text>'
+        )
+        # Y-axis title
+        parts.append(
+            f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh</text>'
         )
         parts.append('</svg>')
         return ''.join(parts)
@@ -1058,8 +1582,25 @@ class SEUSSWeb:
             grey_colors = {"gray", "gainsboro"}
             use_theme_text = dominant_color in grey_colors or dominant_color is None
 
-            if height + 15 > baseline_y:
-                # Tall bar: label inside near the top. Use chart-text so
+            # The "tall bar -> label inside near the top" switch only
+            # applies to positive bars. A positive bar tall enough that
+            # `height + 15 > baseline_y` reaches close to y=0, and an
+            # `y - 5` label would be cropped at the SVG top, so we
+            # tuck it inside at y=15 instead.
+            #
+            # For NEGATIVE prices the bar grows DOWNWARD from
+            # baseline_y. `height` can still be large (a -50 bar has
+            # height=510 just like a +50 bar), so the same condition
+            # fires -- but the label has not gone off-screen at the
+            # top, it's just at the zero line where it belongs. The
+            # old code applied the switch unconditionally and snapped
+            # the negative-price label all the way up to y=15, far
+            # away from the actual bar. The threshold where the switch
+            # tripped was around -34 ct/kWh, which is where the user
+            # noticed the label "jumping to the top".
+            tall_positive = price is not None and price >= 0 and height + 15 > baseline_y
+            if tall_positive:
+                # Tall positive bar: label inside near the top. Use chart-text so
                 # the colour matches the theme (visible on both modes).
                 svg += (
                     f'<text x="{hour * width + 15}" y="15" '
@@ -1067,7 +1608,15 @@ class SEUSSWeb:
                     f'class="chart-text">{label_price}</text>'
                 )
             else:
-                # Short bar: label above the bar.
+                # Short positive bar OR any negative bar: label just
+                # above the bar's TOP edge. For positives the top is
+                # at `y` (= baseline_y - height); for negatives the
+                # top edge is the baseline itself, which is also `y`
+                # by construction. So `y - 5` is the right anchor in
+                # both cases -- it puts the negative-price label at
+                # the zero line, which matches what the user sees on
+                # mild negative spikes and is what we want even for
+                # deep ones.
                 if use_theme_text:
                     svg += (
                         f'<text x="{hour * width + 15}" y="{y - 5}" '

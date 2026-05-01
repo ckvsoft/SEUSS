@@ -49,6 +49,20 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_loss_efficiency = (0, 100)
+        # Per-aggregate freshness tracking. Set to True by
+        # calculate_power() when a finished aggregate (AC_POWER,
+        # AC_GRID_POWER, DC_POWER, PV_POWER) is recomputed; cleared by
+        # the MQTT handler after a successful update() integration.
+        # This is what stops sample-aliasing -- we only integrate Wh
+        # once per cycle, with all four power sources synchronized,
+        # instead of once per topic with three of the four still
+        # holding values from the previous cycle.
+        self._fresh_aggregates = set()
+        # Whether we've ever seen a PV aggregate. If never, the MQTT
+        # handler treats PV as "always fresh" so a PV-less setup does
+        # not block integration forever waiting for a topic that will
+        # never arrive.
+        self._pv_ever_seen = False
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -116,15 +130,18 @@ class PowerDataHandler:
         if self.data_complete(self.updated_ac_phases, self.num_ac_phases):
             self.final_data["AC_POWER"] = sum(v for v in self.ac_phases.values() if v is not None)
             self.reset(self.updated_ac_phases)
+            self._fresh_aggregates.add("AC_POWER")
 
         if self.data_complete(self.updated_grid_phases, self.num_grid_phases):
             self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
             self.reset(self.updated_grid_phases)
+            self._fresh_aggregates.add("AC_GRID_POWER")
 
         battery_value = self.dc_data.get("Battery")
         if battery_value is not None:
             self.final_data["DC_POWER"] = battery_value
             self.dc_data.clear()
+            self._fresh_aggregates.add("DC_POWER")
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
@@ -136,6 +153,8 @@ class PowerDataHandler:
         if all(self.pv_data.get(key) is not None for key in keys):
             self.final_data["PV_POWER"] = sum(self.pv_data.values())
             self.reset(self.pv_data)
+            self._fresh_aggregates.add("PV_POWER")
+            self._pv_ever_seen = True
 
         if len([value for value in self.final_data.values() if value is not None]) >= 3:
             if self.all_required_data_complete():
@@ -193,6 +212,32 @@ class PowerDataHandler:
 
         return True
 
+    def is_ready_to_integrate(self):
+        """
+        True if all expected power aggregates have been refreshed since
+        the last successful Wh integration. This is the synchronization
+        gate that prevents sample-aliasing: each MQTT topic individually
+        triggers calculate_power(), but we only want the energy
+        integrator (PowerConsumption.update) to fire once per cycle,
+        with all four sources (AC consumption, grid, battery, PV)
+        captured at consistent timestamps.
+
+        AC_POWER, AC_GRID_POWER and DC_POWER are required. PV_POWER is
+        treated as "fresh by default" until we've seen at least one PV
+        aggregate -- a setup with no PV inverter on the GX bus would
+        otherwise block integration forever.
+        """
+        required = {"AC_POWER", "AC_GRID_POWER", "DC_POWER"}
+        if self._pv_ever_seen:
+            required.add("PV_POWER")
+        return required.issubset(self._fresh_aggregates)
+
+    def clear_freshness(self):
+        """Reset all per-aggregate freshness flags. The MQTT handler
+        calls this right after it integrates Wh, so the next round of
+        topics has to re-establish freshness from scratch."""
+        self._fresh_aggregates.clear()
+
     def process_data(self):
         """Perform calculations with complete data."""
 
@@ -238,9 +283,19 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 100)
 
-        if efficiency < 100.0 and loss > 0.0:
-            self.total_loss = loss
-            self.last_loss_efficiency = (loss, efficiency)
+        # Always update the cache so the live snapshot reflects the
+        # CURRENT frame, not the last one that happened to have
+        # loss>0 and efficiency<100. The previous "only update if
+        # loss>0 and efficiency<100" guard turned this into a sticky
+        # peak-hold display: a single bad sample from a transient
+        # sample-skew (one source updated before another) would
+        # remain visible in the UI tile until another bad sample
+        # came along, making the live numbers permanently lag the
+        # actual state of the system. With the freshness gate in the
+        # MQTT path, transient skew samples shouldn't occur anymore,
+        # but updating unconditionally is correct regardless.
+        self.total_loss = loss
+        self.last_loss_efficiency = (loss, efficiency)
 
         return self.last_loss_efficiency
 
@@ -351,6 +406,11 @@ class PowerConsumptionBase:
         # tend to have very different signs.
         self.loss_wh_by_hour_today = {}
         self.imbalance_wh_by_hour_today = {}
+        # Per-hour PV yield for today (key "0".."23"). Reset on
+        # day-rollover. Drives the "actual today" line on the
+        # forecast-vs-actual today chart on the stats page; it's
+        # the PV analogue of loss_wh_by_hour_today / imbalance_wh_by_hour_today.
+        self.pv_wh_by_hour_today = {}
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
@@ -486,6 +546,8 @@ class PowerConsumptionBase:
             "powerconsumption", "loss_wh_by_hour_today") or {}
         self.imbalance_wh_by_hour_today = self.statsmanager.get_data(
             "powerconsumption", "imbalance_wh_by_hour_today") or {}
+        self.pv_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "pv_wh_by_hour_today") or {}
 
         # JSON serialisation collapses Python tuples to lists, so on
         # reload `isinstance(x, tuple)` is always False -- the previous
@@ -650,6 +712,7 @@ class PowerConsumptionBase:
         self.statsmanager.set_status_data("powerconsumption","daily_imbalance_wh", self.daily_imbalance_wh, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","loss_wh_by_hour_today", self.loss_wh_by_hour_today, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","imbalance_wh_by_hour_today", self.imbalance_wh_by_hour_today, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_wh_by_hour_today", self.pv_wh_by_hour_today, save_data=False)
 
         if logging:
             self.logger.log.debug("data saved.")
@@ -784,6 +847,52 @@ class PowerConsumptionBase:
             for k in old_keys:
                 del d[k]
                 dropped += 1
+
+        # Solar forecast history lives in the stats manager (under
+        # ('solar', 'forecast_pv_wh_by_day')) rather than as a member
+        # of this class -- it's written by openmeteo and only read by
+        # the stats page. Prune it here too so it shares the same
+        # retention window as the actual pv_wh_by_day it gets
+        # plotted against.
+        try:
+            forecast_by_day = self.statsmanager.get_data(
+                'solar', 'forecast_pv_wh_by_day'
+            ) or {}
+            if isinstance(forecast_by_day, dict):
+                old_keys = [
+                    k for k in forecast_by_day.keys()
+                    if isinstance(k, str) and k < cutoff
+                ]
+                if old_keys:
+                    for k in old_keys:
+                        del forecast_by_day[k]
+                        dropped += 1
+                    self.statsmanager.set_status_data(
+                        'solar', 'forecast_pv_wh_by_day', forecast_by_day
+                    )
+            # Same retention treatment for the per-hour forecast
+            # array; only used by the today-solar chart but should
+            # not grow unbounded either.
+            forecast_hourly = self.statsmanager.get_data(
+                'solar', 'forecast_hourly_wh_by_day'
+            ) or {}
+            if isinstance(forecast_hourly, dict):
+                old_keys = [
+                    k for k in forecast_hourly.keys()
+                    if isinstance(k, str) and k < cutoff
+                ]
+                if old_keys:
+                    for k in old_keys:
+                        del forecast_hourly[k]
+                        dropped += 1
+                    self.statsmanager.set_status_data(
+                        'solar', 'forecast_hourly_wh_by_day', forecast_hourly
+                    )
+        except Exception as e:
+            self.logger.log.debug(
+                f"Pruning solar forecast history failed: {e}"
+            )
+
         if dropped:
             self.logger.log.info(
                 f"Pruned {dropped} history entries older than {cutoff} "
@@ -872,6 +981,12 @@ class PowerConsumptionBase:
         # glitch, not real reverse flow.
         pv_wh = max(self.last_pv_value, 0) * time_diff
         self.daily_pv_wh += pv_wh
+        # Per-hour PV breakdown for the today-solar chart. Same hour
+        # key convention as loss_wh_by_hour_today below.
+        pv_hkey = str(self.current_hour)
+        self.pv_wh_by_hour_today[pv_hkey] = (
+            self.pv_wh_by_hour_today.get(pv_hkey, 0) + pv_wh
+        )
 
         # Battery split. Victron convention: positive battery_power =
         # charging (energy into the pack), negative = discharging. Both
@@ -961,6 +1076,7 @@ class PowerConsumptionBase:
             self.daily_imbalance_wh = 0
             self.loss_wh_by_hour_today = {}
             self.imbalance_wh_by_hour_today = {}
+            self.pv_wh_by_hour_today = {}
 
             # Seed the new day's slot in the history dicts to 0
             # immediately. Otherwise the running update() block above
@@ -975,6 +1091,15 @@ class PowerConsumptionBase:
             self.battery_charge_wh_by_day[today_iso_new] = 0
             self.battery_discharge_wh_by_day[today_iso_new] = 0
             self.energy_costs_by_day[today_iso_new] = 0
+            # The 24-slot hourly array also needs a fresh slate,
+            # otherwise save_hour() only ever overwrites the SLOT for
+            # the hour that just finished, leaving the other 23 slots
+            # holding YESTERDAY's values. The intraday chart on the
+            # stats page would then show e.g. a "today 23:00" bar at
+            # 14:00 because yesterday's 23:00 bar is still sitting in
+            # today_arr[23]. Seed all 24 slots to 0 so only hours we
+            # actually saw today contribute to the chart.
+            self.hourly_wh_by_day[today_iso_new] = [0] * 24
             # And persist immediately so a restart in the first few
             # minutes of the new day doesn't restore yesterday's slot.
             self.save_data()
@@ -1076,6 +1201,7 @@ class PowerConsumptionBase:
         self.daily_imbalance_wh = 0
         self.loss_wh_by_hour_today = {}
         self.imbalance_wh_by_hour_today = {}
+        self.pv_wh_by_hour_today = {}
         self.hourly_start_time = time.time()
         self.last_value = 0
         self.last_grid_value = 0

@@ -385,6 +385,115 @@
         </div>
     </div>
 
+    %# Solar Forecast tiles. Originally lived in their own section
+    %# further down the page (between "Lifetime Skip Counters" and the
+    %# Intraday chart), but we now show them right under the main tile
+    %# grid -- they belong with the other "today" KPIs at the top.
+    %# Kept as a separate <div class="stats-tile-grid"> instead of
+    %# folding them into the main grid above so the heading and the
+    %# explanatory paragraph still work as a self-contained section.
+    %#
+    %# "Forecast Today" reads the FROZEN morning forecast persisted by
+    %# openmeteo (statsmanager 'solar' / 'forecast_pv_wh_by_day' under
+    %# today's ISO date). It used to read 'forecast_today_wh' which is
+    %# a hybrid (measured + adjusted-rest) that converges to the
+    %# actual value over the day -- mathematically tidy but useless
+    %# as a comparison point because by 23:59 it always equals
+    %# Measured Today regardless of how off the morning forecast was.
+    %# The "Rest Today" tile, derived from that same hybrid, was
+    %# removed for the same reason.
+    % sf = stats.get('solar_forecast', {}) or {}
+    % has_forecast = sf.get('today_wh') is not None
+    <h3 class="stats-section-heading">Solar Forecast</h3>
+    % if not has_forecast:
+        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+            No solar forecast recorded yet. The forecast runs as part of the
+            normal evaluation cycle when at least one PV panel is enabled in
+            the configuration and Open-Meteo is reachable.
+        </p>
+    % else:
+        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+            <b>Forecast Today</b> = the morning forecast openmeteo captured at
+            its first run today (frozen for the day). <b>Measured Today</b> =
+            cumulative PV yield since 00:00. <b>Forecast Tomorrow</b> = the
+            adjusted forecast for the full next day. The <b>adjustment factor</b>
+            is the EWMA-smoothed ratio of recent actual yield vs. the raw API
+            forecast, clipped to [0.2, 2.0]. SEUSS multiplies every raw API
+            number by this before showing it.
+        </p>
+        <div class="stats-tile-grid">
+            <div class="stats-tile"
+                 title="Adjusted total-day PV yield prediction openmeteo made on its first run today, frozen for the rest of the day. Compare with Measured Today as the day progresses to see how close the model came.">
+                <div class="label">Forecast Today</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('today_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Adjusted forecast for tomorrow.">
+                <div class="label">Forecast Tomorrow</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('tomorrow_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Measured PV yield since 00:00, sourced from PowerConsumption.daily_pv_wh (GX-bus integrated, matches Victron VRM and the home-page tile).">
+                <div class="label">Measured Today</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(sf.get('measured_today_wh') or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="System-efficiency multiplier learned from history. 1.00 = forecast is right on target; below 1.0 = real yield consistently below forecast (e.g. dirty panels, partial shading); above 1.0 = better than forecast.">
+                <div class="label">Adjustment Factor</div>
+                <div class="value">
+                    % adj = sf.get('adjustment_factor')
+                    <span>{{ "--" if adj is None else "{:.2f}".format(adj) }}</span>
+                </div>
+            </div>
+        </div>
+    % end
+
+    %# Layout: tiles (above) -> charts (here) -> tables (below).
+    %# All charts grouped together so the comparable visualisations
+    %# sit next to each other; tables come last because they are
+    %# reference-detail and don't need to draw the eye.
+
+    <h3 class="stats-section-heading">Intraday: Hourly Consumption</h3>
+    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
+        {{ !stats['intraday_svg'] }}
+    </div>
+
+    <h3 class="stats-section-heading">Last 30 Days</h3>
+    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
+        {{ !stats['history_svg'] }}
+    </div>
+
+    %# Today's solar chart -- cumulative forecast vs. cumulative
+    %# actual PV over the day. Wakes up after the first openmeteo
+    %# run of the day captures the morning forecast, then the actual
+    %# curve grows hour by hour as PV is integrated. Useful as a
+    %# real-time "are we tracking the model?" gauge.
+    <h3 class="stats-section-heading">Today's Solar: Forecast vs. Actual</h3>
+    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
+        {{ !stats['today_solar_svg'] }}
+    </div>
+
+    %# Solar history chart -- forecast vs. actual PV yield over the
+    %# retention window. Lets the user see whether the adjustment
+    %# factor is converging on something sensible (forecast line and
+    %# actual line should track each other after a few sunny days),
+    %# and spot bad days where reality went deeply below model
+    %# (e.g. unexpected overcast) or above (e.g. unusually clear
+    %# winter day where the model under-predicted).
+    <h3 class="stats-section-heading">Solar: Forecast vs. Actual (history)</h3>
+    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
+        {{ !stats['solar_history_svg'] }}
+    </div>
+
     <h3 class="stats-section-heading">Today vs. Yesterday</h3>
     <table class="stats-compare">
         <thead>
@@ -478,67 +587,6 @@
         </tbody>
     </table>
 
-    <h3 class="stats-section-heading">Solar Forecast</h3>
-    % sf = stats.get('solar_forecast', {}) or {}
-    % has_forecast = sf.get('today_wh') is not None
-    % if not has_forecast:
-        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
-            No solar forecast recorded yet. The forecast runs as part of the
-            normal evaluation cycle when at least one PV panel is enabled in
-            the configuration and Open-Meteo is reachable.
-        </p>
-    % else:
-        <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
-            Adjusted Open-Meteo forecast. <b>Today</b> = measured PV so far + adjusted forecast for the rest of the day.
-            <b>Tomorrow</b> = adjusted forecast for the full next day.
-            The <b>adjustment factor</b> is the EWMA-smoothed ratio of yesterday's actual yield vs. the raw API forecast,
-            clipped to [0.2, 2.0]. SEUSS multiplies every raw API number by this before showing it, so the values below
-            are what the abort logic actually compares against.
-        </p>
-        <div class="stats-tile-grid">
-            <div class="stats-tile"
-                 title="Total expected PV yield for today: measured-so-far ({{ '{:.0f}'.format(sf.get('measured_today_wh') or 0) }} Wh) plus adjusted forecast for the rest of the day ({{ '{:.0f}'.format(sf.get('rest_today_wh') or 0) }} Wh).">
-                <div class="label">Forecast Today</div>
-                <div class="value">
-                    <span>{{ "{:.0f}".format(sf.get('today_wh') or 0) }}</span>
-                    <span class="unit">Wh</span>
-                </div>
-            </div>
-            <div class="stats-tile"
-                 title="Adjusted forecast for tomorrow.">
-                <div class="label">Forecast Tomorrow</div>
-                <div class="value">
-                    <span>{{ "{:.0f}".format(sf.get('tomorrow_wh') or 0) }}</span>
-                    <span class="unit">Wh</span>
-                </div>
-            </div>
-            <div class="stats-tile"
-                 title="Measured PV yield since 00:00 across all inverters.">
-                <div class="label">Measured Today</div>
-                <div class="value">
-                    <span>{{ "{:.0f}".format(sf.get('measured_today_wh') or 0) }}</span>
-                    <span class="unit">Wh</span>
-                </div>
-            </div>
-            <div class="stats-tile"
-                 title="Adjusted forecast for the rest of today (after now).">
-                <div class="label">Rest Today</div>
-                <div class="value">
-                    <span>{{ "{:.0f}".format(sf.get('rest_today_wh') or 0) }}</span>
-                    <span class="unit">Wh</span>
-                </div>
-            </div>
-            <div class="stats-tile"
-                 title="System-efficiency multiplier learned from history. 1.00 = forecast is right on target; below 1.0 = real yield consistently below forecast (e.g. dirty panels, partial shading); above 1.0 = better than forecast.">
-                <div class="label">Adjustment Factor</div>
-                <div class="value">
-                    % adj = sf.get('adjustment_factor')
-                    <span>{{ "--" if adj is None else "{:.2f}".format(adj) }}</span>
-                </div>
-            </div>
-        </div>
-    % end
-
     <h3 class="stats-section-heading">Today's Hourly Energy Balance</h3>
     <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
         Per-hour breakdown of today's energy balance. <b>Loss</b> is non-negative
@@ -607,16 +655,6 @@
             </tr>
         </tbody>
     </table>
-
-    <h3 class="stats-section-heading">Intraday: Hourly Consumption</h3>
-    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
-        {{ !stats['intraday_svg'] }}
-    </div>
-
-    <h3 class="stats-section-heading">Last 30 Days</h3>
-    <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
-        {{ !stats['history_svg'] }}
-    </div>
 
     <p class="stats-note">
         % if stats['history_days_available'] == 0:

@@ -161,117 +161,61 @@ class Entsoe(MarketData):
         # Track which period start times we've seen, to skip duplicates.
         seen_periods = set()
 
-        for period in root.iter('Period'):
-            # The start can be either nested inside <timeInterval> or
-            # directly inside <Period>, depending on ENTSO-E schema variant.
-            start_elem = period.find('timeInterval/start')
-            if start_elem is None:
-                start_elem = period.find('start')
-            resolution_elem = period.find('resolution')
+        # Since the SDAC quarter-hour go-live (October 2025), ENTSO-E
+        # publishes TWO Day-Ahead TimeSeries per business day for AT/DE
+        # under documentType A44. Both have:
+        #   * auction.type                  = A01 (day-ahead)
+        #   * businessType                  = A62 (spot price)
+        #   * contract_MarketAgreement.type = A01 (daily)
+        #   * resolution                    = PT15M
+        #   * the same Period.timeInterval.start
+        # so none of those fields can distinguish them. The only
+        # discriminator is
+        #   <classificationSequence_AttributeInstanceComponent.position>
+        # which is 1 for the PRIMARY hourly day-ahead auction (the one
+        # that matches Awattar / Tibber / EPEX SPOT day-ahead) and 2 for
+        # the secondary 15-minute coupling auction published later.
+        #
+        # Without this filter the parser previously walked all <Period>s
+        # in document order, took the first one for each start time, and
+        # skipped subsequent ones via seen_periods -- which on this
+        # market's XML happens to keep the secondary (position=2) and
+        # discard the primary, the opposite of what we want. The exact
+        # ordering is not guaranteed by ENTSO-E either way, so relying
+        # on document order at all is wrong.
+        #
+        # Two-pass strategy: first pass takes only TimeSeries with
+        # position=1 (or no classification field, for back-compat with
+        # pre-Oct-2025 single-series responses). Second pass takes
+        # anything else, but only for days the first pass didn't
+        # already cover (the seen_periods set handles that).
+        all_time_series = list(root.iter('TimeSeries'))
+        primary_ts = [
+            ts for ts in all_time_series
+            if self._classification_position(ts) in (None, "1")
+        ]
+        fallback_ts = [
+            ts for ts in all_time_series
+            if self._classification_position(ts) not in (None, "1")
+        ]
 
-            if start_elem is None or resolution_elem is None:
-                self.logger.log.warning(
-                    "ENTSO-E period missing start or resolution, skipped"
+        for time_series in primary_ts:
+            for period in time_series.iter('Period'):
+                last_known_price = self._process_period(
+                    period, items, seen_periods, last_known_price
                 )
-                continue
 
-            start_text = (start_elem.text or "").strip()
-            resolution = (resolution_elem.text or "").strip()
-
-            if not start_text:
-                continue
-            if start_text in seen_periods:
-                self.logger.log.info(
-                    f"Duplicate ENTSO-E period {start_text} skipped"
-                )
-                continue
-            seen_periods.add(start_text)
-
-            quarters_per_point = self._RESOLUTION_TO_QUARTERS.get(resolution)
-            if quarters_per_point is None:
-                self.logger.log.warning(
-                    f"Unknown ENTSO-E resolution '{resolution}' "
-                    f"for period {start_text}, skipped"
-                )
-                continue
-
-            # ENTSO-E moved to native PT15M for the markets SEUSS supports.
-            # If a legacy PT60M / PT30M / PT1H period still appears, we
-            # accept it (split into identical quarters) but log a warning
-            # so the operator notices the anomaly.
-            if resolution != "PT15M":
-                self.logger.log.warning(
-                    f"ENTSO-E period {start_text} uses legacy resolution "
-                    f"{resolution} -- expected PT15M. Splitting each point "
-                    f"into {quarters_per_point} identical quarters."
-                )
-
-            try:
-                period_start_dt = self._parse_period_start(start_text)
-            except ValueError as e:
-                self.logger.log.warning(
-                    f"Cannot parse ENTSO-E period start '{start_text}': {e}"
-                )
-                continue
-
+        for time_series in fallback_ts:
+            pos = self._classification_position(time_series)
             self.logger.log.info(
-                f"Processing ENTSO-E period {start_text} "
-                f"(resolution {resolution} -> {quarters_per_point} quarter(s)/point)"
+                f"ENTSO-E primary auction missing for some day(s); "
+                f"considering fallback TimeSeries with classification "
+                f"position {pos}"
             )
-
-            # Period nominally covers 96 quarters (one day). The number of
-            # <Point> positions expected = 96 / quarters_per_point.
-            expected_positions = 96 // quarters_per_point
-
-            last_position = 0
-            last_price = None
-
-            for point in period.findall('Point'):
-                pos_elem = point.find('position')
-                price_elem = point.find('price.amount')
-                if pos_elem is None or price_elem is None:
-                    continue
-                try:
-                    position = int((pos_elem.text or "").strip())
-                    price = float((price_elem.text or "").strip())
-                except (ValueError, TypeError) as e:
-                    self.logger.log.warning(
-                        f"Cannot parse ENTSO-E point in period {start_text}: {e}"
-                    )
-                    continue
-
-                # Fill any gap (carry-forward). For the very first point
-                # use the persisted last_known_price as fallback.
-                fill_price = last_price if last_price is not None else last_known_price
-                for missing_pos in range(last_position + 1, position):
-                    self._emit_quarters_for_point(
-                        items, period_start_dt, missing_pos,
-                        fill_price, quarters_per_point
-                    )
-                    self.logger.log.debug(
-                        f"Carry-forward at position {missing_pos} "
-                        f"with price {fill_price}"
-                    )
-
-                self._emit_quarters_for_point(
-                    items, period_start_dt, position,
-                    price, quarters_per_point
+            for period in time_series.iter('Period'):
+                last_known_price = self._process_period(
+                    period, items, seen_periods, last_known_price
                 )
-                last_position = position
-                last_price = price
-                last_known_price = price
-
-            # Trailing carry-forward up to the period's expected length.
-            if last_price is not None and last_position < expected_positions:
-                for missing_pos in range(last_position + 1, expected_positions + 1):
-                    self._emit_quarters_for_point(
-                        items, period_start_dt, missing_pos,
-                        last_price, quarters_per_point
-                    )
-                    self.logger.log.debug(
-                        f"Trailing carry-forward at position {missing_pos} "
-                        f"with price {last_price}"
-                    )
 
         # Persist the last known price so the next fetch has a fallback
         # for any leading gap.
@@ -285,6 +229,152 @@ class Entsoe(MarketData):
             items = items[:max_quarters]
 
         return items
+
+    @staticmethod
+    def _classification_position(time_series):
+        """
+        Return the value of
+        <classificationSequence_AttributeInstanceComponent.position> as
+        a string, or None if the element is missing / empty. Used to
+        distinguish the primary day-ahead auction (position=1) from the
+        secondary 15-minute coupling auction (position=2) that ENTSO-E
+        started publishing alongside under the same A44 document type
+        after the SDAC quarter-hour go-live in October 2025.
+        """
+        elem = time_series.find(
+            'classificationSequence_AttributeInstanceComponent.position'
+        )
+        if elem is None:
+            return None
+        text = (elem.text or "").strip()
+        return text or None
+
+    def _process_period(self, period, items, seen_periods, last_known_price):
+        """
+        Process a single <Period> element: parse all <Point> entries,
+        emit 15-minute items (one per quarter) into `items`, fill gaps
+        via carry-forward, and return the updated `last_known_price`.
+
+        Period start times already in `seen_periods` are skipped, which
+        is how the second pass in `_load_data_from_xml` avoids
+        overwriting days the primary auction already supplied.
+        """
+        # The start can be either nested inside <timeInterval> or
+        # directly inside <Period>, depending on ENTSO-E schema variant.
+        start_elem = period.find('timeInterval/start')
+        if start_elem is None:
+            start_elem = period.find('start')
+        resolution_elem = period.find('resolution')
+
+        if start_elem is None or resolution_elem is None:
+            self.logger.log.warning(
+                "ENTSO-E period missing start or resolution, skipped"
+            )
+            return last_known_price
+
+        start_text = (start_elem.text or "").strip()
+        resolution = (resolution_elem.text or "").strip()
+
+        if not start_text:
+            return last_known_price
+        if start_text in seen_periods:
+            self.logger.log.info(
+                f"Duplicate ENTSO-E period {start_text} skipped"
+            )
+            return last_known_price
+
+        quarters_per_point = self._RESOLUTION_TO_QUARTERS.get(resolution)
+        if quarters_per_point is None:
+            self.logger.log.warning(
+                f"Unknown ENTSO-E resolution '{resolution}' "
+                f"for period {start_text}, skipped"
+            )
+            return last_known_price
+
+        # ENTSO-E moved to native PT15M for the markets SEUSS supports.
+        # If a legacy PT60M / PT30M / PT1H period still appears, we
+        # accept it (split into identical quarters) but log a warning
+        # so the operator notices the anomaly.
+        if resolution != "PT15M":
+            self.logger.log.warning(
+                f"ENTSO-E period {start_text} uses legacy resolution "
+                f"{resolution} -- expected PT15M. Splitting each point "
+                f"into {quarters_per_point} identical quarters."
+            )
+
+        try:
+            period_start_dt = self._parse_period_start(start_text)
+        except ValueError as e:
+            self.logger.log.warning(
+                f"Cannot parse ENTSO-E period start '{start_text}': {e}"
+            )
+            return last_known_price
+
+        # Only mark the period as seen AFTER we've decided we'll
+        # actually process it -- a parse failure above shouldn't block
+        # a later TimeSeries from re-trying the same period.
+        seen_periods.add(start_text)
+
+        self.logger.log.info(
+            f"Processing ENTSO-E period {start_text} "
+            f"(resolution {resolution} -> {quarters_per_point} quarter(s)/point)"
+        )
+
+        # Period nominally covers 96 quarters (one day). The number of
+        # <Point> positions expected = 96 / quarters_per_point.
+        expected_positions = 96 // quarters_per_point
+
+        last_position = 0
+        last_price = None
+
+        for point in period.findall('Point'):
+            pos_elem = point.find('position')
+            price_elem = point.find('price.amount')
+            if pos_elem is None or price_elem is None:
+                continue
+            try:
+                position = int((pos_elem.text or "").strip())
+                price = float((price_elem.text or "").strip())
+            except (ValueError, TypeError) as e:
+                self.logger.log.warning(
+                    f"Cannot parse ENTSO-E point in period {start_text}: {e}"
+                )
+                continue
+
+            # Fill any gap (carry-forward). For the very first point
+            # use the persisted last_known_price as fallback.
+            fill_price = last_price if last_price is not None else last_known_price
+            for missing_pos in range(last_position + 1, position):
+                self._emit_quarters_for_point(
+                    items, period_start_dt, missing_pos,
+                    fill_price, quarters_per_point
+                )
+                self.logger.log.debug(
+                    f"Carry-forward at position {missing_pos} "
+                    f"with price {fill_price}"
+                )
+
+            self._emit_quarters_for_point(
+                items, period_start_dt, position,
+                price, quarters_per_point
+            )
+            last_position = position
+            last_price = price
+            last_known_price = price
+
+        # Trailing carry-forward up to the period's expected length.
+        if last_price is not None and last_position < expected_positions:
+            for missing_pos in range(last_position + 1, expected_positions + 1):
+                self._emit_quarters_for_point(
+                    items, period_start_dt, missing_pos,
+                    last_price, quarters_per_point
+                )
+                self.logger.log.debug(
+                    f"Trailing carry-forward at position {missing_pos} "
+                    f"with price {last_price}"
+                )
+
+        return last_known_price
 
     @staticmethod
     def _parse_period_start(start_text: str) -> datetime:
