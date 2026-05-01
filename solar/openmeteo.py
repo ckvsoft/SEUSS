@@ -154,36 +154,12 @@ class OpenMeteo:
             # the forecast curve and the actual curve.
             today_hourly_raw = [0.0] * 24
 
-            # Per-past-day accumulators for the backfill. Keys are
-            # ISO date strings; values are dicts:
-            #   {"day_total_raw": float, "hourly_raw": [24]float}
-            # Filled by the per-panel loop below by walking the
-            # past_days portion of the API response (rad_list indices
-            # 0 .. t_idx*24-1, with one date per slot of 24 hours).
-            # We multiply by inverter_efficiency * adj at persist
-            # time, identical to today's data, so the historical
-            # chart values are on the same scale as the actuals.
-            past_day_acc = {}
-
             for panel in self.panels:
                 if not panel.get('enabled', True): continue
 
-                # past_days=30 lets us backfill the forecast history on
-                # restart. Without this, forecast_pv_wh_by_day is empty
-                # the first time SEUSS runs the new feature and stays
-                # close to empty until weeks of completed days have
-                # accumulated -- the chart shows "no history yet" or a
-                # single useless dot. With past_days, every restart of
-                # SEUSS (even just a config reload) ingests the API's
-                # archived past forecasts for the last 30 days into the
-                # history dict via write-once-per-day semantics, so the
-                # first openmeteo run after deploying this version
-                # immediately fills in 30 days of comparison data
-                # against the actual pv_wh_by_day measurements that
-                # already exist.
                 url = (f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}"
                        f"&hourly=global_tilted_irradiance&daily=sunrise,sunset"
-                       f"&timezone={self.config.time_zone}&past_days=30&forecast_days=2&tilt={panel['angle']}&azimuth={panel['direction']}")
+                       f"&timezone={self.config.time_zone}&forecast_days=2&tilt={panel['angle']}&azimuth={panel['direction']}")
 
                 data = None
                 for attempt in range(3):
@@ -229,75 +205,14 @@ class OpenMeteo:
                         'totPower', 0) * 1000
                     h_now = now.hour
 
-                    # PAST DAYS BACKFILL.
-                    # With past_days=30 the API response is laid out as:
-                    #   rad_list[0..23]            = oldest past day
-                    #   rad_list[24..47]           = next past day
-                    #   ...
-                    #   rad_list[t_idx*24 ..]      = today
-                    #   rad_list[(t_idx+1)*24 ..]  = tomorrow
-                    # Walk every past day, group its 24 hours, and
-                    # accumulate damped Wh into past_day_acc keyed by
-                    # the day's ISO date (taken from `dates` so it
-                    # matches what gets persisted).
-                    #
-                    # Wrapped in try/except because past-days data is
-                    # sometimes incomplete (a sunrise/sunset of null
-                    # for older days, missing rad_list entries, etc.)
-                    # and we MUST NOT let backfill failures kill the
-                    # live forecast for today/tomorrow which is what
-                    # the rest of SEUSS depends on.
-                    try:
-                        past_days_processed = 0
-                        for past_day_idx in range(t_idx):
-                            if past_day_idx >= len(dates):
-                                break
-                            iso = dates[past_day_idx]
-                            sr_p = daily.get('sunrise', [None] * (past_day_idx + 1))[past_day_idx]
-                            ss_p = daily.get('sunset', [None] * (past_day_idx + 1))[past_day_idx]
-                            # API sometimes returns null sunrise/sunset
-                            # for past days. Skip those rather than
-                            # crashing on datetime.fromisoformat(None).
-                            if not sr_p or not ss_p:
-                                continue
-                            bucket = past_day_acc.setdefault(
-                                iso,
-                                {"day_total_raw": 0.0, "hourly_raw": [0.0] * 24},
-                            )
-                            for h in range(24):
-                                ridx = past_day_idx * 24 + h
-                                if ridx >= len(rad_list):
-                                    break
-                                raw_wh = min((rad_list[ridx] or 0) * area * eff, p_max)
-                                damp = self.calculate_exponential_damping(h, panel, sr_p, ss_p)
-                                damped_wh = raw_wh * damp
-                                bucket["day_total_raw"] += damped_wh
-                                bucket["hourly_raw"][h] += damped_wh
-                            past_days_processed += 1
-                        self.logger.log.debug(
-                            f"Past-days backfill: processed {past_days_processed} "
-                            f"of {t_idx} past day(s) for panel {panel.get('name', '?')}"
-                        )
-                    except Exception as e:
-                        self.logger.log.warning(
-                            f"Past-days backfill failed for panel "
-                            f"{panel.get('name', '?')}: {e}. Live forecast continues."
-                        )
-
-                    # TODAY + TOMORROW (the original logic). The 48
-                    # hours starting at rad_list[t_idx*24] are
-                    # today's 24 followed by tomorrow's 24. h is the
-                    # offset within that 48-hour window so the
-                    # is_today / sunrise / damping logic below stays
-                    # untouched.
-                    today_start = t_idx * 24
+                    # TODAY + TOMORROW. rad_list[0..23] is today,
+                    # rad_list[24..47] is tomorrow.
                     for h in range(0, 48):
-                        ridx = today_start + h
-                        if ridx >= len(rad_list): break
+                        if h >= len(rad_list): break
                         is_today = (h < 24)
                         sr, ss = (sr_t, ss_t) if is_today else (sr_tm, ss_tm)
 
-                        raw_wh = min((rad_list[ridx] or 0) * area * eff, p_max)
+                        raw_wh = min((rad_list[h] or 0) * area * eff, p_max)
                         damp = self.calculate_exponential_damping(h % 24, panel, sr, ss)
                         damped_wh = raw_wh * damp
 
@@ -487,66 +402,6 @@ class OpenMeteo:
                     f"Captured morning forecast for {today_iso}: "
                     f"{full_day_forecast:.0f} Wh "
                     f"(hourly peak {max(today_hourly_adj):.0f} Wh)"
-                )
-
-            # Past-days backfill. Same write-once-per-day semantics:
-            # only fill in days that aren't already in the dict, so a
-            # genuine morning forecast captured in real time is never
-            # overwritten by the API's archived forecast for that day.
-            # We re-read the dicts here in case "today" was just
-            # written above -- the local references would be stale.
-            try:
-                forecast_by_day = (
-                    self.statsmanager.get_data('solar', 'forecast_pv_wh_by_day') or {}
-                )
-                if not isinstance(forecast_by_day, dict):
-                    forecast_by_day = {}
-                hourly_by_day = (
-                    self.statsmanager.get_data('solar', 'forecast_hourly_wh_by_day') or {}
-                )
-                if not isinstance(hourly_by_day, dict):
-                    hourly_by_day = {}
-                backfilled = 0
-                skipped_existing = 0
-                for iso, bucket in past_day_acc.items():
-                    if iso == today_iso:
-                        continue
-                    day_total_adj = round(
-                        bucket["day_total_raw"] * inverter_efficiency * adj, 2
-                    )
-                    day_hourly_adj = [
-                        round(v * inverter_efficiency * adj, 2)
-                        for v in bucket["hourly_raw"]
-                    ]
-                    if iso not in forecast_by_day:
-                        forecast_by_day[iso] = day_total_adj
-                        backfilled += 1
-                    else:
-                        skipped_existing += 1
-                    if iso not in hourly_by_day:
-                        hourly_by_day[iso] = day_hourly_adj
-                if backfilled:
-                    self.statsmanager.set_status_data(
-                        'solar', 'forecast_pv_wh_by_day', forecast_by_day
-                    )
-                    self.statsmanager.set_status_data(
-                        'solar', 'forecast_hourly_wh_by_day', hourly_by_day
-                    )
-                    self.logger.log.info(
-                        f"Backfilled forecast history for {backfilled} past day(s); "
-                        f"{skipped_existing} day(s) already had a forecast and were "
-                        f"left alone; total in past_day_acc: {len(past_day_acc)}"
-                    )
-                else:
-                    self.logger.log.debug(
-                        f"No past days to backfill (acc has {len(past_day_acc)} day(s); "
-                        f"already-stored: {skipped_existing})"
-                    )
-            except Exception as e:
-                self.logger.log.warning(
-                    f"Past-days persist failed: {e}. "
-                    f"forecast_pv_wh_by_day not updated; "
-                    f"acc had {len(past_day_acc)} day(s)."
                 )
 
             self.logger.log.debug(

@@ -96,38 +96,17 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             topic_key = next((k for k, v in self.data_topics.items() if v == topic), None)
             self.handler.update_values(topic_key, payload)
 
-            # Sample-aliasing guard. Each MQTT topic individually
-            # triggers calculate_power() inside update_values(), but
-            # we MUST NOT integrate Wh once per topic -- doing so
-            # multiplies dt against an inconsistent snapshot of the
-            # four power sources (one of them just updated, three
-            # still holding values from the previous cycle). That
-            # asymmetry leaks into daily_loss_wh / daily_imbalance_wh
-            # as a steady positive bias because max(delta,0) only
-            # accumulates the positive-skew tail and discards the
-            # negative-skew tail that would have cancelled it out.
-            #
-            # The handler exposes is_ready_to_integrate() as a
-            # synchronization gate: True only when AC, grid, battery
-            # and (if ever seen) PV have all been refreshed since the
-            # last successful integration. clear_freshness() resets
-            # the gate so the next round has to re-establish it.
-            if not self.handler.is_ready_to_integrate():
-                return
-            if not (self.handler.all_required_data_complete() and self.handler.check_for_data()):
-                return
-
-            self.current_power = self.handler.get_power("AC_POWER")
-            self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
-            self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
-            # PV is optional in the user's MQTT setup -- get_power
-            # returns 0 if the topic isn't mapped, which is fine.
-            pv = self.handler.get_power("PV_POWER") or 0
-            timestamp = time.time()
-            self.update(self.current_power, self.current_grid_power,
-                        self.P_DC_consumption_Battery, timestamp,
-                        pv_power=pv)
-            self.handler.clear_freshness()
+            if self.handler.all_required_data_complete() and self.handler.check_for_data():
+                self.current_power = self.handler.get_power("AC_POWER")
+                self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
+                self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
+                # PV is optional in the user's MQTT setup -- get_power
+                # returns 0 if the topic isn't mapped, which is fine.
+                pv = self.handler.get_power("PV_POWER") or 0
+                timestamp = time.time()
+                self.update(self.current_power, self.current_grid_power,
+                            self.P_DC_consumption_Battery, timestamp,
+                            pv_power=pv)
 
     def on_disconnect(self, client, userdata, *args):
         """Universal disconnect callback compatible with all Paho versions"""

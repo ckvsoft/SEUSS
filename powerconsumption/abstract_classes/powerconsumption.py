@@ -49,20 +49,6 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_loss_efficiency = (0, 100)
-        # Per-aggregate freshness tracking. Set to True by
-        # calculate_power() when a finished aggregate (AC_POWER,
-        # AC_GRID_POWER, DC_POWER, PV_POWER) is recomputed; cleared by
-        # the MQTT handler after a successful update() integration.
-        # This is what stops sample-aliasing -- we only integrate Wh
-        # once per cycle, with all four power sources synchronized,
-        # instead of once per topic with three of the four still
-        # holding values from the previous cycle.
-        self._fresh_aggregates = set()
-        # Whether we've ever seen a PV aggregate. If never, the MQTT
-        # handler treats PV as "always fresh" so a PV-less setup does
-        # not block integration forever waiting for a topic that will
-        # never arrive.
-        self._pv_ever_seen = False
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -130,18 +116,15 @@ class PowerDataHandler:
         if self.data_complete(self.updated_ac_phases, self.num_ac_phases):
             self.final_data["AC_POWER"] = sum(v for v in self.ac_phases.values() if v is not None)
             self.reset(self.updated_ac_phases)
-            self._fresh_aggregates.add("AC_POWER")
 
         if self.data_complete(self.updated_grid_phases, self.num_grid_phases):
             self.final_data["AC_GRID_POWER"] = sum(v for v in self.grid_phases.values() if v is not None)
             self.reset(self.updated_grid_phases)
-            self._fresh_aggregates.add("AC_GRID_POWER")
 
         battery_value = self.dc_data.get("Battery")
         if battery_value is not None:
             self.final_data["DC_POWER"] = battery_value
             self.dc_data.clear()
-            self._fresh_aggregates.add("DC_POWER")
 
         keys = [
             "PV_AC_OUT_L1", "PV_AC_OUT_L2", "PV_AC_OUT_L3",
@@ -153,8 +136,6 @@ class PowerDataHandler:
         if all(self.pv_data.get(key) is not None for key in keys):
             self.final_data["PV_POWER"] = sum(self.pv_data.values())
             self.reset(self.pv_data)
-            self._fresh_aggregates.add("PV_POWER")
-            self._pv_ever_seen = True
 
         if len([value for value in self.final_data.values() if value is not None]) >= 3:
             if self.all_required_data_complete():
@@ -212,32 +193,6 @@ class PowerDataHandler:
 
         return True
 
-    def is_ready_to_integrate(self):
-        """
-        True if all expected power aggregates have been refreshed since
-        the last successful Wh integration. This is the synchronization
-        gate that prevents sample-aliasing: each MQTT topic individually
-        triggers calculate_power(), but we only want the energy
-        integrator (PowerConsumption.update) to fire once per cycle,
-        with all four sources (AC consumption, grid, battery, PV)
-        captured at consistent timestamps.
-
-        AC_POWER, AC_GRID_POWER and DC_POWER are required. PV_POWER is
-        treated as "fresh by default" until we've seen at least one PV
-        aggregate -- a setup with no PV inverter on the GX bus would
-        otherwise block integration forever.
-        """
-        required = {"AC_POWER", "AC_GRID_POWER", "DC_POWER"}
-        if self._pv_ever_seen:
-            required.add("PV_POWER")
-        return required.issubset(self._fresh_aggregates)
-
-    def clear_freshness(self):
-        """Reset all per-aggregate freshness flags. The MQTT handler
-        calls this right after it integrates Wh, so the next round of
-        topics has to re-establish freshness from scratch."""
-        self._fresh_aggregates.clear()
-
     def process_data(self):
         """Perform calculations with complete data."""
 
@@ -283,19 +238,9 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 100)
 
-        # Always update the cache so the live snapshot reflects the
-        # CURRENT frame, not the last one that happened to have
-        # loss>0 and efficiency<100. The previous "only update if
-        # loss>0 and efficiency<100" guard turned this into a sticky
-        # peak-hold display: a single bad sample from a transient
-        # sample-skew (one source updated before another) would
-        # remain visible in the UI tile until another bad sample
-        # came along, making the live numbers permanently lag the
-        # actual state of the system. With the freshness gate in the
-        # MQTT path, transient skew samples shouldn't occur anymore,
-        # but updating unconditionally is correct regardless.
-        self.total_loss = loss
-        self.last_loss_efficiency = (loss, efficiency)
+        if efficiency < 100.0 and loss > 0.0:
+            self.total_loss = loss
+            self.last_loss_efficiency = (loss, efficiency)
 
         return self.last_loss_efficiency
 
