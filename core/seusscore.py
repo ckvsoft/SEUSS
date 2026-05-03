@@ -99,9 +99,14 @@ class SEUSS:
             try:
                 full_wh = essunit.get_battery_full_wh() or 0
                 if full_wh > 0:
+                    # Persist to disk (save_data=True): the stats handler
+                    # creates a fresh StatsManager() on every page load,
+                    # which calls load_data() and overwrites the class-
+                    # level dict with whatever's on disk. RAM-only writes
+                    # with save_data=False would be wiped out before the
+                    # web layer ever sees them, leaving cycles=0 forever.
                     self.statsmanager.set_status_data(
                         "ess_unit", "battery_full_wh", round(float(full_wh), 1),
-                        save_data=False
                     )
             except Exception as e:
                 self.logger.log.debug(f"battery_full_wh persist skipped: {e}")
