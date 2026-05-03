@@ -59,6 +59,13 @@ class Config(Singleton):
         # New: abort charge when the battery covers the entire upcoming
         # expensive phase until the next charge cluster (any price).
         "skip_charge_when_battery_covers_expensive_phase": False,
+        # New: skip charging the current quarter when at least one
+        # upcoming quarter is priced below zero AND the battery will
+        # have enough headroom to absorb it (current free Wh +
+        # consumption until then >= chargeable Wh during the negative
+        # window). Lets you avoid paying for charge now when you can
+        # be paid for it shortly.
+        "skip_charge_for_upcoming_negative_prices": False,
         # New: when battery is too small to cover the full expensive
         # phase, prioritise discharge to the most expensive blocks only;
         # cheaper expensive-phase hours fall back to grid.
@@ -241,6 +248,7 @@ class Config(Singleton):
             self.skip_charge_when_battery_sufficient = False
             self.skip_charge_when_battery_covers_overnext = False
             self.skip_charge_when_battery_covers_expensive_phase = False
+            self.skip_charge_for_upcoming_negative_prices = False
             self.smart_discharge_priority_to_expensive_hours = False
             self.delay_grid_charging_below_active_soc_limit = False
             # Days of per-day history to retain (energy_costs_by_day,
@@ -317,6 +325,10 @@ class Config(Singleton):
         for attr, default in (
             ("use_solar_forecast_to_abort", False),
             ("skip_charge_when_battery_sufficient", False),
+            ("skip_charge_when_battery_covers_overnext", False),
+            ("skip_charge_when_battery_covers_expensive_phase", False),
+            ("skip_charge_for_upcoming_negative_prices", False),
+            ("smart_discharge_priority_to_expensive_hours", False),
             ("delay_grid_charging_below_active_soc_limit", False),
         ):
             raw = config_data.get(attr, default)

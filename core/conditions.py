@@ -509,6 +509,22 @@ class Conditions:
                     self._abort_charging_battery_covers_expensive_phase
             })
 
+        # Negative-price-ahead optimisation: when the upcoming spot
+        # market has at least one quarter priced below zero, prefer
+        # to keep battery headroom open for that "free" energy rather
+        # than burning it on a current cheap-but-positive quarter.
+        # The check internally decides whether the SOC + expected
+        # consumption till then will be enough -- so a small negative
+        # window with a near-full battery will skip cheap charging,
+        # but a long negative window will still allow current charging
+        # because the battery couldn't absorb all of it anyway.
+        if getattr(self.config, "skip_charge_for_upcoming_negative_prices", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - negative-price quarters ahead "
+                "and battery will have room":
+                    self._abort_charging_negative_price_ahead
+            })
+
         # Switching uses the same hard cap rule by default.
         self.abort_conditions_by_operation_mode["switching_abort"].update({
             "Abort switching - Block average exceeds hard cap":
@@ -1153,6 +1169,143 @@ class Conditions:
         except Exception as e:
             self.logger.log.error(
                 f"Overnext-cluster abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _abort_charging_negative_price_ahead(self):
+        """
+        Skip the current charge attempt when there is at least one future
+        quarter (today or tomorrow) priced below zero AND the battery
+        will have enough headroom to absorb that future cheap-as-free
+        energy without needing the current quarter's charge.
+
+        Logic:
+          1. Find all future quarters in the price list whose price is
+             strictly negative (< 0 ct/kWh). If none, do nothing.
+          2. NEVER skip when the current quarter is itself negative --
+             we must charge as much as possible while we're being paid
+             for it.
+          3. Compute how many Wh the battery still has room to absorb:
+                headroom_wh = full_wh - current_soc_wh
+          4. Compute how many Wh we could plausibly push in during the
+             negative quarters (sum of quarter durations × max charge
+             rate from config). This is the "free slot we want to keep
+             empty for".
+          5. Compute how many Wh we expect to consume between now and
+             the first negative quarter (avg consumption × hours_until).
+             That's energy the battery will release naturally.
+          6. Skip when:
+                headroom_wh + expected_consumption_wh >= absorbable_negative_wh
+             ie. by the time the negative quarters arrive, we'll have at
+             least that many empty Wh to fill -- so spending money on
+             *positive*-price charging right now would be wasted.
+
+        Returns False on any error so charging stays allowed when in doubt.
+        """
+        try:
+            from datetime import datetime, timezone
+
+            # Step 1+2: scan future items.
+            cur_price = self.items.get_current_price(convert=False)
+            if cur_price is not None:
+                try:
+                    if int(cur_price) < 0:
+                        # Currently paid to charge -- don't skip.
+                        return False
+                except (TypeError, ValueError):
+                    pass
+
+            now_utc = datetime.now(timezone.utc)
+            negative_items = []
+            first_negative_start = None
+            for it in getattr(self.items, "_item_list", []):
+                start = it.get_start_datetime()
+                if start is None:
+                    continue
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                if start <= now_utc:
+                    continue
+                try:
+                    if int(it.get_price(False)) < 0:
+                        negative_items.append(it)
+                        if first_negative_start is None or start < first_negative_start:
+                            first_negative_start = start
+                except (TypeError, ValueError):
+                    continue
+
+            if not negative_items:
+                return False  # nothing to optimise for
+
+            # Step 3: battery headroom right now.
+            full_wh = (self.essunit.get_battery_full_wh() if self.essunit else 0) or 0
+            current_soc = (self.essunit.get_soc() if self.essunit else 0) or 0
+            current_soc_wh = (current_soc / 100.0) * full_wh
+            headroom_wh = max(0.0, full_wh - current_soc_wh)
+
+            # Step 4: how much energy the negative quarters could absorb.
+            # Items are 15min long (quarter-resolution) regardless of
+            # tariff_resolution. Use charge_rate from config; fall back
+            # to a sensible default if the user hasn't pinned one.
+            charge_rate_w = float(getattr(self.config, "charge_rate", 0) or 0)
+            if charge_rate_w <= 0:
+                # Best-effort fallback: ESS max DC charging current
+                # (Settings/CGwacs/MaxChargePower) isn't always available
+                # via essunit; assume a conservative 3 kW so we still
+                # gate on something reasonable. The user should set
+                # charge_rate in the config for accurate results.
+                charge_rate_w = 3000.0
+            quarter_duration_h = 0.25
+            absorbable_negative_wh = (
+                len(negative_items) * charge_rate_w * quarter_duration_h
+            )
+
+            # Step 5: expected consumption between now and the first
+            # negative quarter -- this empties the battery on its own.
+            hours_until_first_neg = max(
+                (first_negative_start - now_utc).total_seconds() / 3600.0, 0.0
+            )
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"
+            )
+            avg_hourly_wh = (
+                round(avg_list[0], 2)
+                if isinstance(avg_list, (list, tuple)) and avg_list
+                else 0.0
+            )
+            expected_consumption_wh = avg_hourly_wh * hours_until_first_neg
+
+            # Step 6: skip iff the battery will have room for the
+            # negative-price energy by the time it arrives.
+            should_skip = (
+                headroom_wh + expected_consumption_wh >= absorbable_negative_wh
+            )
+
+            self.logger.log.debug(
+                f"Negative-price-ahead abort: {len(negative_items)} negative quarter(s) "
+                f"starting {first_negative_start.isoformat()}, "
+                f"absorbable={absorbable_negative_wh:.0f}Wh, "
+                f"headroom_now={headroom_wh:.0f}Wh, "
+                f"hours_until={hours_until_first_neg:.1f}h, "
+                f"expected_consumption={expected_consumption_wh:.0f}Wh, "
+                f"skip={should_skip}"
+            )
+            if should_skip:
+                self.logger.log.info(
+                    f"Negative-price-ahead abort details: "
+                    f"{len(negative_items)} negative quarter(s) ahead "
+                    f"({absorbable_negative_wh:.0f}Wh absorbable), "
+                    f"battery has {headroom_wh:.0f}Wh free now and will "
+                    f"free another ~{expected_consumption_wh:.0f}Wh by "
+                    f"consuming until they start in {hours_until_first_neg:.1f}h."
+                )
+                self._record_abort_fired("negative_price_ahead")
+            return should_skip
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Negative-price-ahead abort check failed: {e}. "
                 "Keeping charging allowed."
             )
             return False

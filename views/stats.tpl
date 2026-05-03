@@ -177,6 +177,7 @@
          data-today-battery-overnext-skips="{{ stats['today']['battery_overnext_skips'] }}"
          data-today-battery-expensive-phase-skips="{{ stats['today']['battery_expensive_phase_skips'] }}"
          data-today-soc-target-skips="{{ stats['today']['soc_target_skips'] }}"
+         data-today-negative-price-skips="{{ stats['today']['negative_price_skips'] }}"
          data-yesterday-iso="{{ stats['yesterday']['iso'] }}"
          data-yesterday-consumption="{{ stats['yesterday']['consumption_wh'] }}"
          data-yesterday-grid="{{ stats['yesterday']['grid_wh'] }}"
@@ -194,6 +195,7 @@
          data-yesterday-battery-overnext-skips="{{ stats['yesterday']['battery_overnext_skips'] }}"
          data-yesterday-battery-expensive-phase-skips="{{ stats['yesterday']['battery_expensive_phase_skips'] }}"
          data-yesterday-soc-target-skips="{{ stats['yesterday']['soc_target_skips'] }}"
+         data-yesterday-negative-price-skips="{{ stats['yesterday']['negative_price_skips'] }}"
          data-week-iso="{{ stats['week']['iso'] }}"
          data-week-consumption="{{ stats['week']['consumption_wh'] }}"
          data-week-grid="{{ stats['week']['grid_wh'] }}"
@@ -211,6 +213,7 @@
          data-week-battery-overnext-skips="{{ stats['week']['battery_overnext_skips'] }}"
          data-week-battery-expensive-phase-skips="{{ stats['week']['battery_expensive_phase_skips'] }}"
          data-week-soc-target-skips="{{ stats['week']['soc_target_skips'] }}"
+         data-week-negative-price-skips="{{ stats['week']['negative_price_skips'] }}"
          data-month-iso="{{ stats['month']['iso'] }}"
          data-month-consumption="{{ stats['month']['consumption_wh'] }}"
          data-month-grid="{{ stats['month']['grid_wh'] }}"
@@ -228,6 +231,7 @@
          data-month-battery-overnext-skips="{{ stats['month']['battery_overnext_skips'] }}"
          data-month-battery-expensive-phase-skips="{{ stats['month']['battery_expensive_phase_skips'] }}"
          data-month-soc-target-skips="{{ stats['month']['soc_target_skips'] }}"
+         data-month-negative-price-skips="{{ stats['month']['negative_price_skips'] }}"
          data-year-iso="{{ stats['year']['iso'] }}"
          data-year-consumption="{{ stats['year']['consumption_wh'] }}"
          data-year-grid="{{ stats['year']['grid_wh'] }}"
@@ -244,7 +248,8 @@
          data-year-battery-skips="{{ stats['year']['battery_skips'] }}"
          data-year-battery-overnext-skips="{{ stats['year']['battery_overnext_skips'] }}"
          data-year-battery-expensive-phase-skips="{{ stats['year']['battery_expensive_phase_skips'] }}"
-         data-year-soc-target-skips="{{ stats['year']['soc_target_skips'] }}">
+         data-year-soc-target-skips="{{ stats['year']['soc_target_skips'] }}"
+         data-year-negative-price-skips="{{ stats['year']['negative_price_skips'] }}">
 
         <div class="stats-tile">
             <div class="label">Range</div>
@@ -381,6 +386,14 @@
             <div class="label">SOC Target Skips</div>
             <div class="value">
                 <span id="tile-soc-target-skips">{{ active['soc_target_skips'] }}</span>
+            </div>
+        </div>
+
+        <div class="stats-tile skip"
+             title="Optimisation abort: how often charging was skipped because at least one upcoming quarter has a negative spot price AND the battery will have enough headroom to absorb it. Saves money by leaving room in the battery for energy you'll be PAID to take. Only counts when skip_charge_for_upcoming_negative_prices is enabled in the config.">
+            <div class="label">Negative Price Skips</div>
+            <div class="value">
+                <span id="tile-negative-price-skips">{{ active['negative_price_skips'] }}</span>
             </div>
         </div>
     </div>
@@ -580,6 +593,11 @@
                 <td>{{ stats['yesterday']['soc_target_skips'] }}</td>
             </tr>
             <tr>
+                <td>Negative-price skips</td>
+                <td>{{ stats['today']['negative_price_skips'] }}</td>
+                <td>{{ stats['yesterday']['negative_price_skips'] }}</td>
+            </tr>
+            <tr>
                 <td>Grid cost</td>
                 <td title="{{ '{:.4f}'.format(stats['today']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['today']['cost_eur'] / 100.0) }} €</td>
                 <td title="{{ '{:.4f}'.format(stats['yesterday']['cost_eur']) }} ¢">{{ "{:.4f}".format(stats['yesterday']['cost_eur'] / 100.0) }} €</td>
@@ -653,6 +671,10 @@
                 <td>SOC-target skips total</td>
                 <td>{{ stats['soc_target_skip_total'] }}</td>
             </tr>
+            <tr>
+                <td>Negative-price skips total</td>
+                <td>{{ stats['negative_price_skip_total'] }}</td>
+            </tr>
         </tbody>
     </table>
 
@@ -715,6 +737,7 @@
                 setText('tile-battery-overnext-skips', get('battery-overnext-skips') || '0');
                 setText('tile-battery-expensive-phase-skips', get('battery-expensive-phase-skips') || '0');
                 setText('tile-soc-target-skips', get('soc-target-skips') || '0');
+                setText('tile-negative-price-skips', get('negative-price-skips') || '0');
 
                 // Cost: stored in cents, shown as EUR; tooltip keeps cents.
                 const costRaw = parseFloat(get('cost')) || 0;

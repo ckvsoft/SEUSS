@@ -259,6 +259,7 @@ class SEUSSWeb:
         battery_overnext_skip_by_day = skip_count_by_day.get("battery_overnext") if isinstance(skip_count_by_day.get("battery_overnext"), dict) else {}
         battery_expensive_phase_skip_by_day = skip_count_by_day.get("battery_expensive_phase") if isinstance(skip_count_by_day.get("battery_expensive_phase"), dict) else {}
         soc_target_skip_by_day = skip_count_by_day.get("soc_target") if isinstance(skip_count_by_day.get("soc_target"), dict) else {}
+        negative_price_skip_by_day = skip_count_by_day.get("negative_price_ahead") if isinstance(skip_count_by_day.get("negative_price_ahead"), dict) else {}
 
         # Lifetime skip totals.
         solar_skip_total = sm.get_data("aborts", "solar_forecast_total") or 0
@@ -266,6 +267,7 @@ class SEUSSWeb:
         battery_overnext_skip_total = sm.get_data("aborts", "battery_overnext_total") or 0
         battery_expensive_phase_skip_total = sm.get_data("aborts", "battery_expensive_phase_total") or 0
         soc_target_skip_total = sm.get_data("aborts", "soc_target_total") or 0
+        negative_price_skip_total = sm.get_data("aborts", "negative_price_ahead_total") or 0
 
         # Battery capacity for cycle calc -- read from StatsManager
         # where seusscore.run_essunit persists it. Victron reports
@@ -317,6 +319,7 @@ class SEUSSWeb:
                 "battery_overnext_skips": int(battery_overnext_skip_by_day.get(iso_date, 0)),
                 "battery_expensive_phase_skips": int(battery_expensive_phase_skip_by_day.get(iso_date, 0)),
                 "soc_target_skips": int(soc_target_skip_by_day.get(iso_date, 0)),
+                "negative_price_skips": int(negative_price_skip_by_day.get(iso_date, 0)),
             }
 
         # ---- Aggregation helpers for multi-day tabs ----
@@ -362,6 +365,10 @@ class SEUSSWeb:
                 (v or 0) for k, v in (soc_target_skip_by_day or {}).items()
                 if isinstance(k, str) and start_iso <= k <= end_iso
             )
+            negative_price_skips = sum(
+                (v or 0) for k, v in (negative_price_skip_by_day or {}).items()
+                if isinstance(k, str) and start_iso <= k <= end_iso
+            )
             return {
                 "iso": f"{start_iso} \u2192 {end_iso}",
                 "consumption_wh": _sum_range(consumption_by_day, start_iso, end_iso),
@@ -380,6 +387,7 @@ class SEUSSWeb:
                 "battery_overnext_skips": int(battery_overnext_skips),
                 "battery_expensive_phase_skips": int(battery_expensive_phase_skips),
                 "soc_target_skips": int(soc_target_skips),
+                "negative_price_skips": int(negative_price_skips),
             }
 
         today = date.today()
@@ -497,6 +505,7 @@ class SEUSSWeb:
             "battery_overnext_skip_total": int(battery_overnext_skip_total),
             "battery_expensive_phase_skip_total": int(battery_expensive_phase_skip_total),
             "soc_target_skip_total": int(soc_target_skip_total),
+            "negative_price_skip_total": int(negative_price_skip_total),
             "intraday_svg": intraday_svg,
             "history_svg": history_svg,
             "solar_history_svg": solar_history_svg,
