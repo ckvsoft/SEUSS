@@ -100,8 +100,50 @@ class PvInverterResults(MqttResult):
             custom_name = f"device_{device_id}"
 
         stats_manager_instance = StatsManager()
+
+        # Race-condition guard: when SEUSS starts late in the day
+        # (e.g. 10:55 after a maintenance window) and MQTT still
+        # publishes the last value from before the restart -- which
+        # is also the value persisted as forward_start from the
+        # previous evening -- the daily-reset logic would commit
+        # that stale value as TODAY'S forward_start. Result: today's
+        # yield reads 0 Wh until OpenDTU sends a fresh tick, and
+        # any production from before SEUSS started is lost
+        # entirely.
+        #
+        # If the incoming MQTT value is identical to the persisted
+        # forward_start, that's a strong signal we have a stale
+        # cache value. Skip the daily-reset and return 0.0 for
+        # this tick; the next tick will see a real updated value
+        # and commit it correctly.
+        prior_start = stats_manager_instance.get_data(
+            "pvinverters", f"{custom_name}_forward_start"
+        )
+        if prior_start is not None and forward == prior_start:
+            self.logger.log.debug(
+                f"PV inverter {custom_name}: MQTT forward value "
+                f"({forward}) matches persisted forward_start exactly "
+                f"-- treating as stale tick, deferring daily reset."
+            )
+            return 0.0
+
         stats_manager_instance.insert_new_daily_status_data("pvinverters", f"{custom_name}_forward_start", forward)
         forward_start = stats_manager_instance.get_data("pvinverters", f"{custom_name}_forward_start")
+        # Defensive: if insert_new_daily_status_data failed to commit
+        # (e.g. value was invalid, or the pvinverters group got mangled),
+        # forward_start can still be None. Without this guard the next
+        # subtraction throws TypeError and the whole eval cycle aborts.
+        # Fall back to the incoming value -> today's yield reads as 0
+        # for this tick, which is the safest "lost the start marker"
+        # behaviour.
+        if forward_start is None:
+            self.logger.log.warning(
+                f"PV inverter {custom_name}: forward_start unavailable "
+                f"after insert_new_daily_status_data -- falling back "
+                f"to current MQTT value, today's yield will start "
+                f"counting from now."
+            )
+            forward_start = forward
         forward = forward - forward_start
         return float(forward * pi)
 
