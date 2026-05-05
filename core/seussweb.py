@@ -422,6 +422,25 @@ class SEUSSWeb:
         cur_hour = _dt.now().hour
         for h in range(cur_hour + 1, 24):
             hourly_today[h] = 0
+        # The CURRENT hour is still running -- save_hour() only commits
+        # the bucket value at hour rollover, so hourly_today[cur_hour]
+        # is 0 until then. Patch in the live in-progress value from
+        # `hourly_wh` (a [wh_so_far, hour_start_timestamp] pair) so the
+        # chart shows a growing bar for the running hour instead of an
+        # empty slot. Only override when we don't already have a real
+        # commit -- a non-zero stored value means the hour rolled over
+        # mid-update and the live counter is now zero / next-hour.
+        try:
+            live_pair = sm.get_data("powerconsumption", "hourly_wh")
+            if isinstance(live_pair, (list, tuple)) and live_pair:
+                live_wh = float(live_pair[0]) if live_pair[0] is not None else 0.0
+                if live_wh > 0 and (
+                    hourly_today[cur_hour] is None
+                    or hourly_today[cur_hour] == 0
+                ):
+                    hourly_today[cur_hour] = round(live_wh, 2)
+        except Exception:
+            pass
         hourly_yesterday = hourly_by_day.get(yesterday_iso) or [0] * 24
         if not isinstance(hourly_yesterday, list) or len(hourly_yesterday) != 24:
             hourly_yesterday = [0] * 24
@@ -654,11 +673,14 @@ class SEUSSWeb:
                     f'width="{bar_w}" height="{bar_h}" '
                     f'fill="#bbb" opacity="0.55"/>'
                 )
-            # Today: same width, blue, in front
+            # Today: same full width, shifted a few px to the right
+            # so the yesterday bar peeks out on the left side and
+            # both values stay readable when today >= yesterday.
             if y_h > 0:
                 bar_h = y_h * scale
+                today_x = x_base + 4
                 group_parts.append(
-                    f'<rect x="{x_base}" y="{baseline_y - bar_h}" '
+                    f'<rect x="{today_x}" y="{baseline_y - bar_h}" '
                     f'width="{bar_w}" height="{bar_h}" '
                     f'fill="#4285f4"/>'
                 )
