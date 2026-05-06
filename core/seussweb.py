@@ -584,6 +584,30 @@ class SEUSSWeb:
                 }
                 for h in range(24)
             ],
+            # Battery sessions: continuous charge/discharge phases that
+            # ignore midnight rollover. The `current` dict shows what's
+            # happening right now (or empty if idle); `history` is the
+            # last 7 days of finalised sessions. Lets the user see the
+            # actual energy moved through the battery in one cycle
+            # rather than chopped at midnight.
+            "battery_sessions": (lambda: {
+                "current": (
+                    sm.get_data("powerconsumption", "battery_session_current")
+                    if isinstance(
+                        sm.get_data("powerconsumption", "battery_session_current"),
+                        dict,
+                    )
+                    else {}
+                ),
+                "history": (
+                    (sm.get_data("powerconsumption", "battery_session_history") or {}).get("items", [])
+                    if isinstance(
+                        sm.get_data("powerconsumption", "battery_session_history"),
+                        dict,
+                    )
+                    else []
+                ),
+            })(),
         }
 
         return template('stats', stats=stats_data,

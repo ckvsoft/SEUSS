@@ -605,6 +605,104 @@
         </tbody>
     </table>
 
+    <h3 class="stats-section-heading">Battery Sessions
+        <button type="button" id="sessions-toggle"
+                style="margin-left:1em; font-size:0.75em; padding:0.2em 0.6em; cursor:pointer;">
+            Show day totals instead
+        </button>
+    </h3>
+    <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
+        Continuous charge/discharge phases that ignore the midnight rollover.
+        Better than per-day totals when a discharge spans two calendar days
+        (e.g. evening to next afternoon). The current session is what's
+        happening right now; below it, the last 7 days of finalised sessions.
+        Brief reversals (PV blip during discharge) of less than 10 minutes are
+        absorbed into the same session.
+    </p>
+    % bs = stats.get('battery_sessions', {}) or {}
+    % cur = bs.get('current') or {}
+    % hist = bs.get('history') or []
+    % if cur.get('type'):
+        <div class="stats-tile-grid">
+            <div class="stats-tile">
+                <div class="label">Running ({{ cur.get('type', '') }})</div>
+                <div class="value">
+                    <span>{{ "{:.0f}".format(cur.get('wh', 0) or 0) }}</span>
+                    <span class="unit">Wh</span>
+                </div>
+            </div>
+            <div class="stats-tile">
+                <div class="label">Started</div>
+                <div class="value">
+                    <span style="font-size:0.75em">{{ (cur.get('start') or '--')[:16].replace('T', ' ') }}</span>
+                </div>
+            </div>
+            <div class="stats-tile">
+                <div class="label">SOC start → now</div>
+                <div class="value">
+                    <span>{{ "--" if cur.get('soc_start_pct') is None else "{:.0f}".format(cur.get('soc_start_pct')) }}</span>
+                    <span class="unit">→ {{ "--" if cur.get('soc_now_pct') is None else "{:.0f}".format(cur.get('soc_now_pct')) }}%</span>
+                </div>
+            </div>
+        </div>
+    % else:
+        <p style="opacity:0.6; font-style:italic;">No active charge or discharge session right now.</p>
+    % end
+    % if hist:
+        <table class="stats-compare" style="margin-top:1em;">
+            <thead>
+                <tr><th>Type</th><th>Start</th><th>Duration</th><th>Energy</th><th>SOC</th></tr>
+            </thead>
+            <tbody>
+                % for s in reversed(hist):
+                <tr>
+                    <td>{{ s.get('type', '--') }}</td>
+                    <td>{{ (s.get('start') or '--')[:16].replace('T', ' ') }}</td>
+                    <td>{{ "--" if s.get('duration_h') is None else "{:.1f} h".format(s.get('duration_h')) }}</td>
+                    <td>{{ "{:.0f}".format(s.get('wh', 0) or 0) }} Wh</td>
+                    <td>{{ "--" if s.get('soc_start_pct') is None else "{:.0f}".format(s.get('soc_start_pct')) }}% → {{ "--" if s.get('soc_end_pct') is None else "{:.0f}".format(s.get('soc_end_pct')) }}%</td>
+                </tr>
+                % end
+            </tbody>
+        </table>
+    % else:
+        <p style="opacity:0.6; font-style:italic;">No completed sessions yet -- the table will fill in as battery cycles complete.</p>
+    % end
+
+    <div id="day-totals-block" style="display:none;">
+        <h4 class="stats-section-heading" style="margin-top:1.5em;">Per-day battery totals (calendar-day chunks)</h4>
+        <p style="font-size: 0.9em; opacity: 0.85;">
+            The legacy per-day view: charge and discharge totals reset at midnight,
+            so a session spanning two days appears split.
+        </p>
+        <table class="stats-compare">
+            <thead>
+                <tr>
+                    <th>Day</th>
+                    <th>Charged</th>
+                    <th>Discharged</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Today ({{ stats['today']['iso'] }})</td>
+                    <td>{{ "{:.0f}".format(stats['today']['battery_charge_wh']) }} Wh</td>
+                    <td>{{ "{:.0f}".format(stats['today']['battery_discharge_wh']) }} Wh</td>
+                </tr>
+                <tr>
+                    <td>Yesterday ({{ stats['yesterday']['iso'] }})</td>
+                    <td>{{ "{:.0f}".format(stats['yesterday']['battery_charge_wh']) }} Wh</td>
+                    <td>{{ "{:.0f}".format(stats['yesterday']['battery_discharge_wh']) }} Wh</td>
+                </tr>
+                <tr>
+                    <td>7 Days</td>
+                    <td>{{ "{:.0f}".format(stats['week']['battery_charge_wh']) }} Wh</td>
+                    <td>{{ "{:.0f}".format(stats['week']['battery_discharge_wh']) }} Wh</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
     <h3 class="stats-section-heading">Today's Hourly Energy Balance</h3>
     <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
         Per-hour breakdown of today's energy balance. <b>Loss</b> is non-negative
@@ -884,6 +982,33 @@
             }
 
             connectWS();
+
+            // Battery sessions toggle: clicking the button hides the
+            // session view and shows the legacy per-day totals block,
+            // and back. Persists choice in sessionStorage so a tab
+            // refresh keeps the chosen view.
+            const toggleBtn = document.getElementById('sessions-toggle');
+            const dayBlock = document.getElementById('day-totals-block');
+            // Anchor: the section heading + everything until the day-block.
+            const sessionHeading = toggleBtn ? toggleBtn.closest('h3') : null;
+            function applyView(showDay) {
+                if (!sessionHeading || !dayBlock) return;
+                let n = sessionHeading.nextElementSibling;
+                while (n && n !== dayBlock) {
+                    n.style.display = showDay ? 'none' : '';
+                    n = n.nextElementSibling;
+                }
+                dayBlock.style.display = showDay ? '' : 'none';
+                if (toggleBtn) {
+                    toggleBtn.textContent = showDay ? 'Show sessions instead' : 'Show day totals instead';
+                }
+            }
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', function() {
+                    const cur = dayBlock.style.display !== 'none';
+                    applyView(!cur);
+                });
+            }
         })();
     </script>
 </body>

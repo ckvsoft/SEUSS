@@ -333,6 +333,18 @@ class PowerConsumptionBase:
         # "1234 Wh discharged" than "-1234".
         self.daily_battery_charge_wh = 0
         self.daily_battery_discharge_wh = 0
+        # Battery session tracker. Tracks continuous charge/discharge
+        # phases across day boundaries. `current_session` holds the
+        # running session (or None if neither direction has hit the
+        # threshold yet); `session_history` is the last 7 days of
+        # finalised sessions, capped at ~50 entries. Pause-tolerance
+        # threshold and grace period are tuned so a brief reversal
+        # (e.g. PV blip during discharge) doesn't end the session.
+        self.current_session = None
+        self.session_history = []
+        self.session_threshold_w = 50.0
+        self.session_pause_max_s = 600
+        self._session_pending_flip_until = None
         # Diagnostic accumulators for energy-balance integrity.
         # daily_loss_wh:  integrated max(input - usable, 0). Same
         #     "Loss" definition that process_data() shows as a single
@@ -529,6 +541,20 @@ class PowerConsumptionBase:
         self.last_pv_value, _ = _as_pair(last_pv_value_list, (0, time.time()))
         self.last_battery_value, _ = _as_pair(last_battery_value_list, (0, time.time()))
 
+        # Restore battery session state across restarts so the running
+        # session's wh accumulator and the 7-day history survive.
+        sess_current = self.statsmanager.get_data("powerconsumption", "battery_session_current")
+        if isinstance(sess_current, dict) and sess_current.get("type"):
+            self.current_session = sess_current
+        else:
+            self.current_session = None
+        sess_hist = self.statsmanager.get_data("powerconsumption", "battery_session_history")
+        if isinstance(sess_hist, dict) and isinstance(sess_hist.get("items"), list):
+            self.session_history = sess_hist["items"]
+        else:
+            self.session_history = []
+        self._session_pending_flip_until = None
+
         energy_costs_by_hour = self.statsmanager.get_data("powerconsumption", "energy_costs_by_hour")
 
         # All `*_by_day` dicts are now keyed by ISO-date. Earlier builds
@@ -658,6 +684,16 @@ class PowerConsumptionBase:
         self.statsmanager.set_status_data("powerconsumption","loss_wh_by_hour_today", self.loss_wh_by_hour_today, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","imbalance_wh_by_hour_today", self.imbalance_wh_by_hour_today, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","pv_wh_by_hour_today", self.pv_wh_by_hour_today, save_data=False)
+        # Battery sessions: persisted as dicts so the stats handler
+        # can read them without instantiating PowerConsumption.
+        self.statsmanager.set_status_data(
+            "powerconsumption", "battery_session_current",
+            self.current_session if self.current_session else {},
+        )
+        self.statsmanager.set_status_data(
+            "powerconsumption", "battery_session_history",
+            {"items": self.session_history},
+        )
 
         if logging:
             self.logger.log.debug("data saved.")
@@ -942,6 +978,22 @@ class PowerConsumptionBase:
         elif battery_dt_wh < 0:
             self.daily_battery_discharge_wh += -battery_dt_wh
 
+        # Session tracking: aggregate energy across the natural
+        # charge/discharge cycle, ignoring the midnight rollover.
+        # A "session" starts when the battery flips direction and
+        # stays that way; brief reversals (e.g. PV blip while mostly
+        # discharging) don't end the session. The user sees how much
+        # was actually drained/filled in the current cycle, regardless
+        # of how many calendar days it spans.
+        try:
+            self._update_battery_session(
+                battery_dt_wh, timestamp,
+            )
+        except Exception as exc:
+            self.logger.log.debug(
+                f"battery session tracker hiccup: {exc}"
+            )
+
         # Diagnostic energy-balance integration (sanity-check fields).
         # Same definition of input/usable as process_data() uses, but
         # integrated over the timestep:
@@ -1070,6 +1122,118 @@ class PowerConsumptionBase:
         self.last_battery_value = battery_power or 0
         self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
+
+    def _update_battery_session(self, battery_dt_wh, timestamp):
+        """
+        Maintain the battery session tracker.
+
+        A session is a continuous charge or discharge phase. We tolerate
+        brief reversals (PV blip during discharge, momentary draw during
+        charge) up to `session_pause_max_s` -- if the battery returns to
+        the original direction within that window, the session keeps
+        accumulating. If not, the running session is finalised into
+        `session_history` and a new one starts.
+
+        SOC is read off the live ESS unit if available; otherwise it's
+        recorded as None and the UI shows "--".
+        """
+        from datetime import datetime, timezone
+
+        battery_p = self.last_battery_value or 0
+        # Pull SOC if essunit is wired up. Best-effort: don't break the
+        # update loop if the call throws.
+        soc_now = None
+        try:
+            ess = getattr(self, "essunit", None) or getattr(self, "_essunit", None)
+            if ess and hasattr(ess, "get_soc"):
+                soc_now = ess.get_soc()
+        except Exception:
+            soc_now = None
+
+        # Direction classification with hysteresis on power magnitude.
+        # Below threshold = "idle" -- doesn't open a session, doesn't
+        # close one either.
+        if battery_p > self.session_threshold_w:
+            current_dir = "charge"
+        elif battery_p < -self.session_threshold_w:
+            current_dir = "discharge"
+        else:
+            current_dir = None  # idle, neither
+
+        ts_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
+        ts_epoch = timestamp if isinstance(timestamp, (int, float)) else None
+
+        # Case 1: no running session yet
+        if self.current_session is None:
+            if current_dir is not None:
+                self.current_session = {
+                    "type": current_dir,
+                    "start": ts_iso,
+                    "wh": 0.0,
+                    "soc_start_pct": soc_now,
+                    "soc_now_pct": soc_now,
+                }
+                self._session_pending_flip_until = None
+            return
+
+        sess_type = self.current_session["type"]
+
+        # Case 2: same direction (or idle) -> just integrate energy
+        if current_dir is None or current_dir == sess_type:
+            if sess_type == "charge" and battery_dt_wh > 0:
+                self.current_session["wh"] += battery_dt_wh
+            elif sess_type == "discharge" and battery_dt_wh < 0:
+                self.current_session["wh"] += -battery_dt_wh
+            self.current_session["soc_now_pct"] = soc_now
+            # Reset any pending flip -- direction came back.
+            self._session_pending_flip_until = None
+            return
+
+        # Case 3: opposite direction. Tolerate up to pause_max_s before
+        # actually flipping the session.
+        if self._session_pending_flip_until is None and ts_epoch is not None:
+            self._session_pending_flip_until = ts_epoch + self.session_pause_max_s
+            return  # one tick of grace, don't decide yet
+
+        if ts_epoch is not None and ts_epoch < self._session_pending_flip_until:
+            # Still inside the grace window. Don't finalize yet, but
+            # don't accumulate to the (wrong-direction) session either.
+            return
+
+        # Grace expired (or no epoch info -> commit immediately).
+        # Finalise old session, start new one.
+        old = self.current_session
+        old["end"] = ts_iso
+        old["soc_end_pct"] = soc_now
+        # Compute duration from start->end if both parseable.
+        try:
+            t0 = datetime.fromisoformat(old["start"])
+            t1 = datetime.fromisoformat(old["end"])
+            old["duration_h"] = round((t1 - t0).total_seconds() / 3600.0, 2)
+        except Exception:
+            old["duration_h"] = None
+        # Prune to last 7 days.
+        self.session_history.append(old)
+        cutoff = datetime.now(timezone.utc).timestamp() - 7 * 86400
+        kept = []
+        for s in self.session_history:
+            try:
+                t0 = datetime.fromisoformat(s["start"]).timestamp()
+                if t0 >= cutoff:
+                    kept.append(s)
+            except Exception:
+                kept.append(s)
+        self.session_history = kept[-50:]  # hard cap
+
+        # Start a new session in the new direction.
+        self.current_session = {
+            "type": current_dir,
+            "start": ts_iso,
+            "wh": 0.0,
+            "soc_start_pct": soc_now,
+            "soc_now_pct": soc_now,
+        }
+        self._session_pending_flip_until = None
 
     def get_hourly_average(self):
         """Calculates the projected hourly average."""
