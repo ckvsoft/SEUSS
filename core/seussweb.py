@@ -504,6 +504,29 @@ class SEUSSWeb:
             except (ValueError, TypeError):
                 pass
 
+        # The current-hour bucket only commits at the hour rollover, so
+        # while a sunny hour is still running the cumulative chart lags
+        # by however much PV was just produced. Pull the live daily PV
+        # total (which IS updated continuously, including the fix47
+        # forward-counter override) and adopt the difference into the
+        # current hour. Net effect: the chart matches the "PV today"
+        # tile in real time instead of stair-stepping at hour boundaries.
+        try:
+            from datetime import datetime as _dt
+            cur_h = _dt.now().hour
+            daily_pv_total = sm.get_data("powerconsumption", "daily_pv_wh") or 0
+            if isinstance(daily_pv_total, (int, float)) and daily_pv_total > 0:
+                committed_sum = sum(actual_hourly_today[:cur_h])
+                live_current_hour = max(
+                    0.0, float(daily_pv_total) - committed_sum
+                )
+                # Only override if it's larger than the committed bucket;
+                # we never want to shrink a known value.
+                if live_current_hour > actual_hourly_today[cur_h]:
+                    actual_hourly_today[cur_h] = live_current_hour
+        except Exception:
+            pass
+
         today_solar_svg = self._render_today_solar_svg(
             forecast_hourly_today, actual_hourly_today
         )
