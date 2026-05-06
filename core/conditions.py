@@ -1341,14 +1341,17 @@ class Conditions:
                 kind_dict = {}
             kind_dict[today] = int(kind_dict.get(today, 0)) + 1
             by_day[kind] = kind_dict
+            # Use save_data=True so the counter survives an unexpected
+            # restart between now and the next reguler save. Aborts
+            # fire infrequently enough that the disk write is cheap.
             self.statsmanager.set_status_data(
-                "aborts", "skip_count_by_day", by_day, save_data=False
+                "aborts", "skip_count_by_day", by_day,
             )
 
             total_key = f"{kind}_total"
             current_total = self.statsmanager.get_data("aborts", total_key) or 0
             self.statsmanager.set_status_data(
-                "aborts", total_key, int(current_total) + 1, save_data=False
+                "aborts", total_key, int(current_total) + 1,
             )
         except Exception as e:
             self.logger.log.debug(f"Skip-counter update failed: {e}")

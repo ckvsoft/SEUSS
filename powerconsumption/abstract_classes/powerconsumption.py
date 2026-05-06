@@ -1140,14 +1140,13 @@ class PowerConsumptionBase:
         from datetime import datetime, timezone
 
         battery_p = self.last_battery_value or 0
-        # Pull SOC if essunit is wired up. Best-effort: don't break the
-        # update loop if the call throws.
-        soc_now = None
+        # SOC is set on the same instance by the MQTT receiver. Use
+        # getattr to avoid AttributeError if no SOC has been seen yet
+        # (e.g. early in startup before the first SOC topic).
+        soc_now = getattr(self, "soc", None)
         try:
-            ess = getattr(self, "essunit", None) or getattr(self, "_essunit", None)
-            if ess and hasattr(ess, "get_soc"):
-                soc_now = ess.get_soc()
-        except Exception:
+            soc_now = float(soc_now) if soc_now is not None else None
+        except (TypeError, ValueError):
             soc_now = None
 
         # Direction classification with hysteresis on power magnitude.
@@ -1184,7 +1183,14 @@ class PowerConsumptionBase:
                 self.current_session["wh"] += battery_dt_wh
             elif sess_type == "discharge" and battery_dt_wh < 0:
                 self.current_session["wh"] += -battery_dt_wh
-            self.current_session["soc_now_pct"] = soc_now
+            # Always update soc_now if we have a fresh reading. Also
+            # backfill soc_start_pct if it was None at session start
+            # (SOC topic hadn't arrived yet) -- using the first valid
+            # reading is closer to the truth than leaving it None.
+            if soc_now is not None:
+                self.current_session["soc_now_pct"] = soc_now
+                if self.current_session.get("soc_start_pct") is None:
+                    self.current_session["soc_start_pct"] = soc_now
             # Reset any pending flip -- direction came back.
             self._session_pending_flip_until = None
             return
