@@ -314,6 +314,36 @@ class SEUSS:
         self.logger.log.info(
             f"All Inverters yield today (forward-counter sum):  {round(inverter_sum_today_wh, 2)} Wh, "
             f"authoritative PV measured today (GX-bus): {round(pv_measured_today_wh, 2)} Wh.")
+
+        # Authoritative override: the inverter forward-counter is
+        # robust against SEUSS being offline (the inverter keeps
+        # counting on its own). The GX-bus integration we run in
+        # PowerConsumption can only count PV power it actually saw
+        # tick-by-tick, so any restart, network hiccup, or process
+        # downtime leaves a gap. If the forward-counter sum is higher
+        # than the integrated value, the gap exists -- adopt the
+        # counter value as the authoritative "PV today" so the stats
+        # page, pv_wh_by_day, and the openmeteo learning loop see
+        # the real yield. We only adjust UPWARD; if the counter is
+        # somehow lower (forward_start race condition, counter reset)
+        # we keep the integrated value to avoid going backwards.
+        if (inverter_sum_today_wh > 0
+                and inverter_sum_today_wh > pv_measured_today_wh):
+            gap = inverter_sum_today_wh - pv_measured_today_wh
+            self.logger.log.info(
+                f"PV gap detected: integrator {pv_measured_today_wh:.0f} Wh "
+                f"vs forward-counter {inverter_sum_today_wh:.0f} Wh "
+                f"(+{gap:.0f} Wh). Adopting counter value."
+            )
+            try:
+                if manager_instance and hasattr(manager_instance, "set_daily_pv_wh"):
+                    manager_instance.set_daily_pv_wh(inverter_sum_today_wh)
+                pv_measured_today_wh = inverter_sum_today_wh
+            except Exception as e:
+                self.logger.log.warning(
+                    f"Couldn't apply forward-counter override: {e}"
+                )
+
         # Push the authoritative value to solardata, NOT the inverter
         # forward-counter sum -- see method docstring for why.
         self.solardata.update_pv_measured_today_wh(round(pv_measured_today_wh, 2))

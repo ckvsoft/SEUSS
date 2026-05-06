@@ -1184,12 +1184,15 @@ class PowerConsumptionBase:
             elif sess_type == "discharge" and battery_dt_wh < 0:
                 self.current_session["wh"] += -battery_dt_wh
             # Always update soc_now if we have a fresh reading. Also
-            # backfill soc_start_pct if it was None at session start
-            # (SOC topic hadn't arrived yet) -- using the first valid
-            # reading is closer to the truth than leaving it None.
+            # backfill soc_start_pct when it's still a placeholder
+            # (None or 0 -- the latter happens when self.soc was 0
+            # because no MQTT SOC topic had arrived yet at session
+            # start). Using the first valid reading is closer to the
+            # truth than leaving it at the placeholder.
             if soc_now is not None:
                 self.current_session["soc_now_pct"] = soc_now
-                if self.current_session.get("soc_start_pct") is None:
+                start_soc = self.current_session.get("soc_start_pct")
+                if start_soc is None or start_soc == 0:
                     self.current_session["soc_start_pct"] = soc_now
             # Reset any pending flip -- direction came back.
             self._session_pending_flip_until = None
@@ -1274,6 +1277,33 @@ class PowerConsumptionBase:
     def get_daily_pv_wh(self):
         """Returns the current daily PV production in Wh."""
         return self.daily_pv_wh
+
+    def set_daily_pv_wh(self, value):
+        """
+        Override the integrated daily PV value with an authoritative
+        reading (e.g. the inverter forward-counter sum). Used by
+        seusscore.collect_meters_and_inverter_sum to fill in gaps left
+        by SEUSS downtime: the integrator only sees ticks while running,
+        the forward-counter is monotonic and survives restarts.
+
+        Also bumps pv_wh_by_day[today] so the stats page and the
+        openmeteo learning loop see the corrected value at their next
+        read. Only accepts non-negative numeric input; silently ignores
+        other types.
+        """
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        if v < 0:
+            return
+        self.daily_pv_wh = v
+        try:
+            from datetime import date
+            today_iso = date.today().isoformat()
+            self.pv_wh_by_day[today_iso] = round(v, 2)
+        except Exception:
+            pass
 
     def get_daily_battery_charge_wh(self):
         """Returns Wh that went INTO the battery today (sum of positive battery_power × dt)."""
