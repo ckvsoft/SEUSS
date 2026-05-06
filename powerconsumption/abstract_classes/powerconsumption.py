@@ -1286,9 +1286,13 @@ class PowerConsumptionBase:
         by SEUSS downtime: the integrator only sees ticks while running,
         the forward-counter is monotonic and survives restarts.
 
-        Also bumps pv_wh_by_day[today] so the stats page and the
-        openmeteo learning loop see the corrected value at their next
-        read. Only accepts non-negative numeric input; silently ignores
+        Also bumps pv_wh_by_day[today] AND the current-hour bucket in
+        pv_wh_by_hour_today so the hourly-resolution chart stays
+        consistent with the daily total. The gap is dropped into
+        whatever hour the override happens in -- not perfect attribution,
+        but better than letting the chart silently understate yield.
+
+        Only accepts non-negative numeric input; silently ignores
         other types.
         """
         try:
@@ -1297,11 +1301,22 @@ class PowerConsumptionBase:
             return
         if v < 0:
             return
+        gap = v - self.daily_pv_wh
         self.daily_pv_wh = v
         try:
-            from datetime import date
+            from datetime import date, datetime
             today_iso = date.today().isoformat()
             self.pv_wh_by_day[today_iso] = round(v, 2)
+            # Distribute the gap into the current hour bucket so the
+            # cumulative hourly chart matches the daily total.
+            if gap > 0 and hasattr(self, "pv_wh_by_hour_today"):
+                cur_hour = str(datetime.now().hour)
+                cur_val = self.pv_wh_by_hour_today.get(cur_hour, 0) or 0
+                try:
+                    cur_val = float(cur_val)
+                except (TypeError, ValueError):
+                    cur_val = 0.0
+                self.pv_wh_by_hour_today[cur_hour] = round(cur_val + gap, 2)
         except Exception:
             pass
 
