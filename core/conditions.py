@@ -975,7 +975,39 @@ class Conditions:
                 # handle the current cycle.
                 return False
 
-            phase_end = min(future_charge_starts)
+            # Find the next REAL expensive phase. The naive
+            # `min(future_charge_starts)` would be the next cluster --
+            # but if cheap hours run consecutively (e.g. 11, 12, 13, 14
+            # are all charge clusters), the gap between them is only
+            # one hour and the bridge would always evaluate as
+            # "0.2h until next cluster, easy to bridge", causing the
+            # battery to never fill up during the long cheap window
+            # in preparation for an actual long expensive evening.
+            #
+            # Walk the sorted list of future cluster starts and find
+            # the FIRST cluster that has a >= 1h gap to the previous
+            # one. That cluster is the start of the post-expensive
+            # cheap window; the expensive phase ends right there.
+            future_charge_starts.sort()
+            phase_end = future_charge_starts[0]
+            cluster_block_h = 1.0  # blocks are 60 min
+            gap_threshold_h = 1.5  # >1h gap = expensive phase between
+            for i, start in enumerate(future_charge_starts):
+                if i == 0:
+                    continue
+                prev = future_charge_starts[i - 1]
+                gap_h = (start - prev).total_seconds() / 3600.0
+                if gap_h >= gap_threshold_h:
+                    phase_end = start
+                    break
+            else:
+                # All future clusters are contiguous -- the expensive
+                # phase only starts AFTER the last one. So the phase
+                # ends with the last known cluster's end + 1h-block.
+                # This is the conservative choice: we plan for the
+                # expensive phase to be at least one hour long.
+                phase_end = future_charge_starts[-1]
+
             total_hours = max(
                 0.0, (phase_end - now_utc).total_seconds() / 3600
             )
