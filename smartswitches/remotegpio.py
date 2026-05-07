@@ -37,7 +37,7 @@ class Remotegpio(SmartSwitch):
         self.user = kwargs.get("user", "")
         self.password = kwargs.get("password", "")
 
-        self.ips = self.ips.split("|") if "|" in self.ips else [self.ips]
+        # self.ips is already a list (parsed by SmartSwitch base).
         self.pin_groups = [grp.split(",") for grp in kwargs.get("pins", "").split("|")]
 
         self.ips, self.pin_groups = self._filter_ips_and_pins(self.ips, self.pin_groups)

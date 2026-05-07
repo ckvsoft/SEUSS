@@ -5,8 +5,7 @@ import requests
 class Shelly(SmartSwitch):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Filter out disabled IPs
-        self.ips = self.ips.split("|")
+        # self.ips is already a list (parsed by SmartSwitch base).
         self._filter_disabled_ips()
 
     def turn_on(self):

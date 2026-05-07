@@ -48,7 +48,21 @@ class SmartSwitch:
     def __init__(self, **kwargs) -> None:
         self.logger = CustomLogger()
         self.name = kwargs.get("name", "")
-        self.ips = kwargs.get("ips", "")
+        # Normalize ips to a list once here, in the abstract base. The
+        # config delivers a pipe-separated string; subclasses used to
+        # do `self.ips = self.ips.split("|")` themselves which left
+        # `self.ips` as a string during the brief window between abstract
+        # and subclass __init__ -- and broke any helper that ran in
+        # between (e.g. get_ip_settings) when it tried to split() a list.
+        # Single source of truth: self.ips is ALWAYS a list of strings.
+        ips_raw = kwargs.get("ips", "")
+        if isinstance(ips_raw, list):
+            self.ips = [str(p).strip() for p in ips_raw]
+        elif isinstance(ips_raw, str):
+            self.ips = [p.strip() for p in ips_raw.split("|")] if ips_raw else []
+        else:
+            self.ips = []
+
         self.user = kwargs.get("user", "")
         self.password = kwargs.get("password", "")
         self.enabled = kwargs.get("enable", "")
@@ -60,7 +74,7 @@ class SmartSwitch:
 
         # Filter out disabled IPs (those starting with '!')
         self.active_ips = [
-            ip.strip() for ip in self.ips.split("|") if not ip.startswith("!")
+            ip for ip in self.ips if not ip.startswith("!")
         ]
 
     def turn_on(self):
@@ -101,8 +115,9 @@ class SmartSwitch:
         Itemlist.get_lowest_charging_blocks().
         """
         try:
+            # self.ips is normalized to a list in __init__.
             ips_list = [
-                p.strip() for p in self.ips.split("|") if not p.startswith("!")
+                p for p in self.ips if not p.startswith("!")
             ]
             position = ips_list.index(ip)
         except ValueError:
