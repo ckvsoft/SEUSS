@@ -116,7 +116,17 @@ class Utils:
 
     @staticmethod
     def calculate_fee(base_value, fee_str):
-        if fee_str == "":
+        # Accept numeric fee values (int/float) directly -- they happen
+        # when a config delivers fees pre-parsed (e.g. JSON numbers
+        # rather than strings). Treat them as the literal cent value.
+        if isinstance(fee_str, (int, float)):
+            return float(fee_str)
+        if fee_str is None or fee_str == "":
+            return 0.0
+        if not isinstance(fee_str, str):
+            CustomLogger().log.warning(
+                f"Unexpected fee type {type(fee_str).__name__}: {fee_str!r}; treating as 0."
+            )
             return 0.0
 
         expr = fee_str.strip()
