@@ -116,11 +116,12 @@ class Utils:
 
     @staticmethod
     def calculate_fee(base_value, fee_str):
-        # Accept numeric fee values (int/float) directly -- they happen
-        # when a config delivers fees pre-parsed (e.g. JSON numbers
-        # rather than strings). Treat them as the literal cent value.
+        # Fees arrive as ct/kWh and have to land at potency 14 to add
+        # correctly to a price stored at potency 13 (the unit chain
+        # absorbs the /1000 between EUR/MWh and ct/kWh). See the
+        # operator-path comment below for the full reasoning.
         if isinstance(fee_str, (int, float)):
-            return float(fee_str)
+            return float(Utils.convert_to_millicents(float(fee_str), 14))
         if fee_str is None or fee_str == "":
             return 0.0
         if not isinstance(fee_str, str):
@@ -145,9 +146,10 @@ class Utils:
         }
 
         try:
-            # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
+            # Bare number string (e.g. "2.5" or "-2.5"). Convert to
+            # millicents at potency 14, same as the operator path.
             if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
-                return float(expr)
+                return float(Utils.convert_to_millicents(float(expr), 14))
 
             # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
             percentage_fee = 0.0
@@ -163,7 +165,14 @@ class Utils:
             matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr)
 
             for op, num in matches:
-                num = Utils.convert_to_millicents(float(num))
+                # Note: potency 14 here, not 13. Prices arrive as
+                # EUR/MWh (Awattar) or EUR/MWh-equivalent (Entsoe)
+                # and are stored at potency 13; millicent_to_cent
+                # divides by 10^14 to get back to ct/kWh. So a fee
+                # given in ct/kWh has to land at potency 14 to add
+                # correctly. Don't "fix" this without understanding
+                # the unit chain.
+                num = Utils.convert_to_millicents(float(num), 14)
                 fixed_fee = OPS[op](fixed_fee, num)
 
             return percentage_fee + fixed_fee
