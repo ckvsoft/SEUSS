@@ -38,7 +38,8 @@ from datetime import datetime, timedelta
 import core.version as version
 from core.statsmanager import StatsManager
 from core.websocketserver import WebSocketServer
-from solar.openmeteo import OpenMeteo
+from solar.openmeteo import OpenMeteo  # noqa: F401  (kept for backward compat)
+from solar.solarforecastmanager import SolarForecastManager
 from solar.solardata import Solardata
 from core.conditions import Conditions, ConditionResult
 from core.config import Config
@@ -350,7 +351,7 @@ class SEUSS:
         return inverter_sum_today_wh
 
     def process_solar_forecast(self, inverter_sum_today_wh):
-        forecast_provider = OpenMeteo()
+        forecast_provider = SolarForecastManager()
         # Now returns a dictionary
         forecast_results = forecast_provider.forecast(self.solardata)
 

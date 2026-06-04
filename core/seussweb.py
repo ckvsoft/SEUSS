@@ -1344,7 +1344,9 @@ class SEUSSWeb:
         names = {
             "awattar": "aWATTar",
             "entsoe": "ENTSO-e",
-            "tibber": "Tibber"
+            "tibber": "Tibber",
+            "openmeteo": "Open-Meteo",
+            "solcast": "Solcast",
         }
 
         config = self.config.config_data

@@ -210,6 +210,21 @@ class Config(Singleton):
                 "enabled": False
             }
 
+        ],
+        "solar_forecast_providers": [
+            {
+                "name": "OpenMeteo",
+                "primary": True,
+                "enabled": True
+            },
+            {
+                "name": "Solcast",
+                "primary": False,
+                "enabled": False,
+                "api_key": "",
+                "resource_ids": "",
+                "min_interval_minutes": 90
+            }
         ]
     }
 
@@ -226,6 +241,7 @@ class Config(Singleton):
             self.config_data = {}
             self.markets = []
             self.pv_panels = []
+            self.solar_forecast_providers = []
             self.ess_units = []
             self.essunit = None
             self.number_of_lowest_prices_for_charging = 0
@@ -363,6 +379,10 @@ class Config(Singleton):
 
         self.ess_units = config_data.get("ess_unit", [])
         self.pv_panels = config_data.get("pv_panels", [])
+        # New: list of forecast providers (OpenMeteo, Solcast, ...).
+        # Empty/missing -> SolarForecastManager falls back to OpenMeteo
+        # only (legacy behaviour).
+        self.solar_forecast_providers = config_data.get("solar_forecast_providers", [])
 
         self.essunit = self.find_ess_unit()
 

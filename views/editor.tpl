@@ -32,7 +32,7 @@
                     "delay_grid_charging_below_active_soc_limit",
                 ]
                 grouped_keys = set(solar_keys + battery_keys)
-                section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]
+                section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]
                 %>
                 % for key, value in config.items():
                     % if key not in section_keys and key not in grouped_keys:
@@ -160,6 +160,7 @@
                     <option value="markets">Markets</option>
                     <option value="pv_panels">Pv Panels</option>
                     <option value="smart_switches">Smart Switches</option>
+                    <option value="solar_forecast_providers">Solar Forecast Providers</option>
                     <!-- Weitere Optionen nach Bedarf hinzufügen -->
                 </select>
 
@@ -178,6 +179,10 @@
 
                 <div id="sectionFields_smart_switches" style="display: none;">
                     <!-- Felder für die Sektion "smart_switches" -->
+                </div>
+
+                <div id="sectionFields_solar_forecast_providers" style="display: none;">
+                    <!-- Felder für die Sektion "solar_forecast_providers" -->
                 </div>
 
                 <input type="submit" value="Save Configuration">
