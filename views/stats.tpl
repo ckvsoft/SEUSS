@@ -422,21 +422,24 @@
         <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
             No solar forecast recorded yet. The forecast runs as part of the
             normal evaluation cycle when at least one PV panel is enabled in
-            the configuration and Open-Meteo is reachable.
+            the configuration and at least one solar forecast provider is
+            reachable.
         </p>
     % else:
         <p style="font-size: 0.9em; opacity: 0.85; margin: 0.4em 0 0.8em 0;">
-            <b>Forecast Today</b> = the morning forecast openmeteo captured at
-            its first run today (frozen for the day). <b>Measured Today</b> =
-            cumulative PV yield since 00:00. <b>Forecast Tomorrow</b> = the
-            adjusted forecast for the full next day. The <b>adjustment factor</b>
-            is the EWMA-smoothed ratio of recent actual yield vs. the raw API
-            forecast, clipped to [0.2, 2.0]. SEUSS multiplies every raw API
-            number by this before showing it.
+            <b>Forecast Today</b> = the forecast captured by the active provider
+            at its first run today (frozen for the day, falling back to the
+            current live value if the morning capture failed).
+            <b>Measured Today</b> = cumulative PV yield since 00:00.
+            <b>Forecast Tomorrow</b> = the adjusted forecast for the full next
+            day. The <b>adjustment factor</b> is the EWMA-smoothed ratio of
+            recent actual yield vs. the raw provider forecast, clipped to
+            [0.2, 2.0]. SEUSS multiplies every raw provider number by this
+            before showing it.
         </p>
         <div class="stats-tile-grid">
             <div class="stats-tile"
-                 title="Adjusted total-day PV yield prediction openmeteo made on its first run today, frozen for the rest of the day. Compare with Measured Today as the day progresses to see how close the model came.">
+                 title="Adjusted total-day PV yield prediction the active provider made on its first run today, frozen for the rest of the day. If today's morning capture failed, falls back to the current live forecast value. Compare with Measured Today as the day progresses to see how close the model came.">
                 <div class="label">Forecast Today</div>
                 <div class="value">
                     <span>{{ "{:.0f}".format(sf.get('today_wh') or 0) }}</span>
@@ -460,7 +463,7 @@
                 </div>
             </div>
             <div class="stats-tile"
-                 title="Daytime-average cloud cover forecast from open-meteo for today (sunrise to sunset). Higher = more clouds = less PV yield. open-meteo already factors this into the GTI / yield forecast; shown here so the user can see WHY a forecast is low on a given day.">
+                 title="Daytime-average cloud cover forecast from the active provider for today (sunrise to sunset). Higher = more clouds = less PV yield. Open-Meteo factors this into its GTI / yield forecast internally; Solcast does not expose cloud cover and this tile may be blank when Solcast is active. Shown here so the user can see WHY a forecast is low on a given day.">
                 <div class="label">Cloud Cover Today</div>
                 <div class="value">
                     % cc_today = sf.get('cloudcover_today_avg_pct')
@@ -485,6 +488,21 @@
                     <span>{{ "--" if adj is None else "{:.2f}".format(adj) }}</span>
                 </div>
             </div>
+            <%
+                ap = sf.get('active_provider') or {}
+                ap_name = ap.get('name')
+                ap_age_str = ap.get('age_str')
+            %>
+            <div class="stats-tile"
+                 title="Which solar forecast provider produced the current numbers. The manager tries enabled providers in priority order (primary first, then fallbacks) and stops at the first success. The tile updates every evaluation cycle.">
+                <div class="label">Active Provider</div>
+                <div class="value">
+                    <span style="font-size: 0.8em;">{{ ap_name or "--" }}</span>
+                    % if ap_age_str:
+                        <span class="unit">{{ ap_age_str }}</span>
+                    % end
+                </div>
+            </div>
         </div>
     % end
 
@@ -504,7 +522,7 @@
     </div>
 
     %# Today's solar chart -- cumulative forecast vs. cumulative
-    %# actual PV over the day. Wakes up after the first openmeteo
+    %# actual PV over the day. Wakes up after the first provider
     %# run of the day captures the morning forecast, then the actual
     %# curve grows hour by hour as PV is integrated. Useful as a
     %# real-time "are we tracking the model?" gauge.

@@ -25,6 +25,7 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 import re
+import time
 from datetime import datetime, timedelta
 
 from core.utils import Utils
@@ -610,6 +611,25 @@ class SEUSSWeb:
                 "cloudcover_tomorrow_avg_pct": sm.get_data(
                     "solar", "cloudcover_tomorrow_avg_pct"
                 ),
+                # Currently active forecast provider -- set by the
+                # base class each time a provider successfully runs.
+                # We pre-format the age string here instead of in the
+                # template, both to avoid an import inside the .tpl
+                # and to keep "X min ago" / "Y h ago" in one place.
+                "active_provider": (lambda ap=sm.get_data("solar", "active_provider"): {
+                    "name": ap.get("name") if isinstance(ap, dict) else None,
+                    "age_str": (
+                        (lambda age_min: (
+                            "just now" if age_min < 1
+                            else f"{age_min} min ago" if age_min < 60
+                            else f"{age_min // 60} h ago"
+                        ))(int((time.time() - ap["ts"]) / 60))
+                        if isinstance(ap, dict)
+                            and isinstance(ap.get("ts"), (int, float))
+                            and ap["ts"] > 0
+                        else None
+                    ),
+                })(),
             })(),
             # Per-hour energy balance for today: list of 24 dicts with
             # hour, loss_wh, imbalance_wh. Hour slots without data show
@@ -960,7 +980,7 @@ class SEUSSWeb:
             return (
                 '<p style="color:#888;">'
                 'No solar forecast history yet. The chart will populate as '
-                "openmeteo's morning forecast accumulates day by day."
+                "the active provider's morning forecast accumulates day by day."
                 '</p>'
             )
 
