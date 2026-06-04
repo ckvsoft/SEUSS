@@ -460,6 +460,24 @@
                 </div>
             </div>
             <div class="stats-tile"
+                 title="Daytime-average cloud cover forecast from open-meteo for today (sunrise to sunset). Higher = more clouds = less PV yield. open-meteo already factors this into the GTI / yield forecast; shown here so the user can see WHY a forecast is low on a given day.">
+                <div class="label">Cloud Cover Today</div>
+                <div class="value">
+                    % cc_today = sf.get('cloudcover_today_avg_pct')
+                    <span>{{ "--" if cc_today is None else "{:.0f}".format(cc_today) }}</span>
+                    <span class="unit">%</span>
+                </div>
+            </div>
+            <div class="stats-tile"
+                 title="Daytime-average cloud cover forecast for tomorrow.">
+                <div class="label">Cloud Cover Tomorrow</div>
+                <div class="value">
+                    % cc_tm = sf.get('cloudcover_tomorrow_avg_pct')
+                    <span>{{ "--" if cc_tm is None else "{:.0f}".format(cc_tm) }}</span>
+                    <span class="unit">%</span>
+                </div>
+            </div>
+            <div class="stats-tile"
                  title="System-efficiency multiplier learned from history. 1.00 = forecast is right on target; below 1.0 = real yield consistently below forecast (e.g. dirty panels, partial shading); above 1.0 = better than forecast.">
                 <div class="label">Adjustment Factor</div>
                 <div class="value">

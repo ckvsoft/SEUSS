@@ -146,10 +146,14 @@ class Utils:
         }
 
         try:
-            # Bare number string (e.g. "2.5" or "-2.5"). Convert to
-            # millicents at potency 14, same as the operator path.
+            # Bare number string (e.g. "2.5", "-2.5", "+ 13.5"). The
+            # regex tolerates a sign followed by optional whitespace,
+            # but float() does NOT — "+ 13.5" would throw. Strip the
+            # interior whitespace so all sign+number variants parse.
             if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
-                return float(Utils.convert_to_millicents(float(expr), 14))
+                return float(
+                    Utils.convert_to_millicents(float(expr.replace(" ", "")), 14)
+                )
 
             # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
             percentage_fee = 0.0
@@ -161,8 +165,14 @@ class Utils:
                     percentage_fee = base_value * (float(percentage_match.group(1)) / 100)
                     expr = expr.replace(percentage_match.group(0), "")  # Prozent-Anteil entfernen
 
-            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5")
-            matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr)
+            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5"). Implicit
+            # leading "+" if the first non-whitespace character is a
+            # digit -- otherwise "1.5 + 13.5" would only match the
+            # second term and silently drop the first.
+            expr_for_match = expr.lstrip()
+            if expr_for_match[:1].isdigit():
+                expr_for_match = "+ " + expr_for_match
+            matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr_for_match)
 
             for op, num in matches:
                 # Note: potency 14 here, not 13. Prices arrive as

@@ -591,6 +591,16 @@ class SEUSSWeb:
                 "measured_today_wh": pv_by_day.get(today_iso, 0) or 0,
                 "adjustment_factor": (sm.get_data("solar", "adjustment_factor") or [None])[0],
                 "efficiency_pct": (sm.get_data("solar", "efficiency") or [None])[0],
+                # Cloud-cover averages from open-meteo for context.
+                # GTI already factors clouds into yield, but exposing
+                # the % helps the user see WHY a forecast is low on a
+                # given day.
+                "cloudcover_today_avg_pct": sm.get_data(
+                    "solar", "cloudcover_today_avg_pct"
+                ),
+                "cloudcover_tomorrow_avg_pct": sm.get_data(
+                    "solar", "cloudcover_tomorrow_avg_pct"
+                ),
             })(),
             # Per-hour energy balance for today: list of 24 dicts with
             # hour, loss_wh, imbalance_wh. Hour slots without data show

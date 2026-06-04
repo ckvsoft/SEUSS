@@ -154,11 +154,22 @@ class OpenMeteo:
             # the forecast curve and the actual curve.
             today_hourly_raw = [0.0] * 24
 
+            # Cloud-cover (in %) per hour, taken from the first panel
+            # response we successfully process. Cloud-cover is a
+            # location property, not a per-panel property, so it would
+            # be identical across panels at the same lat/lon. GTI from
+            # open-meteo already accounts for clouds internally; we
+            # store cloudcover separately for the stats page so the
+            # user can see WHY a forecast is low. None means "not yet
+            # fetched in this run".
+            cloudcover_today = None
+            cloudcover_tomorrow = None
+
             for panel in self.panels:
                 if not panel.get('enabled', True): continue
 
                 url = (f"https://api.open-meteo.com/v1/forecast?latitude={panel['locLat']}&longitude={panel['locLong']}"
-                       f"&hourly=global_tilted_irradiance&daily=sunrise,sunset"
+                       f"&hourly=global_tilted_irradiance,cloudcover&daily=sunrise,sunset"
                        f"&timezone={self.config.time_zone}&forecast_days=2&tilt={panel['angle']}&azimuth={panel['direction']}")
 
                 data = None
@@ -179,10 +190,37 @@ class OpenMeteo:
                         self.logger.log.error(f"Unexpected error during API call: {e}")
                         break
 
-                if not data: continue
+                if not data:
+                    # API failed for this panel (network, SSL, 502 etc.).
+                    # Without data we'd accumulate 0 across all "rest
+                    # today" and "tomorrow" sums and then push those
+                    # zeros into solar_data, overwriting a previously
+                    # valid forecast. Open-meteo has intermittent SSL/
+                    # 502 hiccups -- one transient failure should not
+                    # erase the morning's good forecast. Bail out
+                    # early and keep the last good cache.
+                    self.logger.log.warning(
+                        f"OpenMeteo API failed for panel '{panel.get('name', '?')}'. "
+                        f"Keeping previous forecast values."
+                    )
+                    return {
+                        "current_hour": 0.0,
+                        "past_today": 0.0,
+                        "rest_today": 0.0,
+                    }
                 rad_list = data.get('hourly', {}).get('global_tilted_irradiance', [])
+                cc_list = data.get('hourly', {}).get('cloudcover', []) or []
                 daily = data.get('daily', {})
                 dates = daily.get('time', [])
+
+                # Cloud-cover is location-only, so the first successful
+                # panel response wins. We slice into today/tomorrow
+                # based on rad_list's 0..23/24..47 layout (same hourly
+                # array shape as GTI).
+                if cloudcover_today is None and len(cc_list) >= 24:
+                    cloudcover_today = [float(v or 0) for v in cc_list[:24]]
+                if cloudcover_tomorrow is None and len(cc_list) >= 48:
+                    cloudcover_tomorrow = [float(v or 0) for v in cc_list[24:48]]
 
                 t_idx = self.safe_date_index(dates, today_str, "today")
                 tm_idx = self.safe_date_index(dates, tomorrow_str, "tomorrow")
@@ -354,6 +392,46 @@ class OpenMeteo:
             self.statsmanager.set_status_data('solar', 'forecast_tomorrow_wh', round(total_tomorrow, 2))
             self.statsmanager.set_status_data('solar', 'forecast_measured_today_wh', round(pv_measured_today_wh, 2))
             self.statsmanager.set_status_data('solar', 'forecast_rest_today_wh', round(rest_today_final, 2))
+
+            # Cloud-cover summary for today and tomorrow. We persist
+            # both the full 24-hour array (for a potential intraday
+            # chart) and a single daytime-average percentage useful
+            # as a tile on the stats page. "Daytime" = sunrise to
+            # sunset; we filter to those hours so the night-time
+            # zeros don't dilute the value.
+            if cloudcover_today is not None:
+                try:
+                    sr_h_today = int(sr_t[11:13]) if sr_t and len(sr_t) >= 13 else 0
+                    ss_h_today = int(ss_t[11:13]) if ss_t and len(ss_t) >= 13 else 23
+                    day_slice = cloudcover_today[sr_h_today:ss_h_today + 1]
+                    avg_today = sum(day_slice) / len(day_slice) if day_slice else 0.0
+                    self.statsmanager.set_status_data(
+                        'solar', 'cloudcover_today_avg_pct', round(avg_today, 1)
+                    )
+                    # StatsManager only accepts int/float/tuple/dict
+                    # for values, so we wrap the hourly list as a dict
+                    # keyed by hour string. Stats handler unpacks.
+                    self.statsmanager.set_status_data(
+                        'solar', 'cloudcover_today_hourly',
+                        {str(i): v for i, v in enumerate(cloudcover_today)}
+                    )
+                except Exception as e:
+                    self.logger.log.debug(f"cloudcover today stats hiccup: {e}")
+            if cloudcover_tomorrow is not None:
+                try:
+                    sr_h_tm = int(sr_tm[11:13]) if sr_tm and len(sr_tm) >= 13 else 0
+                    ss_h_tm = int(ss_tm[11:13]) if ss_tm and len(ss_tm) >= 13 else 23
+                    day_slice = cloudcover_tomorrow[sr_h_tm:ss_h_tm + 1]
+                    avg_tm = sum(day_slice) / len(day_slice) if day_slice else 0.0
+                    self.statsmanager.set_status_data(
+                        'solar', 'cloudcover_tomorrow_avg_pct', round(avg_tm, 1)
+                    )
+                    self.statsmanager.set_status_data(
+                        'solar', 'cloudcover_tomorrow_hourly',
+                        {str(i): v for i, v in enumerate(cloudcover_tomorrow)}
+                    )
+                except Exception as e:
+                    self.logger.log.debug(f"cloudcover tomorrow stats hiccup: {e}")
 
             # Per-day forecast history. Keyed by today's local ISO date.
             # Write-once-per-day semantics: the FIRST forecast run of
