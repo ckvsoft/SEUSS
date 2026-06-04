@@ -582,10 +582,19 @@ class SEUSSWeb:
             # 'forecast_pv_wh_by_day') under today's ISO date,
             # written write-once by openmeteo on the first run of
             # the day. None until the first run completes.
+            #
+            # If the snapshot is 0 or missing (e.g. the morning's
+            # primary provider failed and no fallback succeeded yet
+            # to write the day's snapshot), fall back to the live
+            # `forecast_today_wh` field, which the active provider
+            # updates every evaluation cycle. A zero day-forecast is
+            # physically implausible outside polar night, so treating
+            # it as "snapshot not captured yet" is the right thing.
             "solar_forecast": (lambda: {
                 "today_wh": (
                     (sm.get_data("solar", "forecast_pv_wh_by_day") or {})
                     .get(today_iso)
+                    or sm.get_data("solar", "forecast_today_wh")
                 ),
                 "tomorrow_wh": sm.get_data("solar", "forecast_tomorrow_wh"),
                 "measured_today_wh": pv_by_day.get(today_iso, 0) or 0,

@@ -419,12 +419,47 @@ class SolarForecastProvider:
                 except Exception as e:
                     self.logger.log.debug(f"cloudcover tomorrow stats hiccup: {e}")
 
-            # Per-day history (write-once-per-day)
+            # Per-day history. We capture the day's forecast once -- ideally
+            # the morning value -- and freeze it. But "once per day" is too
+            # strict: if the morning's primary provider failed (e.g. open-
+            # meteo 502) we'd be locked into a 0 for that day even after a
+            # fallback provider succeeds an hour later. So we also rewrite
+            # when the stored value is 0/missing. Once a real value lands,
+            # subsequent fetches won't overwrite it (that's still the
+            # frozen-forecast semantics we want).
             today_iso = now.strftime('%Y-%m-%d')
             forecast_by_day = self.statsmanager.get_data('solar', 'forecast_pv_wh_by_day') or {}
             if not isinstance(forecast_by_day, dict):
                 forecast_by_day = {}
-            if today_iso not in forecast_by_day:
+
+            # Sanity: prune any pre-existing 0/None entries from the
+            # history. A daily PV forecast of 0 is physically impossible
+            # outside polar night, so any 0 sitting in the dict is a
+            # failed write from a previous cycle and shouldn't pollute
+            # the history chart. We rewrite the cleaned dict only if
+            # we actually removed something, so this is a no-op on
+            # healthy data.
+            cleaned = {
+                k: v for k, v in forecast_by_day.items()
+                if isinstance(v, (int, float)) and v > 0
+            }
+            if len(cleaned) != len(forecast_by_day):
+                forecast_by_day = cleaned
+                self.statsmanager.set_status_data(
+                    'solar', 'forecast_pv_wh_by_day', forecast_by_day
+                )
+                self.logger.log.debug(
+                    f"[{self.name}] Pruned implausible zero entries from "
+                    f"forecast_pv_wh_by_day."
+                )
+
+            existing = forecast_by_day.get(today_iso)
+            needs_write = (
+                today_iso not in forecast_by_day
+                or existing is None
+                or (isinstance(existing, (int, float)) and existing <= 0)
+            )
+            if needs_write and full_day_forecast > 0:
                 forecast_by_day[today_iso] = round(full_day_forecast, 2)
                 self.statsmanager.set_status_data(
                     'solar', 'forecast_pv_wh_by_day', forecast_by_day
@@ -440,7 +475,7 @@ class SolarForecastProvider:
                     'solar', 'forecast_hourly_wh_by_day', hourly_by_day
                 )
                 self.logger.log.info(
-                    f"[{self.name}] Captured morning forecast for {today_iso}: "
+                    f"[{self.name}] Captured forecast for {today_iso}: "
                     f"{full_day_forecast:.0f} Wh "
                     f"(hourly peak {max(today_hourly_adj):.0f} Wh)"
                 )
