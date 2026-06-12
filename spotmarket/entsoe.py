@@ -67,7 +67,10 @@ class Entsoe(MarketData):
             self.use_second_day = use_second_day
             self._calculate_dates(use_second_day)
             url = self._make_url()
-            response = requests.get(url)
+            # 15s timeout: ENTSO-E historically takes ~1-3s; anything
+            # longer is a DNS/network stall and we'd rather skip the
+            # cycle than hang the main eval loop indefinitely.
+            response = requests.get(url, timeout=15)
 
             if response.status_code == 200:
                 return self._load_data_from_xml(response.text)

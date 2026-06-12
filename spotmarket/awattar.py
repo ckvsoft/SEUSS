@@ -59,7 +59,11 @@ class Awattar(MarketData):
         try:
             self._calculate_dates(use_second_day, True)
             url = self._make_url()
-            response = requests.get(url)
+            # 15s timeout: see entsoe.py for rationale -- without a
+            # timeout, a DNS or TCP stall here hangs the main eval
+            # loop indefinitely (observed: 23h freeze after the DNS
+            # outage on 2026-06-11).
+            response = requests.get(url, timeout=15)
 
             if response.status_code == 200:
                 return self._load_data_from_json(response.text)
