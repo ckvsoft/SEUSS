@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 
 import socket
 import requests
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError, RequestException
 
 from core.utils import Utils
 from spotmarket.abstract_classes.item import Item
@@ -111,6 +111,18 @@ class Tibber(MarketData):
             response = requests.post(url, headers=headers, json=query, timeout=10)
         except ConnectionError as e:
             self.logger.log.error(f"Tibber connection error: {e}")
+            return []
+        except RequestException as e:
+            # Covers ReadTimeout/SSLError/etc. -- see entsoe.py for full
+            # rationale (without this, a network stall kills the eval
+            # thread permanently).
+            self.logger.log.warning(
+                f"Tibber request failed: {type(e).__name__}: {e}. "
+                f"Skipping this cycle."
+            )
+            return []
+        except Exception as e:
+            self.logger.log.exception(f"Unexpected error calling Tibber: {e}")
             return []
 
         if response.status_code != 200:

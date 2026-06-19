@@ -183,37 +183,53 @@ class SEUSS:
 
         try:
             while True:
-                self.current_time = datetime.now()
+                # Per-iteration safety net: any unhandled exception inside
+                # run_markets/run_essunit/perform_test_run (e.g. a network
+                # timeout that wasn't caught at the provider level) must
+                # NOT kill this thread. The thread IS the main eval loop;
+                # if it dies, SEUSS goes silent until the next process
+                # restart. Observed 2026-06-12: ENTSO-E ReadTimeout
+                # escaped entsoe.load_data, killed run_svs, no prices
+                # updated for hours until kill -9 + auto-restart.
+                try:
+                    self.current_time = datetime.now()
 
-                if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
-                    self.run_markets()
-                    if self.items:
-                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log.info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
-                        )
-
-                if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
-                    lasttime_minute = self.current_time.minute
-
-                    count = self.items.get_item_count()
-                    self.logger.log.debug(f"Item count: {count}")
-                    self.logger.log.debug(f"Current hour: {self.current_time.hour}")
-                    if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
+                    if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
                         self.run_markets()
-                    else:
-                        self.run_essunit()
+                        if self.items:
+                            next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                            self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                            self.logger.log.info(
+                                f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                            )
 
-                    if self.items:
-                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log.info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
-                        )
+                    if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
+                        lasttime_minute = self.current_time.minute
 
-                self.perform_test_run()
-                self.handle_no_data_sleep()
+                        count = self.items.get_item_count()
+                        self.logger.log.debug(f"Item count: {count}")
+                        self.logger.log.debug(f"Current hour: {self.current_time.hour}")
+                        if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
+                            self.run_markets()
+                        else:
+                            self.run_essunit()
+
+                        if self.items:
+                            next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                            self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                            self.logger.log.info(
+                                f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                            )
+
+                    self.perform_test_run()
+                    self.handle_no_data_sleep()
+                except KeyboardInterrupt:
+                    raise  # Let the outer handler do graceful_exit
+                except Exception as iter_exc:
+                    self.logger.log.exception(
+                        f"Unhandled error in run_svs iteration: {iter_exc}. "
+                        f"Continuing -- next iteration will retry."
+                    )
 
                 self.current_time = datetime.now()
                 sleep_time = 1 - (self.current_time.microsecond / 1_000_000)

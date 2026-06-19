@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 
 import socket
 import requests
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError, RequestException
 
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
@@ -88,6 +88,27 @@ class Entsoe(MarketData):
             else:
                 self.logger.log.error(f"Connection error: {e}")
                 self.logger.log.error("Please check your network connection and server configuration.")
+            return []
+        except RequestException as e:
+            # Covers ReadTimeout, ConnectTimeout, SSLError, ChunkedEncodingError,
+            # and any other transient HTTP failure. Without this, the eval-loop
+            # thread dies on the first network hiccup -- which is exactly what
+            # happened on 2026-06-12 when ENTSO-E was unreachable: 15s timeout
+            # fired, ReadTimeout was raised, ConnectionError didn't catch it,
+            # Thread-3 (run_svs) crashed and SEUSS went silent until restart.
+            self.logger.log.warning(
+                f"ENTSO-E request failed: {type(e).__name__}: {e}. "
+                f"Skipping this cycle, will retry on next eval."
+            )
+            return []
+        except Exception as e:
+            # Last-resort safety net: ANY unexpected exception (bad XML
+            # parsing, JSON decode failure, attribute errors) must not kill
+            # the worker thread. Log it and return empty so the cycle just
+            # skips and tries again later.
+            self.logger.log.exception(
+                f"Unexpected error in ENTSO-E load_data: {e}"
+            )
             return []
 
     def _make_url(self) -> str:

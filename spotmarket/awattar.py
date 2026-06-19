@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 
 import socket
 import requests
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError, RequestException
 
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
@@ -79,6 +79,23 @@ class Awattar(MarketData):
                 self.logger.log.error(f"Connection error: {e}")
                 self.logger.log.error("Please check your network connection and server configuration.")
 
+            return []
+        except RequestException as e:
+            # Covers ReadTimeout/ConnectTimeout/SSLError/etc. -- see entsoe.py
+            # for full rationale. Without this, a 15s server stall throws
+            # ReadTimeout which ConnectionError doesn't catch, and the eval
+            # thread dies.
+            self.logger.log.warning(
+                f"Awattar request failed: {type(e).__name__}: {e}. "
+                f"Skipping this cycle, will retry on next eval."
+            )
+            return []
+        except Exception as e:
+            # Safety net for unexpected errors (bad JSON, attribute errors,
+            # etc.) -- never let one bad cycle kill the worker thread.
+            self.logger.log.exception(
+                f"Unexpected error in Awattar load_data: {e}"
+            )
             return []
 
     def _load_data_from_json(self, json_data):
