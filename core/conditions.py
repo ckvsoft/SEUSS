@@ -955,7 +955,21 @@ class Conditions:
             from datetime import datetime, timezone
             now_utc = datetime.now(timezone.utc)
 
-            future_charge_starts = []
+            # Read the current quarter's price so we can filter out
+            # "fake" charge clusters -- ones that are cheaper than the
+            # rest of the expensive phase but NOT cheaper than the
+            # current quarter. Waiting for a "shelter" that isn't
+            # actually cheaper than right now is worse than charging
+            # right now, since it also uses up the battery in between.
+            cur_price_mc = None
+            try:
+                cur_price_mc = self.items.get_current_price(convert=False)
+                if cur_price_mc is not None:
+                    cur_price_mc = int(cur_price_mc)
+            except (TypeError, ValueError):
+                cur_price_mc = None
+
+            future_charge_blocks = []
             for blk in self._charge_blocks:
                 if blk.is_expired():
                     continue
@@ -967,13 +981,104 @@ class Conditions:
                 if blk_start <= now_utc:
                     # Active or already-started cluster -- treat as now.
                     continue
-                future_charge_starts.append(blk_start)
+                future_charge_blocks.append((blk_start, blk))
 
-            if not future_charge_starts:
+            if not future_charge_blocks:
                 # No future charge cluster known -- can't define the
                 # phase end. Don't skip; let the normal evaluation
                 # handle the current cycle.
                 return False
+
+            future_charge_blocks.sort(key=lambda x: x[0])
+            future_charge_starts = [s for s, _ in future_charge_blocks]
+
+            # ------------------------------------------------------------
+            # Filter "fake shelters" out of the list of future clusters
+            # ------------------------------------------------------------
+            # A "fake shelter" is a future charge cluster that:
+            #   (a) is priced HIGHER than the current quarter, OR
+            #   (b) is a short (1h) island surrounded by expensive
+            #       quarters on BOTH sides -- i.e. it doesn't mark the
+            #       real end of the expensive phase.
+            #
+            # Without this filter, SEUSS would skip charging right now
+            # (28.93 ct) because a single 1h cluster later (e.g. 29.23 ct
+            # at 18:00) is technically classified as a "charge cluster"
+            # by the top-N-cheap-quarters logic. But that cluster is
+            # neither cheaper than now nor a real safe harbour: 14 more
+            # expensive hours follow it. If we wait, we waste battery
+            # and end up paying MORE for the top-up.
+            #
+            # A cluster is only a valid shelter if it's cheaper than
+            # now AND either (i) contiguous with a run of cluster hours
+            # that adds up to enough headroom, or (ii) followed by a
+            # sustained cheap window. We approximate "(i) or (ii)" with:
+            # the cluster's own duration + the gap until the NEXT
+            # cluster (or price-list end) has to represent a >=1.5h
+            # cheap window.
+            filtered_blocks = []
+            for i, (start_i, blk_i) in enumerate(future_charge_blocks):
+                try:
+                    blk_price = int(blk_i.get_avg_price(convert=False))
+                except (TypeError, ValueError):
+                    # Can't judge price -- keep to be safe (matches old
+                    # behaviour before this filter existed).
+                    filtered_blocks.append((start_i, blk_i))
+                    continue
+
+                # Filter (a): must be cheaper than current quarter.
+                if cur_price_mc is not None and blk_price >= cur_price_mc:
+                    continue
+
+                # Filter (b): must not be a lone 1h island. Check gap
+                # BACK to previous kept cluster and FORWARD to next
+                # future cluster.
+                blk_end = blk_i.get_end_datetime()
+                if blk_end is not None and blk_end.tzinfo is None:
+                    blk_end = blk_end.replace(tzinfo=timezone.utc)
+                blk_dur_h = 0.0
+                if blk_end is not None:
+                    blk_dur_h = max(
+                        0.0, (blk_end - start_i).total_seconds() / 3600
+                    )
+
+                # Distance to next future cluster. If none, we treat
+                # it as "far enough" -- last cluster in the list is
+                # implicitly a shelter.
+                gap_forward_h = None
+                if i + 1 < len(future_charge_blocks):
+                    next_start = future_charge_blocks[i + 1][0]
+                    gap_forward_h = max(
+                        0.0, (next_start - blk_end).total_seconds() / 3600
+                    ) if blk_end is not None else 0.0
+
+                # A short (<=1h) cluster followed within 1.5h by another
+                # cluster is an island: not a real end of the expensive
+                # phase. Skip it.
+                if (
+                    blk_dur_h <= 1.0
+                    and gap_forward_h is not None
+                    and gap_forward_h < 1.5
+                ):
+                    continue
+
+                filtered_blocks.append((start_i, blk_i))
+
+            if not filtered_blocks:
+                # No valid shelter in sight -- the entire remaining
+                # horizon is expensive relative to right now. We can't
+                # skip; charge now.
+                self.logger.log.debug(
+                    "Expensive-phase abort: no valid cheaper shelter "
+                    "found in future clusters (all higher than current "
+                    "price or fake 1h islands). Allowing charge."
+                )
+                return False
+
+            # Replace future_charge_starts with the filtered set so the
+            # subsequent gap-based phase_end selection walks only real
+            # shelters.
+            future_charge_starts = [s for s, _ in filtered_blocks]
 
             # Find the next REAL expensive phase. The naive
             # `min(future_charge_starts)` would be the next cluster --
