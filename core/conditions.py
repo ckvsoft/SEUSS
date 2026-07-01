@@ -1143,6 +1143,25 @@ class Conditions:
 
             should_skip = usable_soc_wh >= required_wh
 
+            # Layer 2: forward-simulate the shelter chain to verify
+            # that even IF we skip charging now, subsequent shelters
+            # will refill enough to bridge the remaining expensive
+            # phases without emptying the pack. See
+            # _simulate_shelter_chain for the reasoning; if it returns
+            # False, override the layer-1 skip decision.
+            if should_skip and filtered_blocks:
+                chain_ok, trace = self._simulate_shelter_chain(
+                    filtered_blocks, usable_soc_wh, current_soc_wh,
+                    min_soc_wh, avg_consumption_per_hour, now_utc,
+                )
+                if chain_ok is False:
+                    self.logger.log.info(
+                        f"Expensive-phase abort: layer-1 said OK but "
+                        f"shelter-chain simulation says SOC would go "
+                        f"negative. Charging anyway. Trace: {trace}"
+                    )
+                    should_skip = False
+
             self.logger.log.debug(
                 f"Expensive-phase abort: phase_end={phase_end.isoformat()}, "
                 f"total_hours={total_hours:.1f}h, "
@@ -1168,6 +1187,132 @@ class Conditions:
                 "Keeping charging allowed."
             )
             return False
+
+    def _get_estimated_grid_charge_w(self):
+        """
+        Estimated grid-charging power (W) taken from live/persisted
+        measurements. The value is written by PowerConsumption whenever
+        both battery_power AND grid_power are simultaneously positive
+        (= grid is feeding the pack). Returns 0 if no measurement has
+        ever been recorded -- in that case Layer-2 simulation is
+        skipped and we fall back to the Layer-1 answer.
+        """
+        try:
+            val = self.statsmanager.get_data(
+                "powerconsumption", "last_grid_charge_power_w"
+            )
+            if isinstance(val, (int, float)) and val > 0:
+                return float(val)
+        except Exception:
+            pass
+        return 0.0
+
+    def _current_soc_pct_safe(self):
+        """Best-effort SOC percentage read; returns 50.0 if unavailable
+        (a neutral midpoint so `full_wh` fallback math stays sane)."""
+        try:
+            if self.essunit:
+                s = self.essunit.get_soc()
+                if isinstance(s, (int, float)) and 0 <= s <= 100:
+                    return float(s)
+        except Exception:
+            pass
+        return 50.0
+
+    def _simulate_shelter_chain(
+        self, filtered_blocks, usable_soc_wh, current_soc_wh,
+        min_soc_wh, avg_consumption_per_hour, now_utc,
+    ):
+        """
+        Forward-simulate the pack's SOC across the remaining chain of
+        real shelter clusters. Between each pair, drain at the
+        recent-average hourly consumption. At each shelter, top up by
+        (cluster_duration_h × estimated_grid_charge_w), capped at the
+        pack's usable ceiling.
+
+        If the simulated SOC ever crosses zero, layer-1's optimistic
+        "we can bridge until phase_end" is wrong on the wider horizon
+        and skipping charging right now would leave the pack empty
+        during a later expensive stretch.
+
+        Returns (chain_ok: bool | None, trace: str). `None` means the
+        simulation could not run (missing data); the caller should
+        keep the layer-1 answer in that case.
+        """
+        from datetime import timezone
+
+        grid_charge_w = self._get_estimated_grid_charge_w()
+        if grid_charge_w <= 0:
+            return (None, "no grid_charge_w measurement yet")
+
+        # Pack usable ceiling: try full_wh from essunit; else derive
+        # roughly from current SOC.
+        full_wh = None
+        try:
+            if self.essunit and hasattr(self.essunit, "get_battery_full_wh"):
+                full_wh = self.essunit.get_battery_full_wh()
+        except Exception:
+            full_wh = None
+        if not full_wh or full_wh <= 0:
+            soc_pct = self._current_soc_pct_safe()
+            if soc_pct > 1:
+                full_wh = current_soc_wh / (soc_pct / 100.0)
+            else:
+                full_wh = current_soc_wh
+        full_wh = max(full_wh, current_soc_wh)
+        usable_ceiling = max(0.0, full_wh - min_soc_wh)
+
+        sim_soc = usable_soc_wh
+        prev_time = now_utc
+        trace_parts = []
+        for start_i, blk_i in filtered_blocks:
+            drain_h = max(
+                0.0, (start_i - prev_time).total_seconds() / 3600
+            )
+            sim_soc -= drain_h * avg_consumption_per_hour
+            if sim_soc < 0:
+                trace_parts.append(
+                    f"drained {drain_h:.1f}h to "
+                    f"{start_i.astimezone().strftime('%H:%M')} "
+                    f"-> SOC {sim_soc:.0f}Wh (negative)"
+                )
+                return (False, "; ".join(trace_parts))
+            blk_end = blk_i.get_end_datetime()
+            if blk_end is not None and blk_end.tzinfo is None:
+                blk_end = blk_end.replace(tzinfo=timezone.utc)
+            cluster_dur_h = (
+                (blk_end - start_i).total_seconds() / 3600
+                if blk_end is not None else 1.0
+            )
+            add_wh = cluster_dur_h * grid_charge_w
+            sim_soc = min(usable_ceiling, sim_soc + add_wh)
+            trace_parts.append(
+                f"drain {drain_h:.1f}h, then charge {cluster_dur_h:.1f}h "
+                f"@ {grid_charge_w:.0f}W = +{add_wh:.0f}Wh, "
+                f"SOC={sim_soc:.0f}Wh"
+            )
+            prev_time = blk_end or start_i
+
+        # Post-last-shelter drain until end of price horizon.
+        try:
+            item_list = getattr(self.items, "_item_list", [])
+            if item_list:
+                horizon_end = item_list[-1].get_end_datetime()
+                if horizon_end is not None and horizon_end.tzinfo is None:
+                    horizon_end = horizon_end.replace(tzinfo=timezone.utc)
+                if horizon_end and horizon_end > prev_time:
+                    drain_h = (horizon_end - prev_time).total_seconds() / 3600
+                    sim_soc -= drain_h * avg_consumption_per_hour
+                    trace_parts.append(
+                        f"post-shelter drain {drain_h:.1f}h -> "
+                        f"SOC {sim_soc:.0f}Wh"
+                    )
+                    if sim_soc < 0:
+                        return (False, "; ".join(trace_parts))
+        except Exception:
+            pass
+
+        return (True, "; ".join(trace_parts))
 
     def _abort_charging_battery_covers_until_overnext_cluster(self):
         """

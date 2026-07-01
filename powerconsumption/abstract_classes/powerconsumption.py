@@ -975,6 +975,32 @@ class PowerConsumptionBase:
         battery_dt_wh = self.last_battery_value * time_diff
         if battery_dt_wh > 0:
             self.daily_battery_charge_wh += battery_dt_wh
+
+            # Track the most recent grid-charging power so downstream
+            # conditions (e.g. the expensive-phase abort) can estimate
+            # how much a future 1h charge cluster will refill. We only
+            # count it as "grid charge" when both battery_power and
+            # grid_power are positive at the same time -- that means
+            # power flows from the meter INTO the pack, as opposed to
+            # PV surplus flowing directly into the pack. A conservative
+            # 200 W threshold on both filters out idle noise.
+            try:
+                if (
+                    self.last_battery_value is not None
+                    and self.last_grid_value is not None
+                    and self.last_battery_value > 200
+                    and self.last_grid_value > 200
+                ):
+                    self.statsmanager.set_status_data(
+                        "powerconsumption",
+                        "last_grid_charge_power_w",
+                        float(self.last_battery_value),
+                        save_data=False,
+                    )
+            except Exception:
+                # Never let this diagnostic hiccup break the main
+                # accumulator loop.
+                pass
         elif battery_dt_wh < 0:
             self.daily_battery_discharge_wh += -battery_dt_wh
 
