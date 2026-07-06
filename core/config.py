@@ -59,6 +59,16 @@ class Config(Singleton):
         # New: abort charge when the battery covers the entire upcoming
         # expensive phase until the next charge cluster (any price).
         "skip_charge_when_battery_covers_expensive_phase": False,
+        # New: skip the current charge attempt when a STRICTLY cheaper
+        # future charge cluster exists AND the pack can bridge the gap
+        # to it AND the pack + that cheaper cluster's recharge can
+        # cover the following expensive phase without emptying.
+        # Meant for the case: SEUSS is inside a cheap cluster (e.g.
+        # 23 ct) but a much cheaper cluster is coming in a few hours
+        # (e.g. 19 ct), with plenty of PV/SOC available right now.
+        # Runs a full forward simulation across the shelter chain so
+        # it only skips when the horizon plan is actually safe.
+        "skip_charge_when_cheaper_cluster_coming": False,
         # New: skip charging the current quarter when at least one
         # upcoming quarter is priced below zero AND the battery will
         # have enough headroom to absorb it (current free Wh +
@@ -264,6 +274,7 @@ class Config(Singleton):
             self.skip_charge_when_battery_sufficient = False
             self.skip_charge_when_battery_covers_overnext = False
             self.skip_charge_when_battery_covers_expensive_phase = False
+            self.skip_charge_when_cheaper_cluster_coming = False
             self.skip_charge_for_upcoming_negative_prices = False
             self.smart_discharge_priority_to_expensive_hours = False
             self.delay_grid_charging_below_active_soc_limit = False
@@ -343,6 +354,7 @@ class Config(Singleton):
             ("skip_charge_when_battery_sufficient", False),
             ("skip_charge_when_battery_covers_overnext", False),
             ("skip_charge_when_battery_covers_expensive_phase", False),
+            ("skip_charge_when_cheaper_cluster_coming", False),
             ("skip_charge_for_upcoming_negative_prices", False),
             ("smart_discharge_priority_to_expensive_hours", False),
             ("delay_grid_charging_below_active_soc_limit", False),

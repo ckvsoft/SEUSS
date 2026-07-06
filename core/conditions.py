@@ -525,6 +525,20 @@ class Conditions:
                     self._abort_charging_negative_price_ahead
             })
 
+        # Cheaper-cluster-coming: even while inside a cheap cluster
+        # (i.e. SEUSS would normally charge), skip if a strictly
+        # cheaper cluster is due later AND a forward simulation of
+        # the pack's SOC across the full remaining shelter chain
+        # never goes negative. Prevents "charging at 23 ct when 19 ct
+        # will come in 2 hours" while still being safe if the horizon
+        # gets tight.
+        if getattr(self.config, "skip_charge_when_cheaper_cluster_coming", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - strictly cheaper cluster coming and "
+                "battery bridges the gap safely":
+                    self._abort_charging_cheaper_cluster_coming
+            })
+
         # Switching uses the same hard cap rule by default.
         self.abort_conditions_by_operation_mode["switching_abort"].update({
             "Abort switching - Block average exceeds hard cap":
@@ -1588,6 +1602,365 @@ class Conditions:
         except Exception as e:
             self.logger.log.error(
                 f"Negative-price-ahead abort check failed: {e}. "
+                "Keeping charging allowed."
+            )
+            return False
+
+    def _pv_forecast_wh_between(self, t0_utc, t1_utc):
+        """
+        Sum of forecast PV Wh inside [t0_utc, t1_utc).
+
+        Uses today's per-hour forecast array
+        (solar.forecast_hourly_wh_by_day[today], adjusted values as
+        captured by the solar provider). For days without an hourly
+        array (tomorrow), falls back to spreading the day total
+        (solar.forecast_tomorrow_wh) evenly across 08:00-18:00 local
+        -- crude, but far better than assuming zero sun when the
+        chain simulation reaches into tomorrow.
+
+        Returns 0.0 on any missing data so the simulation stays
+        conservative.
+        """
+        try:
+            from datetime import datetime, timedelta
+            import pytz
+            tz = pytz.timezone(self.config.time_zone)
+
+            hourly_by_day = self.statsmanager.get_data(
+                "solar", "forecast_hourly_wh_by_day"
+            ) or {}
+            if not isinstance(hourly_by_day, dict):
+                hourly_by_day = {}
+            tomorrow_total = self.statsmanager.get_data(
+                "solar", "forecast_tomorrow_wh"
+            ) or 0
+            now_local = datetime.now(tz)
+            tomorrow_iso = (now_local + timedelta(days=1)).strftime('%Y-%m-%d')
+
+            total = 0.0
+            t = t0_utc
+            while t < t1_utc:
+                hour_start = t.replace(minute=0, second=0, microsecond=0)
+                hour_end = hour_start + timedelta(hours=1)
+                seg_start = max(t0_utc, hour_start)
+                seg_end = min(t1_utc, hour_end)
+                frac = max(
+                    0.0, (seg_end - seg_start).total_seconds() / 3600
+                )
+
+                t_local = seg_start.astimezone(tz)
+                day_iso = t_local.strftime('%Y-%m-%d')
+                hour = t_local.hour
+
+                wh_hour = 0.0
+                arr = hourly_by_day.get(day_iso)
+                if isinstance(arr, list) and len(arr) == 24:
+                    try:
+                        wh_hour = float(arr[hour] or 0)
+                    except (TypeError, ValueError):
+                        wh_hour = 0.0
+                elif day_iso == tomorrow_iso and tomorrow_total and 8 <= hour < 18:
+                    try:
+                        wh_hour = float(tomorrow_total) / 10.0
+                    except (TypeError, ValueError):
+                        wh_hour = 0.0
+
+                total += wh_hour * frac
+                t = hour_end
+            return total
+        except Exception:
+            return 0.0
+
+    def _abort_charging_cheaper_cluster_coming(self):
+        """
+        Skip the current charge attempt when a strictly cheaper future
+        charge cluster exists AND a forward simulation of the pack's
+        SOC across the remaining shelter chain never goes negative.
+
+        Rationale: SEUSS is right now inside a cheap cluster (e.g.
+        23 ct) so its normal condition would say "charging on". But
+        the price list shows a materially cheaper cluster ahead
+        (e.g. 19 ct in 2h). If the pack has enough energy AND PV is
+        actively topping it up AND that cheaper cluster can then
+        cover the following expensive phase, there's no reason to
+        pay the extra ct/kWh right now.
+
+        Decision:
+          1. `charging_price_limit` safety floor wins -- never skip
+             when the current price is already at or below the
+             always-on floor the user configured.
+          2. Find the earliest future charge block whose average
+             price is STRICTLY lower than the reference price we'd
+             be paying if we charged this cycle.
+          3. If none exists -> current attempt is already the
+             cheapest; don't skip.
+          4. Forward-simulate SOC through every subsequent charge
+             cluster (drain between them at
+             hourly_watt_average, top up during them at
+             `last_grid_charge_power_w` capped by pack full).
+          5. If the simulation ever crosses zero -> skipping is
+             unsafe, don't skip. Otherwise -> skip.
+
+        Returns False on any missing data (SOC, avg consumption,
+        grid-charge power) -- when in doubt, keep charging allowed
+        (matches the pattern of the other abort checks).
+        """
+        try:
+            # ------------------------------------------------------------
+            # 1) charging_price_limit safety floor
+            # ------------------------------------------------------------
+            cur = self.items.get_current_price(convert=False)
+            if cur is not None:
+                try:
+                    if int(cur) <= self.charging_price_limit:
+                        self.logger.log.debug(
+                            "Cheaper-cluster-coming abort: current price at "
+                            "or below charging_price_limit -- not skipping."
+                        )
+                        return False
+                except (TypeError, ValueError):
+                    pass
+
+            # ------------------------------------------------------------
+            # 2) find the next STRICTLY-cheaper future charge block
+            # ------------------------------------------------------------
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
+
+            # Reference price = active block's avg, or current-quarter.
+            active_block = None
+            for blk in self._charge_blocks:
+                if blk.is_active_now():
+                    active_block = blk
+                    break
+            if active_block is not None:
+                try:
+                    reference_price = int(active_block.get_avg_price(convert=False))
+                except (TypeError, ValueError):
+                    return False
+            else:
+                if cur is None:
+                    return False
+                try:
+                    reference_price = int(cur)
+                except (TypeError, ValueError):
+                    return False
+
+            future_cheaper = []
+            for blk in self._charge_blocks:
+                if blk is active_block:
+                    continue
+                if blk.is_expired():
+                    continue
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                if blk_start <= now_utc:
+                    continue
+                try:
+                    blk_price = int(blk.get_avg_price(convert=False))
+                except (TypeError, ValueError):
+                    continue
+                if blk_price < reference_price:
+                    future_cheaper.append((blk_start, blk))
+
+            if not future_cheaper:
+                self.logger.log.debug(
+                    "Cheaper-cluster-coming abort: no strictly cheaper "
+                    "future block found -- not skipping."
+                )
+                return False
+
+            future_cheaper.sort(key=lambda pair: pair[0])
+            target_start, target_block = future_cheaper[0]
+
+            # ------------------------------------------------------------
+            # 3) prerequisites for the shelter-chain simulation
+            # ------------------------------------------------------------
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"
+            )
+            avg_hourly_wh = (
+                round(avg_list[0], 2)
+                if isinstance(avg_list, (list, tuple)) and avg_list
+                else 0.0
+            )
+            if avg_hourly_wh <= 0:
+                self.logger.log.debug(
+                    "Cheaper-cluster-coming abort: no consumption history "
+                    "yet -- not skipping."
+                )
+                return False
+
+            grid_charge_w_raw = self.statsmanager.get_data(
+                "powerconsumption", "last_grid_charge_power_w"
+            )
+            try:
+                grid_charge_w = float(grid_charge_w_raw) if grid_charge_w_raw else 0.0
+            except (TypeError, ValueError):
+                grid_charge_w = 0.0
+            if grid_charge_w <= 0:
+                self.logger.log.debug(
+                    "Cheaper-cluster-coming abort: no measured grid-charge "
+                    "power yet -- not skipping (waiting for first grid-charge "
+                    "cycle to calibrate)."
+                )
+                return False
+
+            current_soc_wh = (
+                self.essunit.get_battery_current_wh()
+                if self.essunit else 0
+            ) or 0
+            min_soc_wh = (
+                self.essunit.get_battery_min_wh()
+                if self.essunit else 0
+            ) or 0
+            usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
+
+            # Pack usable ceiling (full - min). Fall back to a rough
+            # estimate from current SOC% if get_battery_full_wh isn't
+            # exposed by this essunit.
+            full_wh = None
+            try:
+                if self.essunit and hasattr(self.essunit, "get_battery_full_wh"):
+                    full_wh = self.essunit.get_battery_full_wh()
+            except Exception:
+                full_wh = None
+            if not full_wh or full_wh <= 0:
+                soc_pct = 50.0
+                try:
+                    if self.essunit:
+                        s = self.essunit.get_soc()
+                        if isinstance(s, (int, float)) and 1 <= s <= 100:
+                            soc_pct = float(s)
+                except Exception:
+                    pass
+                full_wh = current_soc_wh / (soc_pct / 100.0)
+            full_wh = max(full_wh, current_soc_wh)
+            usable_ceiling = max(0.0, full_wh - min_soc_wh)
+
+            # ------------------------------------------------------------
+            # 4) forward simulation
+            # ------------------------------------------------------------
+            # Build ordered list of future charge blocks (cheaper AND
+            # not-cheaper) so the simulation walks the full remaining
+            # chain, not just the cheaper subset -- otherwise we'd
+            # miss the recharge from any non-cheaper cluster that
+            # follows the cheaper target.
+            all_future_blocks = []
+            for blk in self._charge_blocks:
+                if blk is active_block:
+                    continue
+                if blk.is_expired():
+                    continue
+                blk_start = blk.get_start_datetime()
+                if blk_start is None:
+                    continue
+                if blk_start.tzinfo is None:
+                    blk_start = blk_start.replace(tzinfo=timezone.utc)
+                if blk_start <= now_utc:
+                    continue
+                all_future_blocks.append((blk_start, blk))
+            all_future_blocks.sort(key=lambda pair: pair[0])
+
+            sim_soc = usable_soc_wh
+            prev_time = now_utc
+            trace_parts = []
+            chain_ok = True
+
+            for start_i, blk_i in all_future_blocks:
+                drain_h = max(
+                    0.0, (start_i - prev_time).total_seconds() / 3600
+                )
+                pv_wh = self._pv_forecast_wh_between(prev_time, start_i)
+                sim_soc = min(
+                    usable_ceiling,
+                    sim_soc - drain_h * avg_hourly_wh + pv_wh,
+                )
+                if sim_soc < 0:
+                    trace_parts.append(
+                        f"drained {drain_h:.1f}h (PV +{pv_wh:.0f}Wh) to "
+                        f"{start_i.astimezone().strftime('%H:%M')} "
+                        f"-> SOC {sim_soc:.0f}Wh (would run out)"
+                    )
+                    chain_ok = False
+                    break
+
+                blk_end = blk_i.get_end_datetime()
+                if blk_end is not None and blk_end.tzinfo is None:
+                    blk_end = blk_end.replace(tzinfo=timezone.utc)
+                cluster_dur_h = (
+                    (blk_end - start_i).total_seconds() / 3600
+                    if blk_end is not None else 1.0
+                )
+                add_wh = cluster_dur_h * grid_charge_w
+                sim_soc = min(usable_ceiling, sim_soc + add_wh)
+                trace_parts.append(
+                    f"drain {drain_h:.1f}h (PV +{pv_wh:.0f}Wh) then charge "
+                    f"{cluster_dur_h:.1f}h @ {grid_charge_w:.0f}W = "
+                    f"+{add_wh:.0f}Wh, SOC={sim_soc:.0f}Wh"
+                )
+                prev_time = blk_end or start_i
+
+            # Post-last-cluster drain to end of price horizon.
+            if chain_ok:
+                try:
+                    item_list = getattr(self.items, "_item_list", []) or []
+                    horizon_end = None
+                    for it in item_list:
+                        he = it.get_end_datetime()
+                        if he is None:
+                            continue
+                        if he.tzinfo is None:
+                            he = he.replace(tzinfo=timezone.utc)
+                        if horizon_end is None or he > horizon_end:
+                            horizon_end = he
+                    if horizon_end and horizon_end > prev_time:
+                        drain_h = (horizon_end - prev_time).total_seconds() / 3600
+                        pv_wh = self._pv_forecast_wh_between(prev_time, horizon_end)
+                        sim_soc = min(
+                            usable_ceiling,
+                            sim_soc - drain_h * avg_hourly_wh + pv_wh,
+                        )
+                        trace_parts.append(
+                            f"post-chain drain {drain_h:.1f}h "
+                            f"(PV +{pv_wh:.0f}Wh) -> SOC {sim_soc:.0f}Wh"
+                        )
+                        if sim_soc < 0:
+                            chain_ok = False
+                except Exception:
+                    # If we can't peek at the horizon we still trust
+                    # the mid-chain result; drain would only make the
+                    # decision more conservative anyway.
+                    pass
+
+            trace = "; ".join(trace_parts) if trace_parts else "(no chain steps)"
+
+            if not chain_ok:
+                self.logger.log.debug(
+                    f"Cheaper-cluster-coming abort: chain simulation would "
+                    f"drain the pack -- not skipping. Trace: {trace}"
+                )
+                return False
+
+            # ------------------------------------------------------------
+            # 5) safe to skip
+            # ------------------------------------------------------------
+            hours_until = (target_start - now_utc).total_seconds() / 3600.0
+            self.logger.log.info(
+                f"Cheaper-cluster-coming abort: strictly cheaper cluster "
+                f"{target_block.describe(localtime=True)} starts in "
+                f"{hours_until:.1f}h; chain simulation ends with "
+                f"SOC={sim_soc:.0f}Wh (>=0). Skipping current charge."
+            )
+            self._record_abort_fired("cheaper_cluster_coming")
+            return True
+
+        except Exception as e:
+            self.logger.log.error(
+                f"Cheaper-cluster-coming abort check failed: {e}. "
                 "Keeping charging allowed."
             )
             return False
