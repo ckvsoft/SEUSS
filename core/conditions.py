@@ -497,6 +497,26 @@ class Conditions:
                     self._abort_charging_battery_covers_until_overnext_cluster
             })
 
+        # Cheaper-cluster-coming: even while inside a cheap cluster
+        # (i.e. SEUSS would normally charge), skip if a strictly
+        # cheaper cluster is due later AND a forward simulation of
+        # the pack's SOC across the full remaining shelter chain
+        # never goes negative. Prevents "charging at 23 ct when 19 ct
+        # will come in 2 hours" while still being safe if the horizon
+        # gets tight.
+        #
+        # Registered BEFORE covers_expensive_phase on purpose: the
+        # abort loop stops at the first True, and this check is the
+        # more specific one -- when both would fire, the user should
+        # see "cheaper cluster coming" (with the price it's waiting
+        # for) in the log, not the generic expensive-phase message.
+        if getattr(self.config, "skip_charge_when_cheaper_cluster_coming", False):
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - strictly cheaper cluster coming and "
+                "battery bridges the gap safely":
+                    self._abort_charging_cheaper_cluster_coming
+            })
+
         # Current preferred check: abort if the battery covers the entire
         # upcoming expensive phase by itself (until the next charge cluster
         # of any price). Broader and more correct horizon than the older
@@ -523,20 +543,6 @@ class Conditions:
                 "Abort charge - negative-price quarters ahead "
                 "and battery will have room":
                     self._abort_charging_negative_price_ahead
-            })
-
-        # Cheaper-cluster-coming: even while inside a cheap cluster
-        # (i.e. SEUSS would normally charge), skip if a strictly
-        # cheaper cluster is due later AND a forward simulation of
-        # the pack's SOC across the full remaining shelter chain
-        # never goes negative. Prevents "charging at 23 ct when 19 ct
-        # will come in 2 hours" while still being safe if the horizon
-        # gets tight.
-        if getattr(self.config, "skip_charge_when_cheaper_cluster_coming", False):
-            self.abort_conditions_by_operation_mode["charging_abort"].update({
-                "Abort charge - strictly cheaper cluster coming and "
-                "battery bridges the gap safely":
-                    self._abort_charging_cheaper_cluster_coming
             })
 
         # Switching uses the same hard cap rule by default.
@@ -1713,7 +1719,7 @@ class Conditions:
             if cur is not None:
                 try:
                     if int(cur) <= self.charging_price_limit:
-                        self.logger.log.debug(
+                        self.logger.log.info(
                             "Cheaper-cluster-coming abort: current price at "
                             "or below charging_price_limit -- not skipping."
                         )
@@ -1767,7 +1773,7 @@ class Conditions:
                     future_cheaper.append((blk_start, blk))
 
             if not future_cheaper:
-                self.logger.log.debug(
+                self.logger.log.info(
                     "Cheaper-cluster-coming abort: no strictly cheaper "
                     "future block found -- not skipping."
                 )
@@ -1788,7 +1794,7 @@ class Conditions:
                 else 0.0
             )
             if avg_hourly_wh <= 0:
-                self.logger.log.debug(
+                self.logger.log.info(
                     "Cheaper-cluster-coming abort: no consumption history "
                     "yet -- not skipping."
                 )
@@ -1802,7 +1808,7 @@ class Conditions:
             except (TypeError, ValueError):
                 grid_charge_w = 0.0
             if grid_charge_w <= 0:
-                self.logger.log.debug(
+                self.logger.log.info(
                     "Cheaper-cluster-coming abort: no measured grid-charge "
                     "power yet -- not skipping (waiting for first grid-charge "
                     "cycle to calibrate)."
@@ -1939,7 +1945,7 @@ class Conditions:
             trace = "; ".join(trace_parts) if trace_parts else "(no chain steps)"
 
             if not chain_ok:
-                self.logger.log.debug(
+                self.logger.log.info(
                     f"Cheaper-cluster-coming abort: chain simulation would "
                     f"drain the pack -- not skipping. Trace: {trace}"
                 )
