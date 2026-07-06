@@ -28,6 +28,8 @@
                     "skip_charge_when_battery_sufficient",
                     "skip_charge_when_battery_covers_overnext",
                     "skip_charge_when_battery_covers_expensive_phase",
+                    "skip_charge_when_cheaper_cluster_coming",
+                    "skip_charge_for_upcoming_negative_prices",
                     "smart_discharge_priority_to_expensive_hours",
                     "delay_grid_charging_below_active_soc_limit",
                 ]
