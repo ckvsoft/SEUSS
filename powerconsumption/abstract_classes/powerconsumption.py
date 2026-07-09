@@ -976,25 +976,57 @@ class PowerConsumptionBase:
         if battery_dt_wh > 0:
             self.daily_battery_charge_wh += battery_dt_wh
 
-            # Track the most recent grid-charging power so downstream
-            # conditions (e.g. the expensive-phase abort) can estimate
-            # how much a future 1h charge cluster will refill. We only
-            # count it as "grid charge" when both battery_power and
-            # grid_power are positive at the same time -- that means
-            # power flows from the meter INTO the pack, as opposed to
-            # PV surplus flowing directly into the pack. A conservative
-            # 200 W threshold on both filters out idle noise.
+            # Only count this as grid-charging power when the grid
+            # import actually EXCEEDS the house consumption -- only then
+            # can the surplus be flowing into the battery from the
+            # meter. The previous "grid>200 AND battery>200" test was
+            # wrong: with grid-charging switched off, the grid can be
+            # importing to cover the house while PV trickle-charges the
+            # battery. Both readings are positive, but zero watts flow
+            # from the meter into the pack, so a ~200 W PV trickle got
+            # mis-recorded as the grid-charge capability. Comparing grid
+            # import against house load (self.last_value = "Power") is
+            # the clean discriminator: surplus grid = grid feeding the
+            # pack.
             try:
+                grid_w = self.last_grid_value
+                house_w = self.last_value
+                batt_w = self.last_battery_value
                 if (
-                    self.last_battery_value is not None
-                    and self.last_grid_value is not None
-                    and self.last_battery_value > 200
-                    and self.last_grid_value > 200
+                    grid_w is not None
+                    and house_w is not None
+                    and batt_w is not None
+                    and batt_w > 200            # battery is charging
+                    and grid_w > house_w + 200  # grid import exceeds house load
                 ):
+                    # The grid surplus over house load is what's
+                    # actually available to charge the pack. Cap by the
+                    # battery charge power so a momentary house-load dip
+                    # doesn't over-state it.
+                    grid_charge_now = min(float(batt_w), float(grid_w - house_w))
+                    now_ts = time.time()
+                    prev = self.statsmanager.get_data(
+                        "powerconsumption", "last_grid_charge_power_w"
+                    )
+                    prev_peak = 0.0
+                    prev_ts = 0.0
+                    if isinstance(prev, dict):
+                        prev_peak = float(prev.get("w", 0) or 0)
+                        prev_ts = float(prev.get("ts", 0) or 0)
+                    elif isinstance(prev, (int, float)):
+                        prev_peak = float(prev)
+
+                    # Expire the stored peak after 7 days so it re-learns
+                    # if hardware/limits change.
+                    if prev_ts and (now_ts - prev_ts) > 7 * 86400:
+                        prev_peak = 0.0
+
+                    new_peak = max(prev_peak, grid_charge_now)
+                    new_ts = now_ts if new_peak >= prev_peak else prev_ts
                     self.statsmanager.set_status_data(
                         "powerconsumption",
                         "last_grid_charge_power_w",
-                        float(self.last_battery_value),
+                        {"w": round(new_peak, 1), "ts": new_ts},
                         save_data=False,
                     )
             except Exception:

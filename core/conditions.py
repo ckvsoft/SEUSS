@@ -1221,7 +1221,13 @@ class Conditions:
             val = self.statsmanager.get_data(
                 "powerconsumption", "last_grid_charge_power_w"
             )
-            if isinstance(val, (int, float)) and val > 0:
+            # New format: {"w": <peak>, "ts": <epoch>}. Legacy format:
+            # a bare number. Support both.
+            if isinstance(val, dict):
+                w = val.get("w", 0)
+                if isinstance(w, (int, float)) and w > 0:
+                    return float(w)
+            elif isinstance(val, (int, float)) and val > 0:
                 return float(val)
         except Exception:
             pass
@@ -1803,10 +1809,9 @@ class Conditions:
             grid_charge_w_raw = self.statsmanager.get_data(
                 "powerconsumption", "last_grid_charge_power_w"
             )
-            try:
-                grid_charge_w = float(grid_charge_w_raw) if grid_charge_w_raw else 0.0
-            except (TypeError, ValueError):
-                grid_charge_w = 0.0
+            # New format {"w":..,"ts":..} (rolling 7-day peak) or legacy
+            # bare number. Use the helper so both paths stay consistent.
+            grid_charge_w = self._get_estimated_grid_charge_w()
             if grid_charge_w <= 0:
                 self.logger.log.info(
                     "Cheaper-cluster-coming abort: no measured grid-charge "
