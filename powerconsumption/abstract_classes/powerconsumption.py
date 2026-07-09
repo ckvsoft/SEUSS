@@ -975,64 +975,10 @@ class PowerConsumptionBase:
         battery_dt_wh = self.last_battery_value * time_diff
         if battery_dt_wh > 0:
             self.daily_battery_charge_wh += battery_dt_wh
-
-            # Only count this as grid-charging power when the grid
-            # import actually EXCEEDS the house consumption -- only then
-            # can the surplus be flowing into the battery from the
-            # meter. The previous "grid>200 AND battery>200" test was
-            # wrong: with grid-charging switched off, the grid can be
-            # importing to cover the house while PV trickle-charges the
-            # battery. Both readings are positive, but zero watts flow
-            # from the meter into the pack, so a ~200 W PV trickle got
-            # mis-recorded as the grid-charge capability. Comparing grid
-            # import against house load (self.last_value = "Power") is
-            # the clean discriminator: surplus grid = grid feeding the
-            # pack.
-            try:
-                grid_w = self.last_grid_value
-                house_w = self.last_value
-                batt_w = self.last_battery_value
-                if (
-                    grid_w is not None
-                    and house_w is not None
-                    and batt_w is not None
-                    and batt_w > 200            # battery is charging
-                    and grid_w > house_w + 200  # grid import exceeds house load
-                ):
-                    # The grid surplus over house load is what's
-                    # actually available to charge the pack. Cap by the
-                    # battery charge power so a momentary house-load dip
-                    # doesn't over-state it.
-                    grid_charge_now = min(float(batt_w), float(grid_w - house_w))
-                    now_ts = time.time()
-                    prev = self.statsmanager.get_data(
-                        "powerconsumption", "last_grid_charge_power_w"
-                    )
-                    prev_peak = 0.0
-                    prev_ts = 0.0
-                    if isinstance(prev, dict):
-                        prev_peak = float(prev.get("w", 0) or 0)
-                        prev_ts = float(prev.get("ts", 0) or 0)
-                    elif isinstance(prev, (int, float)):
-                        prev_peak = float(prev)
-
-                    # Expire the stored peak after 7 days so it re-learns
-                    # if hardware/limits change.
-                    if prev_ts and (now_ts - prev_ts) > 7 * 86400:
-                        prev_peak = 0.0
-
-                    new_peak = max(prev_peak, grid_charge_now)
-                    new_ts = now_ts if new_peak >= prev_peak else prev_ts
-                    self.statsmanager.set_status_data(
-                        "powerconsumption",
-                        "last_grid_charge_power_w",
-                        {"w": round(new_peak, 1), "ts": new_ts},
-                        save_data=False,
-                    )
-            except Exception:
-                # Never let this diagnostic hiccup break the main
-                # accumulator loop.
-                pass
+            # Grid-charging power is now calibrated from whole charge
+            # sessions (see _update_battery_session finalisation), which
+            # averages over hours and is far more stable than any single
+            # tick. No per-tick tracking here anymore.
         elif battery_dt_wh < 0:
             self.daily_battery_discharge_wh += -battery_dt_wh
 
@@ -1227,6 +1173,13 @@ class PowerConsumptionBase:
                     "type": current_dir,
                     "start": ts_iso,
                     "wh": 0.0,
+                    # Grid-sourced portion of a charge session's energy.
+                    # Only meaningful for charge sessions; stays 0 for
+                    # discharge. At finalisation, grid_wh / duration_h
+                    # gives the true average grid-charging power, which
+                    # is far more stable than any single instantaneous
+                    # tick (grid charging runs for hours).
+                    "grid_wh": 0.0,
                     "soc_start_pct": soc_now,
                     "soc_now_pct": soc_now,
                 }
@@ -1239,6 +1192,62 @@ class PowerConsumptionBase:
         if current_dir is None or current_dir == sess_type:
             if sess_type == "charge" and battery_dt_wh > 0:
                 self.current_session["wh"] += battery_dt_wh
+                # Grid-sourced portion of THIS tick's charge energy.
+                # The grid can only be charging the pack to the extent
+                # its import exceeds the house load. We scale the tick's
+                # battery energy by (grid_surplus / battery_power),
+                # clamped to [0, 1]. PV-only charging => grid_surplus<=0
+                # => 0 grid_wh, which is exactly what we want.
+                try:
+                    batt_p = self.last_battery_value or 0
+                    grid_surplus_w = max(
+                        0.0, (self.last_grid_value or 0) - (self.last_value or 0)
+                    )
+                    if batt_p > 0 and grid_surplus_w > 0:
+                        frac = min(1.0, grid_surplus_w / batt_p)
+                        self.current_session["grid_wh"] = (
+                            self.current_session.get("grid_wh", 0.0)
+                            + battery_dt_wh * frac
+                        )
+                        # Live calibration from the RUNNING session, so
+                        # an ongoing multi-hour grid charge updates the
+                        # estimate without waiting for the session to
+                        # end. Only once it has accumulated enough grid
+                        # energy and run long enough to be meaningful.
+                        try:
+                            from datetime import datetime as _dt, timezone as _tz
+                            t0 = _dt.fromisoformat(self.current_session["start"])
+                            run_h = (
+                                _dt.now(_tz.utc).astimezone() - t0
+                            ).total_seconds() / 3600.0
+                            gwh = self.current_session.get("grid_wh", 0.0)
+                            if run_h >= 0.25 and gwh >= 200:
+                                avg_w = gwh / run_h
+                                prev = self.statsmanager.get_data(
+                                    "powerconsumption", "last_grid_charge_power_w"
+                                )
+                                prev_peak = 0.0
+                                prev_ts = 0.0
+                                if isinstance(prev, dict):
+                                    prev_peak = float(prev.get("w", 0) or 0)
+                                    prev_ts = float(prev.get("ts", 0) or 0)
+                                elif isinstance(prev, (int, float)):
+                                    prev_peak = float(prev)
+                                now_ts = _dt.now(_tz.utc).timestamp()
+                                if prev_ts and (now_ts - prev_ts) > 7 * 86400:
+                                    prev_peak = 0.0
+                                new_peak = max(prev_peak, avg_w)
+                                new_ts = now_ts if new_peak >= prev_peak else prev_ts
+                                self.statsmanager.set_status_data(
+                                    "powerconsumption",
+                                    "last_grid_charge_power_w",
+                                    {"w": round(new_peak, 1), "ts": new_ts},
+                                    save_data=False,
+                                )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
             elif sess_type == "discharge" and battery_dt_wh < 0:
                 self.current_session["wh"] += -battery_dt_wh
             # Always update soc_now if we have a fresh reading. Also
@@ -1279,6 +1288,53 @@ class PowerConsumptionBase:
             old["duration_h"] = round((t1 - t0).total_seconds() / 3600.0, 2)
         except Exception:
             old["duration_h"] = None
+
+        # If this was a charge session that pulled a meaningful amount
+        # of energy from the grid over a meaningful duration, derive the
+        # average grid-charging power (grid_wh / duration_h) and store it
+        # as the calibration value for the cheaper-cluster / expensive-
+        # phase simulations. Averaging over the whole session (hours)
+        # instead of a single tick gives a stable ~real charger power
+        # and ignores near-full trickle tails. Kept as a rolling 7-day
+        # max so a brief throttled session doesn't lower a good value.
+        try:
+            if (
+                old.get("type") == "charge"
+                and old.get("duration_h")
+                and old["duration_h"] >= 0.25          # >=15 min
+                and old.get("grid_wh", 0) >= 200        # >=200 Wh from grid
+            ):
+                avg_grid_w = old["grid_wh"] / old["duration_h"]
+                if avg_grid_w > 0:
+                    now_ts = datetime.now(timezone.utc).timestamp()
+                    prev = self.statsmanager.get_data(
+                        "powerconsumption", "last_grid_charge_power_w"
+                    )
+                    prev_peak = 0.0
+                    prev_ts = 0.0
+                    if isinstance(prev, dict):
+                        prev_peak = float(prev.get("w", 0) or 0)
+                        prev_ts = float(prev.get("ts", 0) or 0)
+                    elif isinstance(prev, (int, float)):
+                        prev_peak = float(prev)
+                    if prev_ts and (now_ts - prev_ts) > 7 * 86400:
+                        prev_peak = 0.0
+                    new_peak = max(prev_peak, avg_grid_w)
+                    new_ts = now_ts if new_peak >= prev_peak else prev_ts
+                    self.statsmanager.set_status_data(
+                        "powerconsumption",
+                        "last_grid_charge_power_w",
+                        {"w": round(new_peak, 1), "ts": new_ts},
+                    )
+                    self.logger.log.info(
+                        f"Grid-charge power calibrated from session: "
+                        f"{old['grid_wh']:.0f}Wh over {old['duration_h']:.2f}h "
+                        f"= {avg_grid_w:.0f}W (rolling peak "
+                        f"{new_peak:.0f}W)."
+                    )
+        except Exception as e:
+            self.logger.log.debug(f"Grid-charge calibration skipped: {e}")
+
         # Prune to last 7 days.
         self.session_history.append(old)
         cutoff = datetime.now(timezone.utc).timestamp() - 7 * 86400
@@ -1297,6 +1353,7 @@ class PowerConsumptionBase:
             "type": current_dir,
             "start": ts_iso,
             "wh": 0.0,
+            "grid_wh": 0.0,
             "soc_start_pct": soc_now,
             "soc_now_pct": soc_now,
         }
