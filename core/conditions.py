@@ -1815,14 +1815,60 @@ class Conditions:
                 )
                 return False
 
+            # Safety reserve: the simulated SOC must stay above this
+            # margin (N hours of average consumption, configurable via
+            # cheaper_cluster_min_reserve_hours) at every point. Note
+            # the simulation already runs in "usable Wh" -- min-SOC is
+            # subtracted below -- so this reserve sits ON TOP of the
+            # pack's configured minimum, giving headroom for forecast
+            # and consumption estimation errors.
+            reserve_hours = max(
+                0.0,
+                float(getattr(
+                    self.config, "cheaper_cluster_min_reserve_hours", 2.0
+                ) or 0.0),
+            )
+            reserve_wh = reserve_hours * avg_hourly_wh
+
             current_soc_wh = (
                 self.essunit.get_battery_current_wh()
                 if self.essunit else 0
             ) or 0
-            min_soc_wh = (
-                self.essunit.get_battery_min_wh()
-                if self.essunit else 0
-            ) or 0
+
+            # Min-SOC floor = the pack's configured MinimumSocLimit
+            # (get_battery_min_wh converts the user's % to Wh via full
+            # capacity). This is the static floor the user set, e.g.
+            # 10%. We deliberately do NOT use ActiveSocLimit here: in
+            # this Victron setup that is the same CGwacs/BatteryLife
+            # floor, and SEUSS itself lowers it dynamically during the
+            # delay-grid-charging logic, so reading it back as a floor
+            # would move with SEUSS's own actions instead of the real
+            # user minimum.
+            #
+            # If the reading is momentarily unavailable (D-Bus/MQTT
+            # hiccup -> 0 or None) we do NOT fall back to 0, which
+            # would silently drop the floor for this cycle and let the
+            # simulation drain below the real minimum. Instead we
+            # refuse to skip and let charging proceed safely.
+            min_soc_wh = 0.0
+            have_min = False
+            try:
+                if self.essunit:
+                    m = self.essunit.get_battery_min_wh()
+                    if isinstance(m, (int, float)) and m > 0:
+                        min_soc_wh = float(m)
+                        have_min = True
+            except Exception:
+                pass
+
+            if not have_min:
+                self.logger.log.info(
+                    "Cheaper-cluster-coming abort: no reliable min-SOC "
+                    "reading (MinimumSocLimit empty) -- not skipping, "
+                    "charging proceeds to stay safe."
+                )
+                return False
+
             usable_soc_wh = max(0.0, current_soc_wh - min_soc_wh)
 
             # Pack usable ceiling (full - min). Fall back to a rough
@@ -1885,11 +1931,12 @@ class Conditions:
                     usable_ceiling,
                     sim_soc - drain_h * avg_hourly_wh + pv_wh,
                 )
-                if sim_soc < 0:
+                if sim_soc < reserve_wh:
                     trace_parts.append(
                         f"drained {drain_h:.1f}h (PV +{pv_wh:.0f}Wh) to "
                         f"{start_i.astimezone().strftime('%H:%M')} "
-                        f"-> SOC {sim_soc:.0f}Wh (would run out)"
+                        f"-> SOC {sim_soc:.0f}Wh (below reserve "
+                        f"{reserve_wh:.0f}Wh)"
                     )
                     chain_ok = False
                     break
@@ -1934,7 +1981,7 @@ class Conditions:
                             f"post-chain drain {drain_h:.1f}h "
                             f"(PV +{pv_wh:.0f}Wh) -> SOC {sim_soc:.0f}Wh"
                         )
-                        if sim_soc < 0:
+                        if sim_soc < reserve_wh:
                             chain_ok = False
                 except Exception:
                     # If we can't peek at the horizon we still trust
@@ -1959,7 +2006,8 @@ class Conditions:
                 f"Cheaper-cluster-coming abort: strictly cheaper cluster "
                 f"{target_block.describe(localtime=True)} starts in "
                 f"{hours_until:.1f}h; chain simulation ends with "
-                f"SOC={sim_soc:.0f}Wh (>=0). Skipping current charge."
+                f"SOC={sim_soc:.0f}Wh (>= reserve {reserve_wh:.0f}Wh). "
+                f"Skipping current charge."
             )
             self._record_abort_fired("cheaper_cluster_coming")
             return True

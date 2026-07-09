@@ -69,6 +69,7 @@ class Config(Singleton):
         # Runs a full forward simulation across the shelter chain so
         # it only skips when the horizon plan is actually safe.
         "skip_charge_when_cheaper_cluster_coming": False,
+        "cheaper_cluster_min_reserve_hours": 2.0,
         # New: skip charging the current quarter when at least one
         # upcoming quarter is priced below zero AND the battery will
         # have enough headroom to absorb it (current free Wh +
@@ -290,6 +291,7 @@ class Config(Singleton):
             # so getattr() in openmeteo gets a value even if config.json
             # is older than this build (migration adds them on next save).
             self.solar_adj_ewma_alpha = 0.3
+            self.cheaper_cluster_min_reserve_hours = 2.0
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
             self.solar_adj_max_daily_change = 0.20
@@ -375,6 +377,13 @@ class Config(Singleton):
             ("solar_adj_min_sun_hours", 4.0),
             ("solar_adj_max_daily_change", 0.20),
             ("stats_history_retention_days", 400),
+            # Safety reserve for the cheaper-cluster-coming simulation:
+            # the simulated SOC must stay ABOVE this many hours of
+            # average consumption (on top of the min-SOC, which is
+            # already subtracted before the simulation starts) at
+            # every point of the chain -- otherwise skipping is
+            # considered unsafe and charging proceeds now.
+            ("cheaper_cluster_min_reserve_hours", 2.0),
         ):
             raw = config_data.get(attr, default)
             try:

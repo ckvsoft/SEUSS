@@ -29,6 +29,7 @@
                     "skip_charge_when_battery_covers_overnext",
                     "skip_charge_when_battery_covers_expensive_phase",
                     "skip_charge_when_cheaper_cluster_coming",
+                    "cheaper_cluster_min_reserve_hours",
                     "skip_charge_for_upcoming_negative_prices",
                     "smart_discharge_priority_to_expensive_hours",
                     "delay_grid_charging_below_active_soc_limit",
@@ -51,8 +52,8 @@
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
                             <br/>
-                            <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                            <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                         % elif key == "log_level":
                             <select id="{{ key }}" name="{{ key }}">
                                 <option value="DEBUG" {{ 'selected' if value == 'DEBUG' else '' }}>DEBUG</option>
@@ -89,8 +90,8 @@
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                             % if isinstance(value, bool):
                                 <br/>
-                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                                 <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             % else:
                                 <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
                             % end
@@ -116,8 +117,8 @@
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                             % if isinstance(value, bool):
                                 <br/>
-                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                                 <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             % else:
                                 <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
                             % end
@@ -142,8 +143,8 @@
                                 %>
                                 <label class="tooltip" for="prices:{{ field_key }}" title="{{ title }}">{{ formatted_text }}</label><br/>
                                 % if isinstance(field_value, bool):
-                                    <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
                                     <input type="hidden" id="prices:{{ field_key }}_hidden" name="prices:{{ field_key }}" value="off">
+                                    <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
                                 % else:
                                     <input type="text" id="prices:{{ field_key }}" name="prices:{{ field_key }}" value="{{ field_value }}"><br>
                                 % end
