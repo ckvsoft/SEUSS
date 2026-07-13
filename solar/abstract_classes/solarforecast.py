@@ -238,6 +238,7 @@ class SolarForecastProvider:
             sum_current_hour_wh_raw = 0.0
 
             today_hourly_raw = [0.0] * 24
+            tomorrow_hourly_raw = [0.0] * 24
 
             cloudcover_today = None
             cloudcover_tomorrow = None
@@ -314,6 +315,7 @@ class SolarForecastProvider:
                             sum_forecast_rest_today_raw += damped_wh
                     else:
                         sum_forecast_tomorrow_raw += damped_wh
+                        tomorrow_hourly_raw[h - 24] += damped_wh
 
                 # If the provider already aggregated the full PV
                 # system into one fetch (e.g. Solcast Rooftop Site
@@ -331,18 +333,66 @@ class SolarForecastProvider:
                 )
                 return None
 
-            # --- Adjustment-factor learning ---
+            # --- Adjustment-factor learning (clear/cloudy two-point) ---
+            #
+            # One global factor cannot fit this system: with a steep
+            # (70 deg) panel the real yield beats the raw GTI model far
+            # more under DIRECT sun than under diffuse (overcast) light.
+            # Observed: on a 26%-cloud day the true factor was ~1.8, on
+            # a 69%-cloud day ~1.2 -- the single EWMA settled at ~1.6
+            # and was wrong on BOTH kinds of day (overshooting cloudy
+            # days, undershooting clear ones).
+            #
+            # Instead we keep exactly TWO factors -- adj_clear and
+            # adj_cloudy -- and interpolate between them by the cloud
+            # cover of the hour being predicted. Learning weights the
+            # day's observed ratio into both bins proportionally to the
+            # day's cloudiness, so a clear day mostly trains adj_clear
+            # and an overcast day mostly trains adj_cloudy. All existing
+            # guardrails (min data, min sun hours, EWMA alpha, daily
+            # change cap, clip to [0.2, 2.0]) stay in place per factor.
+            #
+            # The legacy 'solar/efficiency' key keeps being written with
+            # the day's effective blended factor: it remains the display
+            # value and the fallback for providers without cloud data
+            # (Solcast).
             pv_measured_today_wh = solar_data.pv_measured_today_wh or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * self.inverter_efficiency
 
             adj_data = self.statsmanager.get_data('solar', 'efficiency')
-            adj = (adj_data[0] / 100.0) if isinstance(adj_data, list) and len(adj_data) > 0 else (
+            adj_legacy = (adj_data[0] / 100.0) if isinstance(adj_data, list) and len(adj_data) > 0 else (
                 (adj_data / 100.0) if adj_data else 1.0)
+
+            def _read_pct(key, default):
+                v = self.statsmanager.get_data('solar', key)
+                if isinstance(v, list) and v:
+                    return v[0] / 100.0
+                if isinstance(v, (int, float)) and v:
+                    return v / 100.0
+                return default
+
+            # Seed both bins from the legacy global factor on first run.
+            adj_clear = _read_pct('adj_clear', adj_legacy)
+            adj_cloudy = _read_pct('adj_cloudy', adj_legacy)
 
             alpha = getattr(self.config, "solar_adj_ewma_alpha", 0.3)
             min_theoretical = getattr(self.config, "solar_adj_min_theoretical_wh", 1000.0)
             min_sun_hours = getattr(self.config, "solar_adj_min_sun_hours", 4.0)
             max_daily_change = getattr(self.config, "solar_adj_max_daily_change", 0.20)
+
+            # Daytime-average cloud fraction of the PAST hours today --
+            # that's the weather the measured yield was produced under,
+            # so it decides how the observation is split between bins.
+            cc_past_frac = 0.5  # neutral when no cloud data (Solcast)
+            if cloudcover_today is not None:
+                try:
+                    sr_h = self._iso_hour(sr_t) or 0
+                    h_hi = min(now.hour, 23)
+                    past_slice = cloudcover_today[sr_h:h_hi + 1]
+                    if past_slice:
+                        cc_past_frac = max(0.0, min(1.0, (sum(past_slice) / len(past_slice)) / 100.0))
+                except Exception:
+                    pass
 
             sun_hours_so_far = self._estimate_sun_hours_so_far(now)
             should_learn = (
@@ -352,25 +402,86 @@ class SolarForecastProvider:
             if should_learn:
                 instantaneous = pv_measured_today_wh / theoretical_past_net
                 instantaneous = max(0.2, min(2.0, instantaneous))
-                new_adj = alpha * instantaneous + (1.0 - alpha) * adj
+
+                # The factor is a CONTINUOUS line over cloud cover:
+                #   adj(cc) = adj_clear*(1-cc) + adj_cloudy*cc
+                # (adj_clear / adj_cloudy are just the line's endpoints
+                # at 0% and 100% cloud -- not categories.)
+                #
+                # Today's observation is one point on that line: at
+                # cc_past_frac the true factor was `instantaneous`.
+                # Correct ONLY the line's error AT THAT POINT (standard
+                # LMS update on the two basis weights). A 45%-cloud day
+                # thus adjusts the line where 45% lives and preserves
+                # its slope -- unlike naively EWMA-ing both endpoints
+                # toward the observation, which would slowly flatten
+                # the line into a useless average again.
+                predicted = adj_clear * (1.0 - cc_past_frac) + adj_cloudy * cc_past_frac
+                error = instantaneous - predicted
+                step_clear = alpha * (1.0 - cc_past_frac) * error
+                step_cloudy = alpha * cc_past_frac * error
                 if max_daily_change > 0:
-                    delta = new_adj - adj
-                    capped = max(-max_daily_change, min(max_daily_change, delta))
-                    new_adj = adj + capped
-                adj = max(0.2, min(2.0, new_adj))
-                self.statsmanager.update_percent_status_data('solar', 'adjustment_factor', round(adj, 2))
-                self.statsmanager.update_percent_status_data('solar', 'efficiency', round(adj * 100, 2))
+                    step_clear = max(-max_daily_change, min(max_daily_change, step_clear))
+                    step_cloudy = max(-max_daily_change, min(max_daily_change, step_cloudy))
+                adj_clear = max(0.2, min(2.0, adj_clear + step_clear))
+                adj_cloudy = max(0.2, min(2.0, adj_cloudy + step_cloudy))
+                self.statsmanager.update_percent_status_data('solar', 'adj_clear', round(adj_clear * 100, 2))
+                self.statsmanager.update_percent_status_data('solar', 'adj_cloudy', round(adj_cloudy * 100, 2))
 
-            rest_today_final = sum_forecast_rest_today_raw * self.inverter_efficiency * adj
+            def _adj_for_cc(cc_pct):
+                """Interpolated factor for one hour's cloud cover."""
+                cc = max(0.0, min(1.0, (cc_pct or 0) / 100.0))
+                return adj_clear * (1.0 - cc) + adj_cloudy * cc
+
+            have_cc_today = cloudcover_today is not None
+            have_cc_tomorrow = cloudcover_tomorrow is not None
+
+            # Per-hour application: every raw hour is scaled by the
+            # factor matching ITS forecast cloud cover. Falls back to
+            # the blended legacy behaviour when the provider delivers
+            # no cloud data.
+            h_now = now.hour
+            if have_cc_today:
+                rest_today_final = sum(
+                    today_hourly_raw[h] * self.inverter_efficiency * _adj_for_cc(cloudcover_today[h])
+                    for h in range(h_now + 1, 24)
+                )
+                full_day_forecast = sum(
+                    today_hourly_raw[h] * self.inverter_efficiency * _adj_for_cc(cloudcover_today[h])
+                    for h in range(24)
+                )
+                # Effective blended factor of today (for display and as
+                # the Solcast fallback): full-day weighted mean.
+                raw_day = sum(today_hourly_raw) or 1.0
+                adj_effective = sum(
+                    today_hourly_raw[h] * _adj_for_cc(cloudcover_today[h])
+                    for h in range(24)
+                ) / raw_day
+            else:
+                adj_effective = adj_legacy
+                rest_today_final = sum_forecast_rest_today_raw * self.inverter_efficiency * adj_effective
+                full_day_forecast = (
+                    (sum_forecast_past_today_raw
+                     + sum_current_hour_wh_raw
+                     + sum_forecast_rest_today_raw)
+                    * self.inverter_efficiency * adj_effective
+                )
+
+            if have_cc_tomorrow:
+                total_tomorrow = sum(
+                    tomorrow_hourly_raw[h] * self.inverter_efficiency * _adj_for_cc(cloudcover_tomorrow[h])
+                    for h in range(24)
+                )
+            else:
+                total_tomorrow = sum_forecast_tomorrow_raw * self.inverter_efficiency * adj_effective
+
             total_today = pv_measured_today_wh + rest_today_final
-            total_tomorrow = sum_forecast_tomorrow_raw * self.inverter_efficiency * adj
 
-            full_day_forecast = (
-                (sum_forecast_past_today_raw
-                 + sum_current_hour_wh_raw
-                 + sum_forecast_rest_today_raw)
-                * self.inverter_efficiency * adj
-            )
+            # Keep the legacy keys alive: 'efficiency' is the effective
+            # blended factor (display + Solcast fallback).
+            if should_learn:
+                self.statsmanager.update_percent_status_data('solar', 'adjustment_factor', round(adj_effective, 2))
+                self.statsmanager.update_percent_status_data('solar', 'efficiency', round(adj_effective * 100, 2))
 
             solar_data.update_forecast_today_wh(round(total_today, 2))
             solar_data.update_forecast_tomorrow_wh(round(total_tomorrow, 2))
@@ -465,7 +576,12 @@ class SolarForecastProvider:
                     'solar', 'forecast_pv_wh_by_day', forecast_by_day
                 )
                 today_hourly_adj = [
-                    round(v * self.inverter_efficiency * adj, 2) for v in today_hourly_raw
+                    round(
+                        today_hourly_raw[h] * self.inverter_efficiency
+                        * (_adj_for_cc(cloudcover_today[h]) if have_cc_today else adj_effective),
+                        2,
+                    )
+                    for h in range(24)
                 ]
                 hourly_by_day = self.statsmanager.get_data('solar', 'forecast_hourly_wh_by_day') or {}
                 if not isinstance(hourly_by_day, dict):
@@ -483,7 +599,7 @@ class SolarForecastProvider:
             self.logger.log.info(
                 f"[{self.name}] Forecast: Today {total_today:.2f} Wh "
                 f"(Measured: {pv_measured_today_wh:.0f}, Rest: {rest_today_final:.0f}), "
-                f"Tomorrow {total_tomorrow:.2f} Wh (Adj: {adj:.2f})"
+                f"Tomorrow {total_tomorrow:.2f} Wh (Adj: {adj_effective:.2f})"
             )
 
             return {
