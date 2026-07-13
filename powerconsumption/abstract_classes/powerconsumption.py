@@ -238,9 +238,17 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 100)
 
-        if efficiency < 100.0 and loss > 0.0:
-            self.total_loss = loss
-            self.last_loss_efficiency = (loss, efficiency)
+        # Always update the cache so the live snapshot reflects the
+        # CURRENT frame. The previous guard (`if efficiency < 100 and
+        # loss > 0`) only stored "unhealthy" frames: a single tick with
+        # half-updated MQTT aggregates (e.g. PV already fresh, AC_POWER
+        # still stale) produced a huge phantom loss, and because every
+        # healthy frame afterwards was NOT stored, the display stayed
+        # frozen on that outlier forever (observed: Loss 1769 W /
+        # Efficiency 38% shown permanently while the real balance was
+        # ~0 W / ~100%).
+        self.total_loss = loss
+        self.last_loss_efficiency = (loss, efficiency)
 
         return self.last_loss_efficiency
 
@@ -260,7 +268,11 @@ class PowerDataHandler:
           - "AC_GRID_POWER": Aggregierte Grid-Leistung
           - "AC_POWER": Aggregierte AC-Leistung
           - "BATTERY_POWER": Den Batterieverbrauchswert (P_DC_consumption_Battery)
-          - "TOTAL_POWER": Der berechnete Gesamtverbrauch (total_consumption)
+          - "TOTAL_POWER": HISTORICAL MISNOMER -- returns the most
+            recently computed energy-balance LOSS in W (see
+            process_data), NOT a consumption total. Kept for
+            compatibility; prefer "LOSS".
+          - "LOSS": same value under its correct name.
         """
         if power_type == "PV_POWER":
             pv = self.final_data.get("PV_POWER", 0)
@@ -276,6 +288,9 @@ class PowerDataHandler:
             return self.final_data.get("DC_POWER", 0)
 
         elif power_type == "TOTAL_POWER":
+            return self.total_loss
+
+        elif power_type == "LOSS":
             return self.total_loss
 
         elif power_type == "EFFICIENCY":

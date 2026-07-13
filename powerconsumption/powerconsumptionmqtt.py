@@ -126,10 +126,31 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     # entry every January.
                     self.energy_costs_by_day[self._today_iso()] = total_cost
 
-                    value = self.handler.get_power("TOTAL_POWER") or 0
-                    loss = value
-                    pv = self.handler.get_power("PV_POWER")
-                    efficiency = self.handler.get_power("EFFICIENCY")
+                    pv = self.handler.get_power("PV_POWER") or 0
+
+                    # Live loss & efficiency from an energy balance over
+                    # the four consistent snapshot values (the same ones
+                    # emitted below). The handler's final_data fields are
+                    # updated per-MQTT-message and can be mutually stale
+                    # within a tick, which produced phantom losses.
+                    #
+                    # Sign conventions:
+                    #   grid_power  > 0 import, < 0 export
+                    #   battery_power > 0 charging, < 0 discharging
+                    #   power (house) and pv are >= 0
+                    # Energy IN  = PV + grid import + battery discharge
+                    # Energy OUT = house + grid export + battery charge
+                    _house = self.current_power or 0
+                    _grid = self.current_grid_power or 0
+                    _batt = self.P_DC_consumption_Battery or 0
+                    energy_in = pv + max(_grid, 0) + max(-_batt, 0)
+                    energy_out = _house + max(-_grid, 0) + max(_batt, 0)
+                    if energy_in > 0:
+                        loss = max(energy_in - energy_out, 0)
+                        efficiency = min((energy_out / energy_in) * 100, 100)
+                    else:
+                        loss = 0
+                        efficiency = 100
 
                     self.soc = self.handler.get_power("SOC")
                     self.logger.log.debug(f"SOC received: {self.soc}")
