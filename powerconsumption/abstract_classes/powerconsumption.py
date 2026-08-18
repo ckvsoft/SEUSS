@@ -49,8 +49,14 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_loss_efficiency = (0, 100)
-        # Epoch of the last complete PV aggregate (0 = never seen).
-        self.last_pv_aggregate_ts = 0.0
+        # Epoch of the last complete PV aggregate. Initialised to
+        # BOOT TIME (not 0): if the DTU/WLAN is already down when
+        # SEUSS starts, no aggregate ever arrives -- with a 0 init
+        # the staleness checks (`last_ts and age > 180`) would stay
+        # disabled forever and neither the display fallback nor the
+        # balance reconstruction would ever engage. Boot-time init
+        # gives a natural 3-minute grace period instead.
+        self.last_pv_aggregate_ts = time.time()
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -1021,7 +1027,7 @@ class PowerConsumptionBase:
         # the measured pv_wh_by_day series.
         try:
             import time as _t
-            _last_agg = getattr(self, "last_pv_aggregate_ts", 0) or 0
+            _last_agg = getattr(self.handler, "last_pv_aggregate_ts", 0) or 0
             if _last_agg and (_t.time() - _last_agg) > 180:
                 _house_w = self.last_value or 0
                 _grid_w = self.last_grid_value or 0

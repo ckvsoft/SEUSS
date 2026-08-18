@@ -374,7 +374,8 @@ class SEUSS:
         # learning loop needs this explicit signal to stay paused.
         try:
             import time as _time
-            last_ts = getattr(manager_instance, "last_pv_aggregate_ts", 0) or 0
+            _h = getattr(manager_instance, "handler", None)
+            last_ts = getattr(_h, "last_pv_aggregate_ts", 0) or 0
             stale = bool(last_ts) and (_time.time() - last_ts) > 180
             self.solardata.update_pv_feed_stale(stale)
         except Exception:

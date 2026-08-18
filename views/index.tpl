@@ -187,7 +187,19 @@
                     updateValue("gridD", "Grid today", data.gridD, "Wh");
                     updateValue("gridExportD", "Grid export today", data.gridExportD, "Wh");
                     updateValue("gridH", "Grid this hour", data.gridH, "Wh");
-                    updateValue("pvD", "PV today", data.pvD, "Wh");
+                    {
+                        // "PV today": measured Wh, plus the balance-
+                        // reconstructed share (amber-ish suffix) while
+                        // the PV feed was down.
+                        const el = document.getElementById("pvD");
+                        if (el && typeof data.pvD === "number") {
+                            let txt = `PV today: ${data.pvD.toFixed(2)} Wh`;
+                            if (typeof data.pvD_est === "number" && data.pvD_est > 0) {
+                                txt += ` (+${data.pvD_est.toFixed(0)} est)`;
+                            }
+                            el.textContent = txt;
+                        }
+                    }
                     updateValue("batteryChargeD", "Battery charged today", data.batteryChargeD, "Wh");
                     updateValue("batteryDischargeD", "Battery discharged today", data.batteryDischargeD, "Wh");
                     if (data.soc !== undefined && data.soc !== null) {

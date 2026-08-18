@@ -215,6 +215,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'gridExportD': self.get_daily_grid_export_wh(),
                             'gridH': self.get_hour_grid_wh(),
                             'pvD': self.get_daily_pv_wh(),
+                            'pvD_est': round(getattr(self, 'daily_pv_estimated_wh', 0) or 0, 1),
                             'batteryChargeD': self.get_daily_battery_charge_wh(),
                             'batteryDischargeD': self.get_daily_battery_discharge_wh(),
                             'lossD': self.get_daily_loss_wh(),
