@@ -178,7 +178,7 @@
                         const pvEl = document.getElementById("pv");
                         if (pvEl) {
                             pvEl.textContent =
-                                `PV: ~${data.pv_estimate.toFixed(0)} W (estimated, no data)`;
+                                `PV: ~${data.pv_estimate.toFixed(0)} W (reconstructed, feed down)`;
                         }
                     } else {
                         updateValue("pv", "PV", data.pv, "W");

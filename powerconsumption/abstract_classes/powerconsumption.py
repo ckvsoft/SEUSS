@@ -1026,25 +1026,38 @@ class PowerConsumptionBase:
         # and shown in the stats in its own colour -- never mixed into
         # the measured pv_wh_by_day series.
         try:
-            import time as _t
-            _last_agg = getattr(self.handler, "last_pv_aggregate_ts", 0) or 0
-            if _last_agg and (_t.time() - _last_agg) > 180:
-                _house_w = self.last_value or 0
-                _grid_w = self.last_grid_value or 0
-                _batt_w = self.last_battery_value or 0
-                pv_missing_w = (
-                    _house_w
-                    + max(_batt_w, 0)      # battery charging
-                    + max(-_grid_w, 0)     # grid export
-                    - max(_grid_w, 0)      # grid import
-                    - max(-_batt_w, 0)     # battery discharging
+            # Trigger on the BALANCE HOLE, not on message staleness:
+            # when the DTU is unreachable, the GX keeps publishing PV
+            # topics -- just with value 0 -- so "no fresh messages"
+            # never happens and a timestamp check stays blind forever
+            # (observed 2026-08-18: PV 0 W reported while house 2955 W
+            # + battery 97 W - grid 2552 W left ~500 W unexplained).
+            # Energy conservation is the reliable detector: if reported
+            # PV is ~zero but the measured flows can't balance, the
+            # missing input IS the panels.
+            _house_w = self.last_value or 0
+            _grid_w = self.last_grid_value or 0
+            _batt_w = self.last_battery_value or 0
+            _pv_w = self.last_pv_value or 0
+            pv_missing_w = (
+                _house_w
+                + max(_batt_w, 0)      # battery charging
+                + max(-_grid_w, 0)     # grid export
+                - max(_grid_w, 0)      # grid import
+                - max(-_batt_w, 0)     # battery discharging
+                - max(_pv_w, 0)        # PV that IS reported
+            )
+            # 200 W floor: below that, the hole is indistinguishable
+            # from inverter/wiring losses and metering noise. The
+            # reported-PV guard keeps this OFF whenever the feed is
+            # healthy (then reported PV explains the balance and the
+            # hole collapses to ~losses).
+            if _pv_w < 50 and pv_missing_w > 200:
+                est_wh = pv_missing_w * time_diff
+                self.daily_pv_estimated_wh += est_wh
+                self.pv_est_wh_by_hour_today[pv_hkey] = (
+                    self.pv_est_wh_by_hour_today.get(pv_hkey, 0) + est_wh
                 )
-                if pv_missing_w > 0:
-                    est_wh = pv_missing_w * time_diff
-                    self.daily_pv_estimated_wh += est_wh
-                    self.pv_est_wh_by_hour_today[pv_hkey] = (
-                        self.pv_est_wh_by_hour_today.get(pv_hkey, 0) + est_wh
-                    )
         except Exception:
             pass
 

@@ -128,55 +128,41 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
                     pv = self.handler.get_power("PV_POWER") or 0
 
-                    # --- PV feed dropout fallback (display only) ---
-                    # When the OpenDTU/WLAN path drops out, no fresh PV
-                    # aggregates arrive and the live value shows 0 W in
-                    # bright daylight. Detect staleness via the age of
-                    # the last complete PV aggregate; if the frozen
-                    # hourly forecast expects meaningful yield for the
-                    # current hour, ship that value as a marked ESTIMATE
-                    # alongside. Only the display uses it -- statistics,
-                    # integration and learning stay on real measurements
-                    # (the forward-counter override heals the totals,
-                    # the learning guard pauses learning meanwhile).
-                    pv_stale = False
-                    pv_estimate = 0.0
-                    try:
-                        import time as _time
-                        from datetime import datetime as _dt, date as _date
-                        last_ts = getattr(self.handler, "last_pv_aggregate_ts", 0) or 0
-                        if last_ts and (_time.time() - last_ts) > 180:
-                            hourly = self.statsmanager.get_data(
-                                'solar', 'forecast_hourly_wh_by_day'
-                            ) or {}
-                            arr = hourly.get(_date.today().isoformat())
-                            if isinstance(arr, list) and len(arr) == 24:
-                                est = float(arr[_dt.now().hour] or 0)
-                                # Only flag when the forecast expects
-                                # real yield right now -- at night a
-                                # stale feed is irrelevant, 0 W is true.
-                                if est > 50:
-                                    pv_stale = True
-                                    pv_estimate = round(est, 1)
-                    except Exception:
-                        pass
-
-                    # Live loss & efficiency from an energy balance over
-                    # the four consistent snapshot values (the same ones
-                    # emitted below). The handler's final_data fields are
-                    # updated per-MQTT-message and can be mutually stale
-                    # within a tick, which produced phantom losses.
-                    #
-                    # Sign conventions:
-                    #   grid_power  > 0 import, < 0 export
-                    #   battery_power > 0 charging, < 0 discharging
-                    #   power (house) and pv are >= 0
-                    # Energy IN  = PV + grid import + battery discharge
-                    # Energy OUT = house + grid export + battery charge
+                    # --- PV feed dropout fallback (display) ---
+                    # Detection via the ENERGY BALANCE, not message
+                    # staleness: with the DTU down the GX keeps
+                    # publishing PV topics with value 0, so timestamps
+                    # never age. If reported PV is ~0 but the measured
+                    # flows leave a hole > 200 W, that hole IS the
+                    # panels -- show it as the reconstructed PV value
+                    # and use it in the live loss/efficiency balance so
+                    # those don't degenerate to 0 W / 100 %.
                     _house = self.current_power or 0
                     _grid = self.current_grid_power or 0
                     _batt = self.P_DC_consumption_Battery or 0
-                    energy_in = pv + max(_grid, 0) + max(-_batt, 0)
+                    pv_stale = False
+                    pv_estimate = 0.0
+                    try:
+                        _hole = (
+                            _house
+                            + max(_batt, 0)
+                            + max(-_grid, 0)
+                            - max(_grid, 0)
+                            - max(-_batt, 0)
+                            - max(pv, 0)
+                        )
+                        if (pv or 0) < 50 and _hole > 200:
+                            pv_stale = True
+                            pv_estimate = round(_hole, 1)
+                    except Exception:
+                        pass
+
+                    # Live loss & efficiency from the energy balance
+                    # over the consistent snapshot values. While the PV
+                    # feed is out, use the reconstructed PV as input --
+                    # otherwise the balance is structurally short.
+                    _pv_eff = pv if not pv_stale else pv_estimate
+                    energy_in = _pv_eff + max(_grid, 0) + max(-_batt, 0)
                     energy_out = _house + max(-_grid, 0) + max(_batt, 0)
                     if energy_in > 0:
                         loss = max(energy_in - energy_out, 0)

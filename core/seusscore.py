@@ -368,16 +368,16 @@ class SEUSS:
         # can cross-check both chains and skip learning while they
         # disagree (broken measurement basis, e.g. WLAN outage).
         self.solardata.update_inverter_sum_today_wh(round(inverter_sum_today_wh, 2))
-        # PV-feed staleness: no complete PV aggregate for >3 min means
-        # the DTU/WLAN path is down. During MULTI-DAY outages both
-        # chains read ~0 and the cross-check above can't fire, so the
-        # learning loop needs this explicit signal to stay paused.
+        # PV-feed health for the learning veto: timestamps are USELESS
+        # here -- with the DTU down the GX keeps publishing PV topics
+        # with value 0, so messages never go stale. The reliable signal
+        # is the balance reconstruction itself: once it has accumulated
+        # a meaningful amount today, the feed is demonstrably blind and
+        # the adjustment-factor learning must stay paused (measured PV
+        # is structurally too low).
         try:
-            import time as _time
-            _h = getattr(manager_instance, "handler", None)
-            last_ts = getattr(_h, "last_pv_aggregate_ts", 0) or 0
-            stale = bool(last_ts) and (_time.time() - last_ts) > 180
-            self.solardata.update_pv_feed_stale(stale)
+            est_today = float(getattr(manager_instance, "daily_pv_estimated_wh", 0) or 0)
+            self.solardata.update_pv_feed_stale(est_today > 100)
         except Exception:
             pass
         return inverter_sum_today_wh
