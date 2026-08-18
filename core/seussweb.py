@@ -458,10 +458,21 @@ class SEUSSWeb:
                 "consumption_wh": consumption_by_day.get(d, 0) or 0,
                 "grid_wh": grid_by_day.get(d, 0) or 0,
                 "pv_wh": pv_by_day.get(d, 0) or 0,
+                "pv_est_wh": pv_est_by_day.get(d, 0) or 0,
             })
 
         # SVG charts -- generated server-side so they work without
         # Chart.js (no internet at the VenusOS host).
+        try:
+            _est_today_live = sm.get_data(
+                "powerconsumption", "daily_pv_estimated_wh") or 0
+            if history_days and isinstance(_est_today_live, (int, float)) \
+                    and _est_today_live > 0 \
+                    and history_days[-1]["iso"] == today_iso \
+                    and not history_days[-1]["pv_est_wh"]:
+                history_days[-1]["pv_est_wh"] = round(float(_est_today_live), 2)
+        except Exception:
+            pass
         intraday_svg = self._render_intraday_svg(hourly_today, hourly_yesterday)
         history_svg = self._render_history_svg(history_days)
         # Solar forecast vs. actual chart -- one line for the morning
@@ -531,9 +542,22 @@ class SEUSSWeb:
         except Exception:
             pass
 
+        pv_est_hour_dict = sm.get_data(
+            "powerconsumption", "pv_est_wh_by_hour_today"
+        ) or {}
+        if not isinstance(pv_est_hour_dict, dict):
+            pv_est_hour_dict = {}
+        est_hourly_today = [0.0] * 24
+        for hkey, v in pv_est_hour_dict.items():
+            try:
+                idx = int(hkey)
+                if 0 <= idx < 24 and isinstance(v, (int, float)):
+                    est_hourly_today[idx] = float(v)
+            except (ValueError, TypeError):
+                pass
         today_solar_svg = self._render_today_solar_svg(
             forecast_hourly_today, actual_hourly_today
-        )
+        , est_hourly_today)
 
         stats_data = {
             "today": _row_for(today_iso),
@@ -835,7 +859,12 @@ class SEUSSWeb:
         consumption = [d["consumption_wh"] for d in history_days]
         grid = [d["grid_wh"] for d in history_days]
         pv = [d["pv_wh"] for d in history_days]
-        max_v = max(max(consumption + grid + pv), 1)
+        # Measured + balance-reconstructed PV (feed-dropout days). Only
+        # drawn when any day actually has a reconstructed share.
+        pv_est = [d.get("pv_est_wh", 0) or 0 for d in history_days]
+        pv_total = [p + e for p, e in zip(pv, pv_est)]
+        have_est = any(e > 0 for e in pv_est)
+        max_v = max(max(consumption + grid + pv_total), 1)
 
         n = len(history_days)
         x_step = plot_w / max(n - 1, 1)
@@ -883,6 +912,10 @@ class SEUSSWeb:
         parts.append(_polyline(consumption, "#4285f4"))   # blue
         parts.append(_polyline(grid, "#d04040"))          # red
         parts.append(_polyline(pv, "#2a8a2a"))            # green
+        if have_est:
+            # Dashed green: measured + reconstructed -- the true
+            # production on days where the PV feed was (partly) down.
+            parts.append(_polyline(pv_total, "#2a8a2a", dash="5,4"))
 
         # Per-day hover targets. Each day gets a thin vertical strip
         # spanning the full plot height with a <title> showing all
@@ -900,6 +933,8 @@ class SEUSSWeb:
                 f'Grid: {grid[i]:.0f} Wh  '
                 f'PV: {pv[i]:.0f} Wh'
             )
+            if pv_est[i] > 0:
+                tooltip += f'  (+{pv_est[i]:.0f} Wh rec.)' 
             tooltip = (tooltip
                        .replace("&", "&amp;")
                        .replace("<", "&lt;")
@@ -923,6 +958,12 @@ class SEUSSWeb:
             f'<rect x="{lx + 175}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
             f'<text x="{lx + 193}" y="{ly + 5}" font-size="10" fill="#444">PV</text>'
         )
+        if have_est:
+            parts.append(
+                f'<line x1="{lx + 210}" y1="{ly + 1}" x2="{lx + 224}" y2="{ly + 1}" '
+                f'stroke="#2a8a2a" stroke-width="3" stroke-dasharray="4,3"/>'
+                f'<text x="{lx + 228}" y="{ly + 5}" font-size="10" fill="#444">PV+rec</text>'
+            )
         # Y-axis title
         parts.append(
             f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh / day</text>'
@@ -977,7 +1018,8 @@ class SEUSSWeb:
             actual_v = d.get("pv_wh")
             if forecast_v is None or actual_v is None:
                 continue
-            rows.append((iso, float(forecast_v), float(actual_v)))
+            est_v = float(d.get("pv_est_wh", 0) or 0)
+            rows.append((iso, float(forecast_v), float(actual_v), est_v))
 
         if not rows:
             return (
@@ -998,7 +1040,11 @@ class SEUSSWeb:
 
         forecast_vals = [r[1] for r in rows]
         actual_vals = [r[2] for r in rows]
-        max_v = max(max(forecast_vals + actual_vals), 1)
+        # Actual + balance-reconstructed share (PV-feed dropout days).
+        est_vals = [r[3] for r in rows]
+        total_vals = [a + e for a, e in zip(actual_vals, est_vals)]
+        have_est = any(e > 0 for e in est_vals)
+        max_v = max(max(forecast_vals + total_vals), 1)
 
         n = len(rows)
         x_step = plot_w / max(n - 1, 1)
@@ -1048,7 +1094,7 @@ class SEUSSWeb:
                 f'text-anchor="end" fill="#666">{label_v}</text>'
             )
         # X-axis labels: every 5th day (MM-DD)
-        for i, (iso, _f, _a) in enumerate(rows):
+        for i, (iso, _f, _a, _e) in enumerate(rows):
             if i % 5 == 0 or i == n - 1:
                 x = margin_left + i * x_step
                 parts.append(
@@ -1061,20 +1107,27 @@ class SEUSSWeb:
         parts.append(_polyline(forecast_vals, "#e09020", dash="6,3"))
         # Actual: solid green (matching the PV colour used elsewhere).
         parts.append(_polyline(actual_vals, "#2a8a2a"))
+        if have_est:
+            # Dashed green: actual + reconstructed = true production on
+            # days where the PV feed was (partly) blind.
+            parts.append(_polyline(total_vals, "#2a8a2a", dash="5,4"))
 
         # Per-day hover strips with forecast / actual / delta tooltip.
         strip_w = max(2.0, x_step)
-        for i, (iso, f_v, a_v) in enumerate(rows):
+        for i, (iso, f_v, a_v, e_v) in enumerate(rows):
             x_center = margin_left + i * x_step
             x_strip = x_center - strip_w / 2.0
-            delta = a_v - f_v
+            total_v = a_v + e_v
+            delta = total_v - f_v
             sign = "+" if delta >= 0 else ""
             tooltip = (
                 f'{iso}  '
                 f'Forecast: {f_v:.0f} Wh  '
                 f'Actual: {a_v:.0f} Wh  '
-                f'Delta: {sign}{delta:.0f} Wh'
             )
+            if e_v > 0:
+                tooltip += f'Reconstructed: +{e_v:.0f} Wh  '
+            tooltip += f'Delta: {sign}{delta:.0f} Wh' 
             tooltip = (tooltip
                        .replace("&", "&amp;")
                        .replace("<", "&lt;")
@@ -1096,6 +1149,12 @@ class SEUSSWeb:
             f'<rect x="{lx + 130}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
             f'<text x="{lx + 148}" y="{ly + 5}" font-size="10" fill="#444">Actual</text>'
         )
+        if have_est:
+            parts.append(
+                f'<line x1="{lx + 185}" y1="{ly + 1}" x2="{lx + 199}" y2="{ly + 1}" '
+                f'stroke="#2a8a2a" stroke-width="3" stroke-dasharray="4,3"/>'
+                f'<text x="{lx + 203}" y="{ly + 5}" font-size="10" fill="#444">+rec</text>'
+            )
         # Y-axis title
         parts.append(
             f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh / day</text>'
@@ -1104,7 +1163,7 @@ class SEUSSWeb:
         return ''.join(parts)
 
     @staticmethod
-    def _render_today_solar_svg(forecast_hourly, actual_hourly):
+    def _render_today_solar_svg(forecast_hourly, actual_hourly, est_hourly=None):
         """
         Today's PV: cumulative forecast curve vs cumulative actual
         curve over the 24 hours of the current day.
@@ -1176,9 +1235,21 @@ class SEUSSWeb:
             # below (we just stop the polyline at cur_hour).
             cum_actual.append(running if h <= cur_hour else None)
 
+        # Actual + balance-reconstructed share (PV-feed dropout):
+        # cumulative measured+reconstructed. Only drawn when any
+        # reconstruction happened today.
+        est_hourly = est_hourly or [0.0] * 24
+        have_est = any((v or 0) > 0 for v in est_hourly)
+        cum_total = []
+        running = 0.0
+        for h in range(24):
+            running += float(actual_hourly[h] or 0) + float(est_hourly[h] or 0)
+            cum_total.append(running if h <= cur_hour else None)
+
         max_v = max(
             max(cum_forecast) if cum_forecast else 1,
             max((v for v in cum_actual if v is not None), default=1),
+            max((v for v in cum_total if v is not None), default=1),
             1,
         )
 
@@ -1266,6 +1337,10 @@ class SEUSSWeb:
         parts.append(_cumulative_polyline(cum_forecast, "#e09020", dash="6,3"))
         # Actual: solid green, truncated at current hour.
         parts.append(_cumulative_polyline(cum_actual, "#2a8a2a", stop_at=cur_hour))
+        if have_est:
+            # Dashed green: measured + reconstructed cumulative.
+            parts.append(_cumulative_polyline(
+                cum_total, "#2a8a2a", dash="5,4", stop_at=cur_hour))
 
         # Per-hour hover strips with cumulative forecast / actual /
         # delta. Hours past the current hour show "--" for actual.
@@ -1290,6 +1365,9 @@ class SEUSSWeb:
                     f'Actual (cum): {a_v:.0f} Wh  '
                     f'Delta: {sign}{delta:.0f} Wh'
                 )
+                t_v = cum_total[h] if h < len(cum_total) else None
+                if have_est and t_v is not None and t_v > a_v:
+                    tooltip += f'  (+{t_v - a_v:.0f} Wh rec.)' 
             tooltip = (tooltip
                        .replace("&", "&amp;")
                        .replace("<", "&lt;")
@@ -1311,6 +1389,12 @@ class SEUSSWeb:
             f'<rect x="{lx + 140}" y="{ly}" width="14" height="3" fill="#2a8a2a"/>'
             f'<text x="{lx + 158}" y="{ly + 5}" font-size="10" fill="#444">Actual (cumulative)</text>'
         )
+        if have_est:
+            parts.append(
+                f'<line x1="{lx}" y1="{ly + 14}" x2="{lx + 14}" y2="{ly + 14}" '
+                f'stroke="#2a8a2a" stroke-width="3" stroke-dasharray="4,3"/>'
+                f'<text x="{lx + 18}" y="{ly + 18}" font-size="10" fill="#444">+ reconstructed</text>'
+            )
         # Y-axis title
         parts.append(
             f'<text x="10" y="{margin_top + 5}" font-size="11" fill="#666">Wh</text>'
