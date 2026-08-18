@@ -84,6 +84,8 @@ class Solardata:
         self.forecast_today_wh = 0.0
         self.forecast_tomorrow_wh = 0.0
         self.pv_measured_today_wh = 0.0
+        self.inverter_sum_today_wh = 0.0
+        self.pv_feed_stale = False
 
     # --------------------------------------------------
     # Time-related updates
@@ -111,3 +113,18 @@ class Solardata:
 
     def update_pv_measured_today_wh(self, value):
         self.pv_measured_today_wh = value
+
+    def update_inverter_sum_today_wh(self, value):
+        """Inverter forward-counter sum for today (Wh). Used by the
+        forecast learning loop as a plausibility cross-check against
+        the GX-bus integration: when the two disagree strongly, at
+        least one measurement chain is broken (WLAN outage, DTU
+        restart, counter re-base) and learning must be skipped."""
+        self.inverter_sum_today_wh = value
+
+    def update_pv_feed_stale(self, value):
+        """True while no complete PV aggregate has arrived for several
+        minutes (DTU/WLAN dropout). During multi-day outages BOTH
+        measurement chains read ~0, so the counter-vs-integration
+        cross-check alone cannot veto learning -- this flag can."""
+        self.pv_feed_stale = bool(value)

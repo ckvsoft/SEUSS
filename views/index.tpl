@@ -171,7 +171,18 @@
                     updateValue("total_costs_today", "Total Costs Today", data.total_costs_today, "¢");
                     updateValue("loss", "Loss", data.loss, "W");
                     updateValue("efficiency", "Efficiency", data.efficiency, "%");
-                    updateValue("pv", "PV", data.pv, "W");
+                    if (data.pv_stale && typeof data.pv_estimate === "number") {
+                        // PV feed dropped out (e.g. DTU/WLAN outage):
+                        // show the forecast-based estimate, clearly
+                        // marked, instead of a bogus 0 W in daylight.
+                        const pvEl = document.getElementById("pv");
+                        if (pvEl) {
+                            pvEl.textContent =
+                                `PV: ~${data.pv_estimate.toFixed(0)} W (estimated, no data)`;
+                        }
+                    } else {
+                        updateValue("pv", "PV", data.pv, "W");
+                    }
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
                     updateValue("gridD", "Grid today", data.gridD, "Wh");
                     updateValue("gridExportD", "Grid export today", data.gridExportD, "Wh");

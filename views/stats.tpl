@@ -79,6 +79,12 @@
         .stats-tile.cost .value {
             color: #d04040;
         }
+        .stats-tile.pv .pv-est {
+            display: block;
+            font-size: 0.72em;
+            color: #e8a33d;
+            margin-top: 2px;
+        }
         .stats-tile.pv .value {
             color: #2a8a2a;
         }
@@ -165,6 +171,7 @@
          data-today-grid="{{ stats['today']['grid_wh'] }}"
          data-today-grid-export="{{ stats['today']['grid_export_wh'] }}"
          data-today-pv="{{ stats['today']['pv_wh'] }}"
+         data-today-pv-est="{{ stats['today']['pv_est_wh'] }}"
          data-today-battery-charge="{{ stats['today']['battery_charge_wh'] }}"
          data-today-battery-discharge="{{ stats['today']['battery_discharge_wh'] }}"
          data-today-cost="{{ stats['today']['cost_eur'] }}"
@@ -183,6 +190,7 @@
          data-yesterday-grid="{{ stats['yesterday']['grid_wh'] }}"
          data-yesterday-grid-export="{{ stats['yesterday']['grid_export_wh'] }}"
          data-yesterday-pv="{{ stats['yesterday']['pv_wh'] }}"
+         data-yesterday-pv-est="{{ stats['yesterday']['pv_est_wh'] }}"
          data-yesterday-battery-charge="{{ stats['yesterday']['battery_charge_wh'] }}"
          data-yesterday-battery-discharge="{{ stats['yesterday']['battery_discharge_wh'] }}"
          data-yesterday-cost="{{ stats['yesterday']['cost_eur'] }}"
@@ -201,6 +209,7 @@
          data-week-grid="{{ stats['week']['grid_wh'] }}"
          data-week-grid-export="{{ stats['week']['grid_export_wh'] }}"
          data-week-pv="{{ stats['week']['pv_wh'] }}"
+         data-week-pv-est="{{ stats['week']['pv_est_wh'] }}"
          data-week-battery-charge="{{ stats['week']['battery_charge_wh'] }}"
          data-week-battery-discharge="{{ stats['week']['battery_discharge_wh'] }}"
          data-week-cost="{{ stats['week']['cost_eur'] }}"
@@ -219,6 +228,7 @@
          data-month-grid="{{ stats['month']['grid_wh'] }}"
          data-month-grid-export="{{ stats['month']['grid_export_wh'] }}"
          data-month-pv="{{ stats['month']['pv_wh'] }}"
+         data-month-pv-est="{{ stats['month']['pv_est_wh'] }}"
          data-month-battery-charge="{{ stats['month']['battery_charge_wh'] }}"
          data-month-battery-discharge="{{ stats['month']['battery_discharge_wh'] }}"
          data-month-cost="{{ stats['month']['cost_eur'] }}"
@@ -237,6 +247,7 @@
          data-year-grid="{{ stats['year']['grid_wh'] }}"
          data-year-grid-export="{{ stats['year']['grid_export_wh'] }}"
          data-year-pv="{{ stats['year']['pv_wh'] }}"
+         data-year-pv-est="{{ stats['year']['pv_est_wh'] }}"
          data-year-battery-charge="{{ stats['year']['battery_charge_wh'] }}"
          data-year-battery-discharge="{{ stats['year']['battery_discharge_wh'] }}"
          data-year-cost="{{ stats['year']['cost_eur'] }}"
@@ -285,6 +296,11 @@
             <div class="value">
                 <span id="tile-pv">{{ "{:.0f}".format(active['pv_wh']) }}</span>
                 <span class="unit">Wh</span>
+                % if (active.get('pv_est_wh') or 0) > 0:
+                <span id="tile-pv-est" class="pv-est" title="Reconstructed from the energy balance while the PV feed (DTU/WLAN) was down: house + battery charge + export - import - discharge. Real measurements, shown separately from the metered PV.">+{{ "{:.0f}".format(active['pv_est_wh']) }} Wh est.</span>
+                % else:
+                <span id="tile-pv-est" class="pv-est" style="display:none" title="Reconstructed from the energy balance while the PV feed (DTU/WLAN) was down."></span>
+                % end
             </div>
         </div>
 
@@ -855,6 +871,16 @@
                 setText('tile-grid', formatNum(get('grid'), 0));
                 setText('tile-grid-export', formatNum(get('grid-export'), 0));
                 setText('tile-pv', formatNum(get('pv'), 0));
+                const pvEst = parseFloat(get('pv-est')) || 0;
+                const pvEstEl = document.getElementById('tile-pv-est');
+                if (pvEstEl) {
+                    if (pvEst > 0) {
+                        pvEstEl.textContent = '+' + pvEst.toFixed(0) + ' Wh est.';
+                        pvEstEl.style.display = '';
+                    } else {
+                        pvEstEl.style.display = 'none';
+                    }
+                }
                 setText('tile-battery-charge', formatNum(get('battery-charge'), 0));
                 setText('tile-battery-discharge', formatNum(get('battery-discharge'), 0));
                 setText('tile-cycles', formatNum(get('cycles'), 3));

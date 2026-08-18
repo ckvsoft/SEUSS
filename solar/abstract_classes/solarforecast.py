@@ -395,9 +395,44 @@ class SolarForecastProvider:
                     pass
 
             sun_hours_so_far = self._estimate_sun_hours_so_far(now)
+
+            # Plausibility cross-check: if the inverter forward-counter
+            # sum and the GX-bus integration disagree by more than 20%,
+            # at least one measurement chain is currently broken (WLAN
+            # outage, DTU restart, counter re-base, integration gap).
+            # Observed 2026-07-16: during a WLAN outage the GX chain
+            # missed ~2.6 kWh; learning from that window would have
+            # dragged the factor down for no physical reason. The
+            # forward-counter override heals the values a few minutes
+            # later -- learning simply waits until both chains agree.
+            measurement_consistent = True
+            # Multi-day dropout protection: while the PV feed is stale,
+            # the "measured" side is structurally too low (the GX simply
+            # never saw the yield). Learning from that would drag the
+            # factor toward the 0.2 clip day after day and need weeks to
+            # recover once the DTU is back. Hard veto.
+            if getattr(solar_data, "pv_feed_stale", False):
+                measurement_consistent = False
+                self.logger.log.debug(
+                    f"{self.name}: skipping adjustment learning -- "
+                    f"PV feed is stale (DTU/WLAN dropout)."
+                )
+            inv_sum = getattr(solar_data, "inverter_sum_today_wh", 0.0) or 0.0
+            if measurement_consistent and inv_sum > 500 and pv_measured_today_wh > 500:
+                rel_gap = abs(inv_sum - pv_measured_today_wh) / max(inv_sum, pv_measured_today_wh)
+                if rel_gap > 0.20:
+                    measurement_consistent = False
+                    self.logger.log.debug(
+                        f"{self.name}: skipping adjustment learning -- "
+                        f"inverter counter ({inv_sum:.0f} Wh) and GX "
+                        f"integration ({pv_measured_today_wh:.0f} Wh) "
+                        f"disagree by {rel_gap*100:.0f}%."
+                    )
+
             should_learn = (
                 theoretical_past_net > min_theoretical
                 and sun_hours_so_far >= min_sun_hours
+                and measurement_consistent
             )
             if should_learn:
                 instantaneous = pv_measured_today_wh / theoretical_past_net

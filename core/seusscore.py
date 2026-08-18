@@ -364,6 +364,21 @@ class SEUSS:
         # Push the authoritative value to solardata, NOT the inverter
         # forward-counter sum -- see method docstring for why.
         self.solardata.update_pv_measured_today_wh(round(pv_measured_today_wh, 2))
+        # Also hand the counter sum over so the forecast learning loop
+        # can cross-check both chains and skip learning while they
+        # disagree (broken measurement basis, e.g. WLAN outage).
+        self.solardata.update_inverter_sum_today_wh(round(inverter_sum_today_wh, 2))
+        # PV-feed staleness: no complete PV aggregate for >3 min means
+        # the DTU/WLAN path is down. During MULTI-DAY outages both
+        # chains read ~0 and the cross-check above can't fire, so the
+        # learning loop needs this explicit signal to stay paused.
+        try:
+            import time as _time
+            last_ts = getattr(manager_instance, "last_pv_aggregate_ts", 0) or 0
+            stale = bool(last_ts) and (_time.time() - last_ts) > 180
+            self.solardata.update_pv_feed_stale(stale)
+        except Exception:
+            pass
         return inverter_sum_today_wh
 
     def process_solar_forecast(self, inverter_sum_today_wh):

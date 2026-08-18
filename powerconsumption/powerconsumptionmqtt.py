@@ -128,6 +128,39 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
                     pv = self.handler.get_power("PV_POWER") or 0
 
+                    # --- PV feed dropout fallback (display only) ---
+                    # When the OpenDTU/WLAN path drops out, no fresh PV
+                    # aggregates arrive and the live value shows 0 W in
+                    # bright daylight. Detect staleness via the age of
+                    # the last complete PV aggregate; if the frozen
+                    # hourly forecast expects meaningful yield for the
+                    # current hour, ship that value as a marked ESTIMATE
+                    # alongside. Only the display uses it -- statistics,
+                    # integration and learning stay on real measurements
+                    # (the forward-counter override heals the totals,
+                    # the learning guard pauses learning meanwhile).
+                    pv_stale = False
+                    pv_estimate = 0.0
+                    try:
+                        import time as _time
+                        from datetime import datetime as _dt, date as _date
+                        last_ts = getattr(self.handler, "last_pv_aggregate_ts", 0) or 0
+                        if last_ts and (_time.time() - last_ts) > 180:
+                            hourly = self.statsmanager.get_data(
+                                'solar', 'forecast_hourly_wh_by_day'
+                            ) or {}
+                            arr = hourly.get(_date.today().isoformat())
+                            if isinstance(arr, list) and len(arr) == 24:
+                                est = float(arr[_dt.now().hour] or 0)
+                                # Only flag when the forecast expects
+                                # real yield right now -- at night a
+                                # stale feed is irrelevant, 0 W is true.
+                                if est > 50:
+                                    pv_stale = True
+                                    pv_estimate = round(est, 1)
+                    except Exception:
+                        pass
+
                     # Live loss & efficiency from an energy balance over
                     # the four consistent snapshot values (the same ones
                     # emitted below). The handler's final_data fields are
@@ -173,6 +206,8 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'costs': cost,
                             'total_costs_today': total_cost,
                             'pv': pv,
+                            'pv_stale': pv_stale,
+                            'pv_estimate': pv_estimate,
                             'loss': loss,
                             'efficiency': efficiency,
                             'consumptionD': self.get_daily_wh(),

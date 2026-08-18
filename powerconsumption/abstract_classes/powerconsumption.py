@@ -49,6 +49,8 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_loss_efficiency = (0, 100)
+        # Epoch of the last complete PV aggregate (0 = never seen).
+        self.last_pv_aggregate_ts = 0.0
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -135,6 +137,13 @@ class PowerDataHandler:
 
         if all(self.pv_data.get(key) is not None for key in keys):
             self.final_data["PV_POWER"] = sum(self.pv_data.values())
+            # Timestamp of the last COMPLETE PV aggregate. Consumers
+            # (live display fallback) use this to detect a stale PV
+            # feed: when the OpenDTU/WLAN path drops out, no fresh PV
+            # messages arrive, this timestamp ages, and the UI can
+            # substitute the forecast-based estimate instead of showing
+            # a bogus 0 W in bright daylight.
+            self.last_pv_aggregate_ts = time.time()
             self.reset(self.pv_data)
 
         if len([value for value in self.final_data.values() if value is not None]) >= 3:
@@ -341,6 +350,7 @@ class PowerConsumptionBase:
         self.daily_grid_wh = 0      # Grid import only (positive flow)
         self.daily_grid_export_wh = 0   # Grid export only (negative flow)
         self.daily_pv_wh = 0        # PV production
+        self.daily_pv_estimated_wh = 0  # balance-reconstructed PV during feed dropout
         # Battery split. Convention: BATTERY_POWER > 0 = charging (energy
         # into the battery), BATTERY_POWER < 0 = discharging. Matches
         # Victron's signs and the existing process_data() interpretation.
@@ -383,6 +393,8 @@ class PowerConsumptionBase:
         # forecast-vs-actual today chart on the stats page; it's
         # the PV analogue of loss_wh_by_hour_today / imbalance_wh_by_hour_today.
         self.pv_wh_by_hour_today = {}
+        self.pv_est_wh_by_hour_today = {}
+        self.pv_estimated_wh_by_day = {}
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
@@ -498,6 +510,7 @@ class PowerConsumptionBase:
         self.daily_grid_export_wh = self.statsmanager.get_data(
             "powerconsumption", "daily_grid_export_wh") or 0.0
         self.daily_pv_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_wh") or 0.0
+        self.daily_pv_estimated_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_estimated_wh") or 0.0
 
         # Battery split. New keys; if missing on first run after upgrade
         # we just start at zero. (Earlier code split a legacy
@@ -520,6 +533,11 @@ class PowerConsumptionBase:
             "powerconsumption", "imbalance_wh_by_hour_today") or {}
         self.pv_wh_by_hour_today = self.statsmanager.get_data(
             "powerconsumption", "pv_wh_by_hour_today") or {}
+        self.pv_est_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "pv_est_wh_by_hour_today") or {}
+        _pv_est_days = self.statsmanager.get_data(
+            "powerconsumption", "pv_estimated_wh_by_day")
+        self.pv_estimated_wh_by_day = _pv_est_days if isinstance(_pv_est_days, dict) else {}
 
         # JSON serialisation collapses Python tuples to lists, so on
         # reload `isinstance(x, tuple)` is always False -- the previous
@@ -692,6 +710,8 @@ class PowerConsumptionBase:
         self.statsmanager.set_status_data("powerconsumption","daily_grid_wh", self.daily_grid_wh, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_grid_export_wh", self.daily_grid_export_wh, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_pv_wh", self.daily_pv_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_pv_estimated_wh", self.daily_pv_estimated_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_estimated_wh_by_day", self.pv_estimated_wh_by_day, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_battery_charge_wh", self.daily_battery_charge_wh, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_battery_discharge_wh", self.daily_battery_discharge_wh, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_loss_wh", self.daily_loss_wh, save_data=False)
@@ -699,6 +719,7 @@ class PowerConsumptionBase:
         self.statsmanager.set_status_data("powerconsumption","loss_wh_by_hour_today", self.loss_wh_by_hour_today, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","imbalance_wh_by_hour_today", self.imbalance_wh_by_hour_today, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","pv_wh_by_hour_today", self.pv_wh_by_hour_today, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_est_wh_by_hour_today", self.pv_est_wh_by_hour_today, save_data=False)
         # Battery sessions: persisted as dicts so the stats handler
         # can read them without instantiating PowerConsumption.
         self.statsmanager.set_status_data(
@@ -788,6 +809,8 @@ class PowerConsumptionBase:
         self.grid_wh_by_day[yesterday_iso] = round(self.daily_grid_wh, 2)
         self.grid_export_wh_by_day[yesterday_iso] = round(self.daily_grid_export_wh, 2)
         self.pv_wh_by_day[yesterday_iso] = round(self.daily_pv_wh, 2)
+        if self.daily_pv_estimated_wh > 0:
+            self.pv_estimated_wh_by_day[yesterday_iso] = round(self.daily_pv_estimated_wh, 2)
         self.battery_charge_wh_by_day[yesterday_iso] = round(self.daily_battery_charge_wh, 2)
         self.battery_discharge_wh_by_day[yesterday_iso] = round(self.daily_battery_discharge_wh, 2)
         self.loss_wh_by_day[yesterday_iso] = round(self.daily_loss_wh, 2)
@@ -984,6 +1007,41 @@ class PowerConsumptionBase:
             self.pv_wh_by_hour_today.get(pv_hkey, 0) + pv_wh
         )
 
+        # --- Reconstructed PV during feed dropout ---
+        # While the DTU/WLAN path is down the GX reads PV as ~0, but
+        # house, grid and battery are still measured correctly. Energy
+        # conservation then pins down the invisible PV exactly:
+        #   pv_missing = house + battery_charge + grid_export
+        #                - grid_import - battery_discharge
+        # (whatever the measured inputs can't explain MUST have come
+        # from the panels). This is a reconstruction from real
+        # measurements, not a weather forecast. It is accumulated
+        # SEPARATELY (daily_pv_estimated_wh / pv_estimated_wh_by_day)
+        # and shown in the stats in its own colour -- never mixed into
+        # the measured pv_wh_by_day series.
+        try:
+            import time as _t
+            _last_agg = getattr(self, "last_pv_aggregate_ts", 0) or 0
+            if _last_agg and (_t.time() - _last_agg) > 180:
+                _house_w = self.last_value or 0
+                _grid_w = self.last_grid_value or 0
+                _batt_w = self.last_battery_value or 0
+                pv_missing_w = (
+                    _house_w
+                    + max(_batt_w, 0)      # battery charging
+                    + max(-_grid_w, 0)     # grid export
+                    - max(_grid_w, 0)      # grid import
+                    - max(-_batt_w, 0)     # battery discharging
+                )
+                if pv_missing_w > 0:
+                    est_wh = pv_missing_w * time_diff
+                    self.daily_pv_estimated_wh += est_wh
+                    self.pv_est_wh_by_hour_today[pv_hkey] = (
+                        self.pv_est_wh_by_hour_today.get(pv_hkey, 0) + est_wh
+                    )
+        except Exception:
+            pass
+
         # Battery split. Victron convention: positive battery_power =
         # charging (energy into the pack), negative = discharging. Both
         # daily totals stored as positive Wh.
@@ -1086,6 +1144,7 @@ class PowerConsumptionBase:
             self.daily_grid_wh = 0
             self.daily_grid_export_wh = 0
             self.daily_pv_wh = 0
+            self.daily_pv_estimated_wh = 0
             self.daily_battery_charge_wh = 0
             self.daily_battery_discharge_wh = 0
             self.daily_loss_wh = 0
@@ -1093,6 +1152,7 @@ class PowerConsumptionBase:
             self.loss_wh_by_hour_today = {}
             self.imbalance_wh_by_hour_today = {}
             self.pv_wh_by_hour_today = {}
+            self.pv_est_wh_by_hour_today = {}
 
             # Seed the new day's slot in the history dicts to 0
             # immediately. Otherwise the running update() block above
@@ -1492,6 +1552,8 @@ class PowerConsumptionBase:
         self.loss_wh_by_hour_today = {}
         self.imbalance_wh_by_hour_today = {}
         self.pv_wh_by_hour_today = {}
+        self.pv_est_wh_by_hour_today = {}
+        self.daily_pv_estimated_wh = 0
         self.hourly_start_time = time.time()
         self.last_value = 0
         self.last_grid_value = 0

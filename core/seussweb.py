@@ -244,6 +244,7 @@ class SEUSSWeb:
         grid_by_day = _get_dict("powerconsumption", "grid_wh_by_day")
         grid_export_by_day = _get_dict("powerconsumption", "grid_export_wh_by_day")
         pv_by_day = _get_dict("powerconsumption", "pv_wh_by_day")
+        pv_est_by_day = _get_dict("powerconsumption", "pv_estimated_wh_by_day")
         battery_charge_by_day = _get_dict("powerconsumption", "battery_charge_wh_by_day")
         battery_discharge_by_day = _get_dict("powerconsumption", "battery_discharge_wh_by_day")
         loss_by_day = _get_dict("powerconsumption", "loss_wh_by_day")
@@ -308,6 +309,7 @@ class SEUSSWeb:
                 "grid_wh": grid_by_day.get(iso_date, 0),
                 "grid_export_wh": grid_export_by_day.get(iso_date, 0),
                 "pv_wh": pv_by_day.get(iso_date, 0),
+                "pv_est_wh": pv_est_by_day.get(iso_date, 0) or 0,
                 "battery_charge_wh": charge_wh,
                 "battery_discharge_wh": discharge_wh,
                 "cost_eur": costs_by_day.get(iso_date, 0),
@@ -376,6 +378,7 @@ class SEUSSWeb:
                 "grid_wh": _sum_range(grid_by_day, start_iso, end_iso),
                 "grid_export_wh": _sum_range(grid_export_by_day, start_iso, end_iso),
                 "pv_wh": _sum_range(pv_by_day, start_iso, end_iso),
+                "pv_est_wh": _sum_range(pv_est_by_day, start_iso, end_iso),
                 "battery_charge_wh": charge_wh,
                 "battery_discharge_wh": discharge_wh,
                 "cost_eur": _sum_range(costs_by_day, start_iso, end_iso),
