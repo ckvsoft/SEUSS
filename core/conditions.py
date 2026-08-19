@@ -1946,6 +1946,39 @@ class Conditions:
                     chain_ok = False
                     break
 
+                # PRE-TARGET clusters may only recharge the simulation
+                # if they are STRICTLY cheaper than the block we're
+                # about to skip. Otherwise the chain would justify
+                # skipping the current (cheaper) block by leaning on a
+                # MORE expensive intermediate charge -- observed
+                # 2026-08-19: 15:00 block (28.08 ct) was skipped for a
+                # next-day 27.53 ct target, with the chain surviving
+                # only via the 16:00 block (29.30 ct); at 16:00 the
+                # chain then failed and charging ran at 29.30 instead
+                # of 28.08. Post-target clusters keep charging
+                # unconditionally (their role is only the post-target
+                # refill; their own skip decision happens when their
+                # time comes).
+                is_pre_target = start_i < target_start
+                if is_pre_target:
+                    try:
+                        blk_i_price = int(blk_i.get_avg_price(convert=False))
+                    except (TypeError, ValueError):
+                        blk_i_price = None
+                    if blk_i_price is None or blk_i_price >= reference_price:
+                        trace_parts.append(
+                            f"pass {start_i.astimezone().strftime('%H:%M')} "
+                            f"(not cheaper than current -- no charge "
+                            f"assumed)"
+                        )
+                        # No charge here; keep draining toward the next
+                        # block from the same prev_time baseline.
+                        blk_end = blk_i.get_end_datetime()
+                        if blk_end is not None and blk_end.tzinfo is None:
+                            blk_end = blk_end.replace(tzinfo=timezone.utc)
+                        prev_time = blk_end or start_i
+                        continue
+
                 blk_end = blk_i.get_end_datetime()
                 if blk_end is not None and blk_end.tzinfo is None:
                     blk_end = blk_end.replace(tzinfo=timezone.utc)
