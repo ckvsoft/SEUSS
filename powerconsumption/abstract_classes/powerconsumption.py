@@ -1052,12 +1052,50 @@ class PowerConsumptionBase:
             # reported-PV guard keeps this OFF whenever the feed is
             # healthy (then reported PV explains the balance and the
             # hole collapses to ~losses).
-            if _pv_w < 50 and pv_missing_w > 200:
+            trigger_now = _pv_w < 50 and pv_missing_w > 200
+            if trigger_now:
                 est_wh = pv_missing_w * time_diff
                 self.daily_pv_estimated_wh += est_wh
                 self.pv_est_wh_by_hour_today[pv_hkey] = (
                     self.pv_est_wh_by_hour_today.get(pv_hkey, 0) + est_wh
                 )
+
+            # Day-balance trueing: the per-tick path above misses every
+            # tick whose hole stays under the 200 W floor (e.g. battery
+            # covering most of the house -> hole 150 W for hours) and
+            # anything missed before a (re)start or the midnight
+            # rollover. The day totals pin down the full gap:
+            #   consumption + batt_charge + export
+            #   - import - batt_discharge - measured_pv - est_so_far
+            # Subtracting est_so_far makes this idempotent, so it can
+            # simply run continuously. Gate: reported PV must be ~0 AND
+            # the dropout must be evidenced (trigger active now, or
+            # already >50 Wh reconstructed today) -- this keeps a
+            # healthy day's ordinary conversion losses from being
+            # booked as phantom PV at night.
+            if _pv_w < 50 and (trigger_now or self.daily_pv_estimated_wh > 50):
+                day_hole = (
+                    (self.daily_wh or 0)
+                    + (self.daily_battery_charge_wh or 0)
+                    + (self.daily_grid_export_wh or 0)
+                    - (self.daily_grid_wh or 0)
+                    - (self.daily_battery_discharge_wh or 0)
+                    - (self.daily_pv_wh or 0)
+                    - (self.daily_pv_estimated_wh or 0)
+                )
+                if day_hole > 25:
+                    self.daily_pv_estimated_wh += day_hole
+                    self.pv_est_wh_by_hour_today[pv_hkey] = (
+                        self.pv_est_wh_by_hour_today.get(pv_hkey, 0)
+                        + day_hole
+                    )
+                    if day_hole > 100:
+                        self.logger.log.info(
+                            f"PV reconstruction trueing: booked "
+                            f"{day_hole:.0f} Wh from the day energy "
+                            f"balance (missed by per-tick threshold "
+                            f"or before start)."
+                        )
         except Exception:
             pass
 
