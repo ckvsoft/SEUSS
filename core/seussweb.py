@@ -85,6 +85,7 @@ class SEUSSWeb:
         self.app.route('/check_is_online', method='GET', callback=self.check_is_online)
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
         self.app.route('/get_charts', method='GET', callback=self.get_charts)
+        self.app.route('/api/prices', method='GET', callback=self.api_prices)
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
@@ -201,6 +202,53 @@ class SEUSSWeb:
             })
 
         return chart_svg, next_chart_svg, legend_svg
+
+    def api_prices(self):
+        """
+        Machine-readable price snapshot used by external consumers
+        (e.g. the thermostat2 hot-water controller polling this URL).
+        Returns JSON with the current quarter price, whether we are
+        inside a cheap charging block, hourly price curves for today
+        and tomorrow and the effective hard cap.
+
+        Never raises on missing data -- a missing current price just
+        comes back as None so the consumer can fall back to its own
+        hysteresis instead of crashing the request.
+        """
+        current_price = self.market_items.get_current_price(convert=True)
+        avg_today, avg_tomorrow = self.market_items.get_average_price_by_date(True)
+
+        # Hourly price curves (dict hour -> avg cent) for the UI chart.
+        data, _, next_data, _ = Itemlist.get_price_hour_lists(
+            self.market_items.get_current_list()
+        )
+
+        # Cheap-block detection: mirrored from core/conditions.py so the
+        # API answer matches what SEUSS itself would decide right now.
+        in_cheap_block = False
+        try:
+            count = getattr(self.config, "number_of_lowest_prices_for_charging", 0) or 0
+            block_minutes = getattr(self.config, "charging_block_minutes", 60) or 60
+            blocks = self.market_items.get_lowest_charging_blocks(
+                count, block_minutes=block_minutes
+            )
+            in_cheap_block = any(b.is_active_now() for b in blocks)
+        except Exception:
+            in_cheap_block = False
+
+        response.content_type = 'application/json'
+        return json.dumps({
+            "current_price": current_price,
+            "in_cheap_block": in_cheap_block,
+            "hard_cap": getattr(self.config, "charging_price_hard_cap", None),
+            "charging_price_limit": getattr(self.config, "charging_price_limit", None),
+            "avg_today": avg_today,
+            "avg_tomorrow": avg_tomorrow,
+            "prices_today": {str(h): v for h, v in sorted(data.items())},
+            "prices_tomorrow": {str(h): v for h, v in sorted(next_data.items())},
+            "market": getattr(self.market_items, "current_market_name", None),
+            "timestamp": datetime.now().astimezone().isoformat(),
+        })
 
     def index(self):
         chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
