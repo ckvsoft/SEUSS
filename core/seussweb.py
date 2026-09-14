@@ -211,6 +211,12 @@ class SEUSSWeb:
         inside a cheap charging block, hourly price curves for today
         and tomorrow and the effective hard cap.
 
+        For each hour of today/tomorrow a per-hour color flag is also
+        returned ("green" = cheap charging block, "red" = discharge
+        block, "gray" = neutral) that mirrors the SEUSS web chart, so
+        external displays can render the price curve as colored bars
+        without parsing SVG.
+
         Never raises on missing data -- a missing current price just
         comes back as None so the consumer can fall back to its own
         hysteresis instead of crashing the request.
@@ -226,15 +232,27 @@ class SEUSSWeb:
         # Cheap-block detection: mirrored from core/conditions.py so the
         # API answer matches what SEUSS itself would decide right now.
         in_cheap_block = False
+        charge_blocks, discharge_blocks = [], []
         try:
             count = getattr(self.config, "number_of_lowest_prices_for_charging", 0) or 0
             block_minutes = getattr(self.config, "charging_block_minutes", 60) or 60
             blocks = self.market_items.get_lowest_charging_blocks(
                 count, block_minutes=block_minutes
             )
+            charge_blocks = blocks
             in_cheap_block = any(b.is_active_now() for b in blocks)
+            discharge_blocks = self.market_items.get_highest_discharging_blocks(
+                getattr(self.config, "number_of_highest_prices_for_discharging", 0) or 0,
+                block_minutes=getattr(self.config, "discharging_block_minutes", 60) or 60,
+                exclude_blocks=charge_blocks,
+                fill_gaps=getattr(self.config, "fill_gaps_with_short_clusters", True),
+            )
         except Exception:
             in_cheap_block = False
+
+        # Per-hour bar colors for today/tomorrow (mirrors generate_chart_svg).
+        colors_today = self._hour_colors(charge_blocks, discharge_blocks, tomorrow=False)
+        colors_tomorrow = self._hour_colors(charge_blocks, discharge_blocks, tomorrow=True)
 
         response.content_type = 'application/json'
         return json.dumps({
@@ -246,9 +264,36 @@ class SEUSSWeb:
             "avg_tomorrow": avg_tomorrow,
             "prices_today": {str(h): v for h, v in sorted(data.items())},
             "prices_tomorrow": {str(h): v for h, v in sorted(next_data.items())},
+            "colors_today": colors_today,
+            "colors_tomorrow": colors_tomorrow,
             "market": getattr(self.market_items, "current_market_name", None),
             "timestamp": datetime.now().astimezone().isoformat(),
         })
+
+    @staticmethod
+    def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False):
+        """
+        Build a 24-element list of per-hour colors for the chart/API:
+        "green" when the hour is part of a cheap charging block,
+        "red" when it is part of a discharging block, otherwise "gray".
+        Mirrors the slice-coloring in generate_chart_svg so the
+        thermostat's bar display agrees with the SEUSS web chart.
+        """
+        target = SEUSSWeb._target_date(tomorrow)
+        charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
+        discharge_quarters = SEUSSWeb._collect_quarter_keys(discharge_blocks, target)
+
+        hours = {}
+        for h in range(24):
+            has_charge = any((h, q) in charge_quarters for q in range(4))
+            has_discharge = any((h, q) in discharge_quarters for q in range(4))
+            if has_charge:
+                hours[str(h)] = "green"
+            elif has_discharge:
+                hours[str(h)] = "red"
+            else:
+                hours[str(h)] = "gray"
+        return hours
 
     def index(self):
         chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
