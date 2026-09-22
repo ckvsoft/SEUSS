@@ -537,6 +537,17 @@ class Config(Singleton):
         self.move_key_to_end(self.config_data['ess_unit'], 'enabled')
         self.move_key_to_end(self.config_data['markets'], 'enabled')
 
+        # Per-IP smart-switch overrides are pipe-separated strings per
+        # README. Older configs / a buggy web-save path could store a
+        # bare integer ("8" -> 8), which crashed every .strip() caller.
+        # Normalize such stray values back to their string form so they
+        # keep working (and get persisted the next time config is saved).
+        for sub_item in self.config_data.get("smart_switches", []):
+            if isinstance(sub_item, dict):
+                for field_name in ("lowest_prices_per_ip", "block_minutes_per_ip"):
+                    if field_name in sub_item and not isinstance(sub_item[field_name], str):
+                        sub_item[field_name] = str(sub_item[field_name])
+
         self.save_config(self.config_data)
 
     def move_key_to_end(self, data, key):

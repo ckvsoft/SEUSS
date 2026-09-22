@@ -86,7 +86,12 @@ class WebSocketServer:
 
     def run(self, host="0.0.0.0", port=8765):
         """Starts the WebSocket server synchronously."""
-        with ws_serv(self.handler, host, port) as self.server:
+        # ping_interval/ping_timeout raised from the library defaults so
+        # clients in standby/nap don't spam the error log with keepalive
+        # timeouts (code 1011). Dead-client detection still works, just
+        # much less aggressively.
+        with ws_serv(self.handler, host, port,
+                     ping_interval=60, ping_timeout=30) as self.server:
             self.logger.log.info(f"start WebSocket server host:{host} port:{port}")
             self.server.serve_forever()
 

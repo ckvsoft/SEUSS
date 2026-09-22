@@ -1571,6 +1571,12 @@ class SEUSSWeb:
     def check_is_online(self):
         return "OK"
 
+    # Fields that must always stay strings: they are pipe-separated
+    # per-IP lists per README and must not be coerced to int/float by
+    # the numeric conversion below (a bare "8" used to become int 8 and
+    # then crashed every caller of .strip()).
+    STRING_FIELDS = {"ips", "lowest_prices_per_ip", "block_minutes_per_ip"}
+
     def save_config_route(self):
         # Laden der aktuellen Konfiguration
         new_config = self.config.config_data
@@ -1586,12 +1592,12 @@ class SEUSSWeb:
 
                 entry = next(e for e in new_config[section])
                 # Update the field value
-                if self._is_numeric(value):
+                key = split_key[1]
+                if self._is_numeric(value) and key not in self.STRING_FIELDS:
                     value = float(value) if '.' in value else int(value)
 
                 value_mapping = {'on': True, 'off': False}
                 value = value_mapping.get(value, value)
-                key = split_key[1]
 
                 entry[key] = value
 
@@ -1612,7 +1618,7 @@ class SEUSSWeb:
                     new_config[section].append(entry)
 
                 # Update the field value
-                if self._is_numeric(value):
+                if self._is_numeric(value) and split_key[2] not in self.STRING_FIELDS:
                     value = float(value) if '.' in value else int(value)
                 value_mapping = {'on': True, 'off': False}
                 value = value_mapping.get(value, value)

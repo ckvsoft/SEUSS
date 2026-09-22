@@ -69,8 +69,10 @@ class SmartSwitch:
 
         # Per-IP overrides (pipe-separated, position-aligned with `ips`).
         # Empty string for an entry means "fall back to global default".
-        self.lowest_prices_per_ip_raw = kwargs.get("lowest_prices_per_ip", "")
-        self.block_minutes_per_ip_raw = kwargs.get("block_minutes_per_ip", "")
+        # Normalize to str: a config bug could hand us an int ("8" -> 8)
+        # that would otherwise be silently treated as "no override".
+        self.lowest_prices_per_ip_raw = str(kwargs.get("lowest_prices_per_ip") or "")
+        self.block_minutes_per_ip_raw = str(kwargs.get("block_minutes_per_ip") or "")
 
         # Filter out disabled IPs (those starting with '!')
         self.active_ips = [

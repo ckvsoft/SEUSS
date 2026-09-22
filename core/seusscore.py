@@ -477,8 +477,8 @@ class SEUSS:
         for entry in self.config.config_data.get("smart_switches", []):
             if not entry.get("enabled", True):
                 continue
-            if (entry.get("lowest_prices_per_ip", "").strip()
-                    or entry.get("block_minutes_per_ip", "").strip()):
+            if (str(entry.get("lowest_prices_per_ip") or "").strip()
+                    or str(entry.get("block_minutes_per_ip") or "").strip()):
                 return True
         return False
 

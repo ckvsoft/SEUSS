@@ -104,9 +104,15 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 # returns 0 if the topic isn't mapped, which is fine.
                 pv = self.handler.get_power("PV_POWER") or 0
                 timestamp = time.time()
-                self.update(self.current_power, self.current_grid_power,
-                            self.P_DC_consumption_Battery, timestamp,
-                            pv_power=pv)
+                try:
+                    self.update(self.current_power, self.current_grid_power,
+                                self.P_DC_consumption_Battery, timestamp,
+                                pv_power=pv)
+                except Exception as e:
+                    # A single bad update (e.g. a None price or a broken
+                    # dispatcher read that escaped its own guards) must
+                    # never kill the MQTT loop thread. Log and continue.
+                    self.logger.log.error(f"Power update failed: {e}", exc_info=True)
 
     def on_disconnect(self, client, userdata, *args):
         """Universal disconnect callback compatible with all Paho versions"""

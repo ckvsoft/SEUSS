@@ -451,7 +451,11 @@ class PowerConsumptionBase:
         self.ws_server = ws
 
     def set_current_price(self, current_price):
-        self.current_price = current_price
+        # Keep the last known price when the market has no item covering
+        # "now" (get_current_price() returns None). Storing None here used
+        # to crash update() via float(None).
+        if current_price is not None:
+            self.current_price = current_price
 
     @staticmethod
     def _today_iso():
@@ -1168,7 +1172,7 @@ class PowerConsumptionBase:
             f"hour_imbalance={self.imbalance_wh_by_hour_today.get(hkey, 0):+.1f}Wh"
         )
 
-        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
+        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price or 0)
 
         # Mirror today's running totals into the per-day history dicts
         # so the stats page can render "today" without waiting for the
