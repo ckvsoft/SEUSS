@@ -446,8 +446,14 @@ class SEUSS:
         )
 
         # In the dynamic_ess backend the schedule replaces the classic
-        # charge/discharge toggles -- push the translated plan.
-        self._apply_dynamic_ess_schedule(essunit, conditions_instance)
+        # charge/discharge toggles -- push the translated plan. The
+        # final charging decision of THIS cycle rides along so the
+        # current window honours live aborts (cheaper-cluster-coming,
+        # solar, SOC target, ...).
+        self._apply_dynamic_ess_schedule(
+            essunit, conditions_instance, condition_charging_result.execute
+            if condition_charging_result.condition else None,
+        )
 
         self.items.log_items()
         self.no_data[0] = 0
@@ -478,7 +484,8 @@ class SEUSS:
                 f"Control backend resolution failed, keeping classic: {e}"
             )
 
-    def _apply_dynamic_ess_schedule(self, essunit, conditions_instance):
+    def _apply_dynamic_ess_schedule(self, essunit, conditions_instance,
+                                    current_charge_allowed=None):
         """
         dynamic_ess backend: translate the evaluated block plan into
         hourly target-SOC slots and publish them. Skipped entirely in
@@ -494,7 +501,9 @@ class SEUSS:
             )
             return
         try:
-            slots = conditions_instance.build_dynamic_ess_slots(essunit)
+            slots = conditions_instance.build_dynamic_ess_slots(
+                essunit, current_charge_allowed=current_charge_allowed,
+            )
             if not slots:
                 return
             full_wh = 0

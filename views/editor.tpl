@@ -25,8 +25,6 @@
                     "solar_adj_max_daily_change",
                 ]
                 battery_keys = [
-                    "skip_charge_when_battery_sufficient",
-                    "skip_charge_when_battery_covers_overnext",
                     "skip_charge_when_battery_covers_expensive_phase",
                     "skip_charge_when_cheaper_cluster_coming",
                     "cheaper_cluster_min_reserve_hours",
@@ -34,11 +32,19 @@
                     "smart_discharge_priority_to_expensive_hours",
                     "delay_grid_charging_below_active_soc_limit",
                 ]
-                grouped_keys = set(solar_keys + battery_keys)
+                # Hidden from the editor: deprecated flags. They stay
+                # functional for backward compatibility (existing
+                # configs keep working) but must not be configured
+                # anymore -- see the DEPRECATED rows in the README.
+                deprecated_keys = [
+                    "skip_charge_when_battery_sufficient",
+                    "skip_charge_when_battery_covers_overnext",
+                ]
+                grouped_keys = set(solar_keys + battery_keys + deprecated_keys)
                 section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]
                 %>
                 % for key, value in config.items():
-                    % if key not in section_keys and key not in grouped_keys:
+                    % if key not in section_keys and key not in grouped_keys and key not in deprecated_keys:
                         <%
                         if tooltips and key in tooltips:
                             title = tooltips.get(key)

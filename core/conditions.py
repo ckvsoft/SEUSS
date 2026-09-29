@@ -913,15 +913,35 @@ class Conditions:
         info["charge_power_watts"] = self.charge_power_watts
         return info
 
-    def build_dynamic_ess_slots(self, essunit):
+    def build_dynamic_ess_slots(self, essunit, current_charge_allowed=None):
         """
         Translate the current block plan into hourly Dynamic-ESS
         schedule slots covering the known price horizon.
 
-          charge window      -> scheduler SOC target (fallback 100%)
-          discharge blocked  -> hold at the current SOC
+          charge window, price OK, no abort -> scheduler SOC target
+          charge window, price rule blocks  -> hold at current SOC
+          window containing "now", charge   -> scheduler target only when
+            window aborted by the live      -> current_charge_allowed is
+            evaluation                         not False (abort -> hold)
+          discharge blocked                 -> hold at the current SOC
                                 (smart-discharge drop or no block)
-          otherwise          -> minimum SOC (free discharge to floor)
+          otherwise                         -> minimum SOC (free discharge
+                                               to floor)
+
+        The price rules mirror the charging aborts so the schedule never
+        instructs the GX to charge a window that the active strategy
+        would refuse:
+          cap      -- window average price above charging_price_hard_cap
+          economic -- window average price / round_trip_efficiency above
+                      the current marginal displaced price
+
+        current_charge_allowed carries the FINAL charging decision of
+        this evaluation cycle (condition.execute): False means the live
+        aborts (cheaper-cluster-coming, solar, SOC target, ...) vetoed
+        the current window -> that slot holds instead of charging. The
+        following cycles re-refine every window as it approaches "now",
+        so now-only decisions propagate naturally through the rolling
+        plan.
 
         The caller feeds the returned slots to
         essunit.publish_dynamic_ess_schedule().
@@ -977,8 +997,9 @@ class Conditions:
 
         allow_set = self._discharge_allow_set
         one_hour = timedelta(hours=1)
+        current_hour = now_utc.replace(minute=0, second=0, microsecond=0)
         slots = []
-        win_start = now_utc.replace(minute=0, second=0, microsecond=0)
+        win_start = current_hour
         while win_start < horizon:
             win_end = win_start + one_hour
             charge_covered = any(
@@ -993,7 +1014,19 @@ class Conditions:
                     discharge_covered = True
                     break
             if charge_covered:
-                soc = charge_target
+                # Price rule first: a window the active strategy would
+                # refuse must NOT instruct the GX to charge.
+                window_price = self._window_avg_price_milli(win_start, win_end)
+                price_blocked = self._price_blocks_window(window_price)
+                if price_blocked:
+                    soc = current_soc  # hold instead of charging
+                elif (current_charge_allowed is False
+                        and win_start == current_hour):
+                    # Live evaluation vetoed the CURRENT window
+                    # (cheaper-cluster-coming, solar abort, ...).
+                    soc = current_soc  # hold
+                else:
+                    soc = charge_target
             elif discharge_covered:
                 soc = min_soc
             else:
@@ -1008,6 +1041,60 @@ class Conditions:
             })
             win_start = win_end
         return slots
+
+    def _window_avg_price_milli(self, win_start, win_end):
+        """
+        Overlap-weighted average quarter price (internal potency scale)
+        of an hour window. None when no priced item overlaps the window.
+        """
+        from datetime import timezone
+
+        total = 0.0
+        minutes = 0.0
+        for it in self.items.get_current_list():
+            qs = it.get_start_datetime()
+            qe = it.get_end_datetime()
+            if qs is None or qe is None:
+                continue
+            if qs.tzinfo is None:
+                qs = qs.replace(tzinfo=timezone.utc)
+            if qe.tzinfo is None:
+                qe = qe.replace(tzinfo=timezone.utc)
+            overlap = (min(qe, win_end) - max(qs, win_start)).total_seconds() / 60.0
+            if overlap <= 0:
+                continue
+            try:
+                price = float(it.get_price(convert=False))
+            except (TypeError, ValueError):
+                continue
+            total += price * overlap
+            minutes += overlap
+        if minutes <= 0:
+            return None
+        return total / minutes
+
+    def _price_blocks_window(self, window_price_milli):
+        """
+        Apply the active charging strategy's price rule to an hour
+        window's average price (internal potency scale). True when the
+        strategy would refuse to charge that window.
+        """
+        if window_price_milli is None:
+            return False
+        try:
+            if self.charging_strategy == "economic":
+                marginal = self.economic_info.get("marginal_price")
+                if marginal is None:
+                    return False
+                return (window_price_milli / self.round_trip_efficiency) > marginal
+            cap = Utils.convert_to_millicents(
+                float(self.config.charging_price_hard_cap)
+            )
+            if cap is None:
+                return False
+            return window_price_milli > cap
+        except (TypeError, ValueError):
+            return False
 
 
     def _abort_charging_soc_target_reached(self):
