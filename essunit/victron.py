@@ -319,8 +319,33 @@ class Victron(ESSUnit):
     # ------------------------------------------------------------------
 
     def set_control_backend(self, backend):
-        if backend in ("classic", "dynamic_ess"):
-            self._control_backend = backend
+        previous = self._control_backend
+        if backend not in ("classic", "dynamic_ess"):
+            return
+        self._control_backend = backend
+        # Entering dynamic_ess: a classic cycle may have left
+        # MaxDischargePower at 0 (discharge blocked). In this backend
+        # SEUSS never touches the register again, so a leftover block
+        # would permanently forbid discharge while the schedule assumes
+        # a free battery -- restore the configured value ONCE.
+        if backend == "dynamic_ess" and previous != "dynamic_ess" \
+                and self.max_discharge_power != 0:
+            try:
+                current = self._process_result(
+                    self.subsribers.get('DisCharge', 'MaxDischargePower'))
+                if isinstance(current, (int, float)) and current == 0:
+                    self._publish(
+                        f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                        self.max_discharge_power,
+                    )
+                    self.logger.log.info(
+                        f"Dynamic ESS: restored MaxDischargePower -> "
+                        f"{self.max_discharge_power} (classic leftover 0)."
+                    )
+            except Exception as e:
+                self.logger.log.error(
+                    f"Dynamic ESS: MaxDischargePower restore failed: {e}"
+                )
 
     def get_control_backend(self):
         return self._control_backend
