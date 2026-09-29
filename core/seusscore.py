@@ -86,6 +86,12 @@ class SEUSS:
     def run_essunit(self):
         essunit = self.initialize_essunit()
         if essunit is not None:
+            # Resolve the control backend (classic toggles vs Victron
+            # Dynamic ESS schedule) against the actual firmware. "auto"
+            # prefers dynamic_ess when the GX supports it and silently
+            # falls back to classic otherwise. Logged once per change.
+            self._resolve_control_backend(essunit)
+
             unit_config = essunit.get_config()
             active_soc_limit = essunit.get_active_soc_limit()
             soc = essunit.get_soc()
@@ -432,8 +438,125 @@ class SEUSS:
         self.control_discharging(essunit, condition_discharging_result)
         self.control_switching(condition_switching_result, essunit=essunit)
 
+        # Expose the current decision + battery state to the web layer
+        # (/api/battery for external consumers like the thermostat).
+        self._publish_ess_state(
+            essunit, condition_charging_result, condition_discharging_result,
+            conditions_instance,
+        )
+
+        # In the dynamic_ess backend the schedule replaces the classic
+        # charge/discharge toggles -- push the translated plan.
+        self._apply_dynamic_ess_schedule(essunit, conditions_instance)
+
         self.items.log_items()
         self.no_data[0] = 0
+
+    def _resolve_control_backend(self, essunit):
+        """
+        Resolve + log the Victron control backend. Cheap enough to run
+        every cycle; only backend CHANGES are logged, and switching away
+        from dynamic_ess cleanly deactivates Mode 4 so the GX never
+        follows a frozen schedule.
+        """
+        if not hasattr(essunit, "resolve_control_backend"):
+            return
+        try:
+            backend = essunit.resolve_control_backend(self.config)
+            previous = getattr(essunit, "get_control_backend", lambda: None)()
+            essunit.set_control_backend(backend)
+            if backend != previous:
+                if previous is not None and previous != "classic" and \
+                        hasattr(essunit, "disable_dynamic_ess"):
+                    essunit.disable_dynamic_ess()
+                self.logger.log.info(
+                    f"Control backend: {backend}"
+                    + (f" (was {previous})" if previous is not None else "")
+                )
+        except Exception as e:
+            self.logger.log.warning(
+                f"Control backend resolution failed, keeping classic: {e}"
+            )
+
+    def _apply_dynamic_ess_schedule(self, essunit, conditions_instance):
+        """
+        dynamic_ess backend: translate the evaluated block plan into
+        hourly target-SOC slots and publish them. Skipped entirely in
+        observation mode and for essunits without the backend support.
+        """
+        if essunit is None or conditions_instance is None:
+            return
+        if getattr(essunit, "get_control_backend", lambda: "classic")() != "dynamic_ess":
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                "[OBSERVATION] Would publish Dynamic ESS schedule"
+            )
+            return
+        try:
+            slots = conditions_instance.build_dynamic_ess_slots(essunit)
+            if not slots:
+                return
+            full_wh = 0
+            try:
+                full_wh = essunit.get_battery_full_wh() or 0
+            except Exception:
+                pass
+            essunit.publish_dynamic_ess_schedule(
+                slots,
+                battery_capacity_kwh=(full_wh / 1000.0) if full_wh else None,
+                efficiency=getattr(self.config, "round_trip_efficiency", 0.9),
+            )
+        except Exception as e:
+            self.logger.log.error(f"Dynamic ESS schedule push failed: {e}")
+
+    def _publish_ess_state(self, essunit, charge_result, discharge_result,
+                           conditions_instance=None):
+        """
+        RAM-only state for the web layer -- deliberately NOT persisted
+        via the StatsManager, so the thermostat endpoint costs zero
+        disk writes (same SD-wear reasoning as the register topic).
+        """
+        state = "idle"
+        if charge_result.execute:
+            state = "charging"
+        elif discharge_result.execute:
+            state = "discharging"
+
+        economic = None
+        if conditions_instance is not None and \
+                hasattr(conditions_instance, "get_economic_info"):
+            try:
+                economic = conditions_instance.get_economic_info()
+            except Exception:
+                economic = None
+
+        payload = {
+            "state": state,
+            "charge_condition": charge_result.condition,
+            "discharge_condition": discharge_result.condition,
+            "soc_percent": essunit.get_soc() if essunit is not None else None,
+            "soc_wh": (essunit.get_battery_current_wh()
+                       if essunit is not None else None),
+            "capacity_wh": (essunit.get_battery_full_wh()
+                            if essunit is not None else None),
+            "min_soc_percent": (essunit.get_battery_minimum_soc_limit()
+                                if essunit is not None else None),
+            "control_backend": (essunit.get_control_backend()
+                                if essunit is not None and
+                                hasattr(essunit, "get_control_backend")
+                                else "classic"),
+            "charging_strategy": getattr(self.config, "charging_strategy", "cap"),
+            "current_price": self.items.get_current_price(True),
+            "economic": economic,
+            "timestamp": TimeUtilities.get_now().isoformat(),
+        }
+        try:
+            if self.seuss_web is not None and \
+                    hasattr(self.seuss_web, "set_ess_state"):
+                self.seuss_web.set_ess_state(payload)
+        except Exception as e:
+            self.logger.log.warning(f"Publishing ESS state to web failed: {e}")
 
     def control_switching(self, condition_switching_result, essunit=None):
         # Per-IP switching: when at least one configured smart switch

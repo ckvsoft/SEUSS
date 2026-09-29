@@ -55,6 +55,11 @@ class SEUSSWeb:
         self.logger = CustomLogger()
         self.market_items = Itemlist()
         self.fee = ""
+        # RAM-only mirror of the last control decision + battery state,
+        # updated by seusscore every evaluation cycle. Deliberately NOT
+        # persisted (see _publish_ess_state) so the /api/battery polling
+        # endpoint costs zero SD writes.
+        self._ess_state = {}
 
         # Routen einrichten
         self.setup_routes()
@@ -86,6 +91,7 @@ class SEUSSWeb:
         self.app.route('/add_config_entry', method='POST', callback=self.add_config_entry)
         self.app.route('/get_charts', method='GET', callback=self.get_charts)
         self.app.route('/api/prices', method='GET', callback=self.api_prices)
+        self.app.route('/api/battery', method='GET', callback=self.api_battery)
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
@@ -116,6 +122,62 @@ class SEUSSWeb:
              if entry.get('name', '').lower() == self.market_items.current_market_name.lower()),
             ""
         )
+
+    def set_ess_state(self, state):
+        """Called by seusscore after every evaluation cycle. Keeps the
+        latest decision + battery snapshot in RAM only."""
+        if isinstance(state, dict):
+            self._ess_state = state
+
+    def _effective_price_ceiling(self):
+        """
+        The price ceiling the CHART should paint:
+
+        * strategy "cap"      -> charging_price_hard_cap (the rule that
+                                 actually blocks charging)
+        * strategy "economic" -> economic_price_ceiling (the outlier
+                                 leash; the real economic threshold is
+                                 dynamic and shown via /api/battery)
+        """
+        if getattr(self.config, "charging_strategy", "cap") == "economic":
+            return getattr(self.config, "economic_price_ceiling",
+                           self.config.charging_price_hard_cap)
+        return self.config.charging_price_hard_cap
+
+    def api_battery(self):
+        """
+        Machine-readable battery/decision snapshot for external
+        consumers (e.g. a thermostat display). Companion to /api/prices.
+
+        Returns the last evaluation's decision (charging / discharging /
+        idle), SOC, capacity and -- in the "economic" strategy -- the
+        computed marginal displaced price and the effective charge
+        threshold. Data is RAM-only and refreshed every evaluation
+        cycle; check "timestamp" for staleness before acting on it.
+
+        Never raises on missing data: before the first evaluation cycle
+        the payload comes back with state "unknown".
+        """
+        state = dict(self._ess_state or {})
+        if not state:
+            state = {
+                "state": "unknown",
+                "soc_percent": None,
+                "soc_wh": None,
+                "capacity_wh": None,
+                "min_soc_percent": None,
+                "control_backend": None,
+                "charging_strategy": getattr(
+                    self.config, "charging_strategy", "cap"),
+                "current_price": self.market_items.get_current_price(
+                    convert=True),
+                "economic": None,
+                "timestamp": None,
+            }
+        state["prices_url"] = "/api/prices"
+        response.content_type = 'application/json'
+        return json.dumps(state)
+
 
     def get_charts(self, as_json=True):
 
@@ -1789,7 +1851,7 @@ class SEUSSWeb:
                     # so the user sees that the cluster has a temporarily
                     # expensive quarter that the cap will skip.
                     below_limit = q_price < self.config.charging_price_limit
-                    below_cap = q_price < self.config.charging_price_hard_cap
+                    below_cap = q_price < self._effective_price_ceiling()
 
                     if (in_charge or below_limit) and below_cap:
                         slice_color = self._green_color(hour, current_hour, tomorrow)
@@ -1935,9 +1997,12 @@ class SEUSSWeb:
                         f'fill="{dominant_color}">{label_price}</text>'
                     )
 
-        # Hard-cap line (blue)
+        # Hard-cap line (blue). In the "economic" strategy this is the
+        # outlier ceiling -- the real decision threshold (marginal
+        # displaced price) is dynamic and exposed via /api/battery.
+        ceiling = self._effective_price_ceiling()
         charge_hard_cap_height = (
-            abs(self.config.charging_price_hard_cap) + 1
+            abs(ceiling) + 1
         ) * factor
         svg += (
             f'<line x1="0" y1="{baseline_y - charge_hard_cap_height}" '
@@ -2110,12 +2175,17 @@ class SEUSSWeb:
             'Charging</text>'
         )
 
-        # Charging blocked by hard cap (olive)
+        # Charging blocked by hard cap / economic rule (olive)
+        blocked_label = (
+            'Charging blocked (economic rule)'
+            if getattr(self.config, "charging_strategy", "cap") == "economic"
+            else 'Charging blocked by hard cap'
+        )
         legend_svg += (
             '<rect x="10" y="40" width="20" height="20" '
             'fill="#556B2F" stroke="#000" stroke-width="1"/>'
             '<text x="40" y="55" font-size="12" class="chart-text">'
-            'Charging blocked by hard cap</text>'
+            f'{blocked_label}</text>'
         )
 
         # Discharging (red)
@@ -2150,12 +2220,17 @@ class SEUSSWeb:
             f'Charging Price Limit ({self.config.charging_price_limit})</text>'
         )
 
-        # Charging price hard cap line (blue)
+        # Charging price hard cap / economic ceiling line (blue)
+        ceiling_label = (
+            'Economic Ceiling'
+            if getattr(self.config, "charging_strategy", "cap") == "economic"
+            else 'Charging Price Hard Cap'
+        )
         legend_svg += (
             '<rect x="10" y="195" width="20" height="4" '
             'fill="blue" stroke="#000" stroke-width="1"/>'
             f'<text x="40" y="205" font-size="12" class="chart-text">'
-            f'Charging Price Hard Cap ({self.config.charging_price_hard_cap})</text>'
+            f'{ceiling_label} ({self._effective_price_ceiling()})</text>'
         )
 
         legend_svg += "</svg>"

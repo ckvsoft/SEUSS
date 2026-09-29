@@ -27,6 +27,7 @@
 
 import json
 import os
+import re
 import socket
 import sys
 from typing import Tuple
@@ -80,6 +81,14 @@ class Victron(ESSUnit):
         # essunit cycle and don't flip if the pack briefly droops below
         # a band threshold under load. None = not yet detected.
         self._detected_pack_full_voltage = None
+
+        # Control backend: "classic" (Schedule/Charge Day + MaxDischargePower
+        # toggles) or "dynamic_ess" (Victron Dynamic ESS target-SOC slots).
+        # Resolved via resolve_control_backend(); defaults to classic until
+        # then so behaviour is unchanged for existing installs.
+        self._control_backend = "classic"
+        self._dess_last_slots = None
+        self._dess_static_written = False
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -89,11 +98,34 @@ class Victron(ESSUnit):
         enabled_value = victron_ess_unit.get('enabled') if victron_ess_unit else False
         only_observation_value = victron_ess_unit.get('only_observation') if victron_ess_unit else False
 
+        # Re-resolve the control backend on every config change so the
+        # editor switch classic<->dynamic_ess takes effect without a
+        # process restart.
+        try:
+            backend = self.resolve_control_backend(
+                config_data.get("control_backend", "auto")
+            )
+            if backend != self._control_backend:
+                self.logger.log.info(
+                    f"Control backend changed: {self._control_backend} -> {backend}"
+                )
+                self._control_backend = backend
+            if backend != "dynamic_ess":
+                # Leaving the dynamic backend (or never having entered
+                # it): make sure no stale Mode 4 keeps the scheduler
+                # running headless without schedule updates.
+                self.disable_dynamic_ess()
+        except Exception as e:
+            self.logger.log.warning(f"Control backend re-resolve failed: {e}")
+
         if not enabled_value or only_observation_value:
             self.logger.log.debug(f"ESS Unit {self._name} handle configuration change.")
             self.logger.log.info(f"ESS Unit {self._name} has been disabled or in observation mode.")
             self.logger.log.info(f"Charging mode is deactivated.")
             self.logger.log.info(f"Discharge mode is activated.")
+            # Never leave the Dynamic ESS scheduler running when this
+            # unit is no longer controlled (would follow a frozen plan).
+            self.disable_dynamic_ess()
             self.set_charge('off')
             self.set_discharge('on')
 
@@ -223,6 +255,16 @@ class Victron(ESSUnit):
 
     def set_discharge(self, status):
         try:
+            if self._control_backend == "dynamic_ess":
+                # Discharge enable/disable is expressed through the
+                # Dynamic ESS schedule (target SOC per slot). The
+                # MaxDischargePower register stays USER-OWNED as a pure
+                # power limit -- SEUSS never stomps it in this backend.
+                self.logger.log.debug(
+                    "Dynamic ESS backend active -- set_discharge ignored "
+                    "(schedule owns the discharge decision)."
+                )
+                return
             status_enum = ESSStatus(status.lower())
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
@@ -237,6 +279,18 @@ class Victron(ESSUnit):
 
     def set_charge(self, status):
         try:
+            if self._control_backend == "dynamic_ess":
+                # In the Dynamic ESS backend the charge decision is
+                # expressed through the target-SOC schedule (see
+                # publish_dynamic_ess_schedule). The classic Day 7/-7
+                # schedule toggle would interfere with the Dynamic ESS
+                # scheduler -- Victron explicitly warns against mixing
+                # scheduled charging with Dynamic ESS.
+                self.logger.log.debug(
+                    "Dynamic ESS backend active -- set_charge ignored "
+                    "(schedule owns the charge decision)."
+                )
+                return
             status_enum = ESSStatus(status.lower())
             value = self._process_result(self.subsribers.get('Schedule', 'Day'))
             if status_enum == ESSStatus.ON:
@@ -249,6 +303,198 @@ class Victron(ESSUnit):
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
+
+    # ------------------------------------------------------------------
+    # Control backend: "classic" (Schedule/Charge Day + MaxDischargePower
+    # toggles via localsettings -- SD-backed) vs "dynamic_ess" (Victron
+    # Dynamic ESS target-SOC schedule, Mode 4).
+    #
+    # Ownership rules:
+    #   * classic      -- SEUSS owns the toggles; MaxDischargePower is
+    #                     written per state flip (legacy behaviour).
+    #   * dynamic_ess  -- SEUSS only pushes the schedule. The user keeps
+    #                     MaxDischargePower as a pure POWER limit and
+    #                     SEUSS never writes it; enable/disable is
+    #                     expressed via the schedule's target SOC.
+    # ------------------------------------------------------------------
+
+    def set_control_backend(self, backend):
+        if backend in ("classic", "dynamic_ess"):
+            self._control_backend = backend
+
+    def get_control_backend(self):
+        return self._control_backend
+
+    def get_dynamic_ess_mode(self):
+        """Current /Settings/DynamicEss/Mode value (None when the
+        firmware does not expose the Dynamic ESS scheduler)."""
+        return self._process_result(self.subsribers.get('DynamicEss', 'Mode'))
+
+    def supports_dynamic_ess(self):
+        """
+        True when the GX firmware ships the Dynamic ESS scheduler and
+        exposes its Mode setting. Per-slot strategy/restrictions are
+        documented from 3.30~7 on; we require >= 3.60 for a safety
+        margin, plus a readable /Settings/DynamicEss/Mode value.
+        """
+        version = self.get_version()
+        try:
+            digits = re.findall(r"\d+", str(version))
+            major = int(digits[0]) if digits else 0
+            minor = int(digits[1]) if len(digits) > 1 else 0
+        except (TypeError, ValueError):
+            return False
+        if (major, minor) < (3, 60):
+            return False
+        return self.get_dynamic_ess_mode() is not None
+
+    def resolve_control_backend(self, config):
+        """
+        Honour config.control_backend ("auto" | "classic" |
+        "dynamic_ess"). "auto" picks dynamic_ess when the firmware
+        supports it, classic otherwise. A forced dynamic_ess on an
+        unsupported firmware falls back to classic WITH a warning
+        instead of silently not controlling anything. Accepts either a
+        config object or a raw backend string.
+        """
+        if isinstance(config, str):
+            configured = config
+        else:
+            configured = getattr(config, "control_backend", "auto")
+        if configured not in ("auto", "classic", "dynamic_ess"):
+            configured = "auto"
+        if configured == "classic":
+            return "classic"
+        if self.supports_dynamic_ess():
+            return "dynamic_ess"
+        if configured == "dynamic_ess":
+            self.logger.log.warning(
+                "control_backend=dynamic_ess requested but this VenusOS "
+                f"(version {self.get_version()}) does not expose the Dynamic "
+                "ESS scheduler -- falling back to classic."
+            )
+        return "classic"
+
+    def publish_dynamic_ess_schedule(self, slots, battery_capacity_kwh=None,
+                                     efficiency=None):
+        """
+        Push the hourly target-SOC slots into the Victron Dynamic ESS
+        scheduler. Mode 4 is the mode Victron reserves for third-party
+        controllers (VRM uses 1).
+
+        * Mode=4 is written once (guarded against the current readback).
+        * BatteryCapacity / SystemEfficiency are written once per
+          process -- the GX-side controller needs both for its math and
+          its capacity default is a bogus 2 kWh.
+        * Only CHANGED slots are written: the previous schedule is kept
+          in memory and diffed, so an unchanged plan costs zero
+          settings writes.
+
+        The schedule lives in localsettings (SD) like every Victron
+        setting, but the diff-guard reduces this to a handful of writes
+        per day -- and it replaces BOTH the Day 7/-7 toggle AND the
+        MaxDischargePower 0/max toggle of the classic backend.
+        """
+        if not slots:
+            return
+        normalised = [
+            {
+                "start": int(s.get("start", 0)),
+                "duration": int(s.get("duration", 3600)),
+                "soc": round(float(s.get("soc", 0)), 1),
+                "strategy": int(s.get("strategy", 0)),
+                "allow_feed_in": int(s.get("allow_feed_in", 0)),
+                "restrictions": int(s.get("restrictions", 0)),
+            }
+            for s in slots[:48]
+        ]
+
+        mode = self.get_dynamic_ess_mode()
+        if mode != 4:
+            self.logger.log.info(
+                "Dynamic ESS: activating Mode 4 (third-party controller)."
+            )
+            self._publish(
+                f"/{self.unit_id}/settings/0/Settings/DynamicEss/Mode", 4
+            )
+
+        writes = []
+        if not self._dess_static_written:
+            self._dess_static_written = True
+            if battery_capacity_kwh and battery_capacity_kwh > 0:
+                writes.append((
+                    f"/{self.unit_id}/settings/0/Settings/DynamicEss/BatteryCapacity",
+                    round(float(battery_capacity_kwh), 2),
+                ))
+            if efficiency and 0 < float(efficiency) <= 1:
+                writes.append((
+                    f"/{self.unit_id}/settings/0/Settings/DynamicEss/SystemEfficiency",
+                    round(float(efficiency) * 100, 1),
+                ))
+
+        previous = self._dess_last_slots or []
+        for i, slot in enumerate(normalised):
+            if i < len(previous) and previous[i] == slot:
+                continue
+            base = f"/{self.unit_id}/settings/0/Settings/DynamicEss/Schedule/{i}"
+            writes.append((f"{base}/Start", slot["start"]))
+            writes.append((f"{base}/Duration", slot["duration"]))
+            writes.append((f"{base}/Soc", slot["soc"]))
+            writes.append((f"{base}/Strategy", slot["strategy"]))
+            writes.append((f"{base}/AllowGridFeedIn", slot["allow_feed_in"]))
+            writes.append((f"{base}/Restrictions", slot["restrictions"]))
+        # Slots beyond the new horizon: clear so the scheduler cannot
+        # follow a stale plan.
+        for i in range(len(normalised), len(previous)):
+            base = f"/{self.unit_id}/settings/0/Settings/DynamicEss/Schedule/{i}"
+            writes.append((f"{base}/Start", 0))
+            writes.append((f"{base}/Duration", 0))
+
+        self._dess_last_slots = normalised
+        if writes:
+            self._publish_many(writes)
+            self.logger.log.info(
+                f"Dynamic ESS: published {len(normalised)} slots "
+                f"({len(writes)} changed values)."
+            )
+
+    def disable_dynamic_ess(self):
+        """
+        Hand control back to plain ESS / the classic backend: set
+        Dynamic ESS Mode to 0. Per Victron docs a stale non-zero mode
+        without a matching schedule raises 'No matching schedule'
+        alarms, so this MUST run when switching back to classic.
+        """
+        self._dess_last_slots = None
+        mode = self.get_dynamic_ess_mode()
+        if mode not in (None, 0):
+            self.logger.log.info("Dynamic ESS: deactivating (Mode 0).")
+            self._publish(
+                f"/{self.unit_id}/settings/0/Settings/DynamicEss/Mode", 0
+            )
+
+    def _publish_many(self, topic_values):
+        """
+        Batch publish through ONE mqtt connection. _publish() opens a
+        fresh MqttClient per value, which would mean one TCP+MQTT
+        handshake per schedule value -- far too heavy for a full
+        48-slot push.
+        """
+        if not topic_values:
+            return
+        with MqttClient(self.mqtt_config) as mqtt:
+            for topic, value in topic_values:
+                data = {"value": value}
+                try:
+                    rc = mqtt.publish(f"W{topic}", json.dumps(data))
+                    self.logger.log.debug(
+                        f"{self._name} DynamicEss publish rc={rc} {topic}"
+                    )
+                except Exception as e:
+                    self.logger.log.error(
+                        f"{self._name} DynamicEss publish failed {topic}: {e}"
+                    )
+
 
     def get_grid_meters(self):
         meters = self.gridmeters
@@ -356,6 +602,7 @@ class Victron(ESSUnit):
                 f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
                 f"Control:N/{self.unit_id}/system/0/Control/ActiveSocLimit",
                 f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                f"DynamicEss:N/{self.unit_id}/settings/0/Settings/DynamicEss/Mode",
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",

@@ -66,6 +66,12 @@
                                 <option value="hourly" {{ 'selected' if value == 'hourly' else '' }}>Hourly</option>
                                 <option value="quarterly" {{ 'selected' if value == 'quarterly' else '' }}>Quarterly (15 min)</option>
                             </select><br>
+                        % elif key == "control_backend":
+                            <select id="{{ key }}" name="{{ key }}">
+                                <option value="auto" {{ 'selected' if value == 'auto' else '' }}>Auto (detect firmware)</option>
+                                <option value="classic" {{ 'selected' if value == 'classic' else '' }}>Classic (Day/MaxDischargePower toggles)</option>
+                                <option value="dynamic_ess" {{ 'selected' if value == 'dynamic_ess' else '' }}>Dynamic ESS (target-SOC schedule)</option>
+                            </select><br>
                         % else:
                             <input type="text" id="{{ key }}" name="{{ key }} " value="{{ value }}"><br>
                         % end
@@ -145,6 +151,11 @@
                                 % if isinstance(field_value, bool):
                                     <input type="hidden" id="prices:{{ field_key }}_hidden" name="prices:{{ field_key }}" value="off">
                                     <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
+                                % elif field_key == "charging_strategy":
+                                    <select id="prices:{{ field_key }}" name="prices:{{ field_key }}">
+                                        <option value="cap" {{ 'selected' if field_value == 'cap' else '' }}>Cap (hard cap blocks charging)</option>
+                                        <option value="economic" {{ 'selected' if field_value == 'economic' else '' }}>Economic (marginal displaced price)</option>
+                                    </select><br>
                                 % else:
                                     <input type="text" id="prices:{{ field_key }}" name="prices:{{ field_key }}" value="{{ field_value }}"><br>
                                 % end

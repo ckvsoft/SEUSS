@@ -146,7 +146,12 @@ When sliding-window placement (`tariff_resolution: quarterly`) leaves small gaps
 | `switching_block_minutes`                    | Length of each smart-switch cluster in minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `fill_gaps_with_short_clusters`              | When sliding-window cluster placement leaves a gap of less than `*_block_minutes` between two selected blocks, fill it with a shorter discharge cluster (15 / 30 / 45 min). Default `true`. Disable to keep cluster lengths strictly equal to `*_block_minutes` and accept small white slivers in the chart.                                                                                                                                                                                                                                                   |
 | `charging_price_limit`                       | Charging is always enabled when the per-quarter price is below this value, regardless of cluster selection. Use this as a "safety floor": below this price, always charge.                                                                                                                                                                                                                                                                                                                                                                                     |
-| `charging_price_hard_cap`                    | Charging is strictly prohibited when the per-quarter price exceeds this value. Checked per quarter (not per cluster average), so a single expensive 15-minute slot inside an otherwise cheap cluster still pauses charging for that quarter. The chart paints such quarters **olive** instead of green so you see them at a glance.                                                                                                                                                                                                                            |
+| `charging_price_hard_cap`                    | Charging is strictly prohibited when the per-quarter price exceeds this value. Checked per quarter (not per cluster average), so a single expensive 15-minute slot inside an otherwise cheap cluster still pauses charging for that quarter. The chart paints such quarters **olive** instead of green so you see them at a glance. Only active with `charging_strategy: cap`.                                                                                                                                                                                  |
+| `charging_strategy`                          | `cap` (default, classic behaviour) or `economic`. With `economic`, the hard cap is replaced by the **marginal displaced price rule**: SEUSS charges whenever `quarter_price / round_trip_efficiency` is below the price of the most expensive hour an additional charged kWh would displace (merit-order stack of the upcoming expensive phase, capped by usable SOC + what the remaining charge window can deliver at `charge_power_watts`). Charges *above* the old cap on price-spike days (cheaper than direct grid purchase) and *skips* below the cap when the battery already bridges to a cheaper window. `skip_charge_when_cheaper_cluster_coming` and `skip_charge_when_battery_covers_expensive_phase` are subsumed and ignored in this mode. |
+| `economic_price_ceiling`                     | Absolute price leash (Cent/kWh) for `charging_strategy: economic`. Pure data-error protection (bogus feed prices) -- NOT an economic decision. Default `60`. |
+| `charge_power_watts`                         | Charging power available to the inverter in W (e.g. `2500` for 50 A at 48 V). Used by the economic strategy to compute how much energy actually fits into the remaining charge window. |
+| `round_trip_efficiency`                      | Charge+discharge+inverter efficiency used by the economic rule (default `0.90`). The charge price is divided by this before comparing against the displaced price. Also written once to the Victron `SystemEfficiency` setting when the `dynamic_ess` backend is active. |
+| `control_backend`                            | How SEUSS controls the Victron: `auto` (default) detects the firmware and prefers `dynamic_ess`; `classic` toggles `Schedule/Charge Day` + `MaxDischargePower` (SD-backed localsettings writes); `dynamic_ess` pushes hourly target-SOC slots into the Victron Dynamic ESS scheduler (Mode 4, officially reserved for third-party controllers). In `dynamic_ess` mode SEUSS never writes `MaxDischargePower` -- it stays a user-owned pure power limit. Do NOT combine `dynamic_ess` with VRM Dynamic ESS or the Victron scheduled-charge menu (they fight over the same scheduler). |
 | `use_solar_forecast_to_abort`                | When enabled, charging is aborted while two conditions both hold: **(a)** the combined adjusted solar forecast for today + tomorrow covers at least two days of average consumption, AND **(b)** the current battery SOC alone covers consumption until tomorrow's sunrise (with a 10% safety buffer). Either condition alone has known failure modes (forecast-only drains the battery overnight; SOC-only ignores a streak of bad-weather days), so both must hold. Falls back to "charging allowed" on any missing data. Default `false`. The accuracy of the underlying solar forecast is governed by the `solar_adj_*` settings below. |
 | `skip_charge_when_battery_sufficient`        | **DEPRECATED** -- replaced by `skip_charge_when_battery_covers_expensive_phase`, which uses a broader, more correct horizon. Original behaviour preserved for backward compatibility: skips charging when current usable SOC covers consumption until the next equally-cheap-or-cheaper charge cluster. Default `false`. |
 | `skip_charge_when_battery_covers_overnext`   | **DEPRECATED** -- logically redundant with the above (if SOC doesn't reach the next cheap cluster it can't reach the overnext one either). Default `false`. |
@@ -165,8 +170,8 @@ When sliding-window placement (`tariff_resolution: quarterly`) leaves small gaps
 
 The price chart in the SEUSS web UI now shows quarter-resolution colours on top of the hourly bars:
 
-- **Green** — quarter is part of an active charging cluster and the per-quarter price is under `charging_price_hard_cap`. Past hours show as darker green.
-- **Olive** — quarter is part of a charging cluster but its price exceeds the hard cap, so SEUSS will skip that 15-minute slot. Distinguishes "would charge but cap blocks" from "unrelated grey hour".
+- **Green** — quarter is part of an active charging cluster and the per-quarter price is under the effective ceiling (`charging_price_hard_cap` in `cap` strategy, `economic_price_ceiling` in `economic` strategy). Past hours show as darker green.
+- **Olive** — quarter is part of a charging cluster but the price rule blocks it (hard cap in `cap` strategy, marginal-price rule in `economic` strategy), so SEUSS will skip that 15-minute slot. Distinguishes "would charge but blocked" from "unrelated grey hour".
 - **Red** — quarter is part of an active discharging cluster. Past hours show as darker red.
 - **Grey** — quarter is not part of any cluster (because `charging + discharging` totals don't cover 24 h).
 
@@ -175,6 +180,41 @@ When `fill_gaps_with_short_clusters` produces a 3-quarter discharge or charge bl
 Hovering over an hour bar shows a tooltip with the four real per-quarter prices for that hour — useful when `tariff_resolution=quarterly` makes them differ.
 
 The chart text adapts automatically to light and dark mode via the `chart-text` CSS class in `views/static/styles.css`.
+
+## HTTP API for external consumers
+
+### `GET /api/prices`
+
+Machine-readable price snapshot (current quarter price, cheap-block flag, hourly price curves for today/tomorrow with per-hour colour flags, effective hard cap). Built for external displays/controllers such as a thermostat.
+
+### `GET /api/battery`
+
+Battery + decision snapshot, refreshed every evaluation cycle (RAM-only, no SD writes):
+
+```json
+{
+  "state": "charging",            // "charging" | "discharging" | "idle" | "unknown" (before first cycle)
+  "soc_percent": 52.0,
+  "soc_wh": 9330.0,
+  "capacity_wh": 17900.0,
+  "min_soc_percent": 10.0,
+  "control_backend": "dynamic_ess",
+  "charging_strategy": "economic",
+  "current_price": 38.05,
+  "charge_condition": "lowestprice_block_2 ... active",
+  "discharge_condition": "Discharge allowed: ... surplus ...",
+  "economic": {
+    "marginal_price": 45.0,       // ct/kWh the next charged kWh would displace
+    "threshold_quarter_price": 40.5,  // charge while quarter price is below this
+    "basis": "stats",             // "stats" | "fallback" | "no-phase" | ...
+    "round_trip_efficiency": 0.9,
+    "charge_power_watts": 2500.0
+  },
+  "timestamp": "2026-09-29T08:35:11"
+}
+```
+
+Check `timestamp` for staleness before acting on it — the value only updates while the SEUSS evaluation loop is alive.
 
 ## ESS Units
 

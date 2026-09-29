@@ -57,6 +57,12 @@ class Conditions:
     Hard cap is checked against the BLOCK AVERAGE, not the current
     quarter price. So a single expensive 15min slot inside an otherwise
     cheap 60min block won't abort charging mid-block.
+
+    charging_strategy selects the price rule:
+      "cap"      -- classic per-quarter hard cap (see above).
+      "economic" -- marginal displaced price rule (merit-order stack);
+                    the hard cap becomes a pure outlier leash
+                    (economic_price_ceiling). See _compute_economic_context().
     """
 
     def __init__(self, itemlist, essunit, solardata=None):
@@ -108,6 +114,18 @@ class Conditions:
             switching_count,
             block_minutes=self.config.switching_block_minutes,
         )
+
+        # ------------------------------------------------------------------
+        # Charging strategy ("cap" = classic hard cap, "economic" =
+        # marginal displaced price / merit-order rule). The economic
+        # context is computed ONCE per evaluation cycle here -- every
+        # abort condition and the web/API layer reuse it, so all three
+        # control paths answer from the same numbers.
+        # ------------------------------------------------------------------
+        self.charging_strategy = getattr(self.config, "charging_strategy", "cap")
+        self.round_trip_efficiency = self._normalized_efficiency()
+        self.charge_power_watts = self._normalized_charge_power()
+        self.economic_info = self._compute_economic_context()
 
         self._build_charging_conditions()
         self._build_discharging_conditions()
@@ -426,11 +444,36 @@ class Conditions:
         currently active charging block's AVERAGE price, not the current
         quarter -- so a single expensive quarter inside an otherwise cheap
         block doesn't abort the block mid-run.
+
+        Charging strategy decides which price rule is registered:
+
+        * "cap"      -- the classic per-quarter hard cap (unchanged
+          behaviour, the rule this system has always run).
+        * "economic" -- the marginal displaced price rule replaces the
+          hard cap as the decision rule: charge while quarter price /
+          round-trip efficiency is below the price of the most expensive
+          hour an additional charged kWh would displace. The hard cap is
+          DEMOTED to a pure outlier leash (economic_price_ceiling) that
+          only catches broken feed data.
         """
-        self.abort_conditions_by_operation_mode["charging_abort"].update({
-            "Abort charge condition - Block average exceeds hard cap":
-                self._abort_charging_block_above_hard_cap
-        })
+        if self.charging_strategy == "economic":
+            marginal = self.economic_info.get("marginal_price")
+            marginal_txt = self._cent_str(marginal) if marginal is not None else "n/a"
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                f"Abort charge - above economic threshold "
+                f"(eff. price > marginal {marginal_txt} ct/kWh)":
+                    self._abort_charging_economic
+            })
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge - price above economic ceiling (outlier leash)":
+                    self._abort_charging_above_economic_ceiling
+            })
+            Conditions._note_economic_flags_subsumed()
+        else:
+            self.abort_conditions_by_operation_mode["charging_abort"].update({
+                "Abort charge condition - Block average exceeds hard cap":
+                    self._abort_charging_block_above_hard_cap
+            })
 
         # Always-on safety abort: don't try to charge past the SOC
         # target the user has set in the Victron Scheduler. Without
@@ -510,7 +553,8 @@ class Conditions:
         # more specific one -- when both would fire, the user should
         # see "cheaper cluster coming" (with the price it's waiting
         # for) in the log, not the generic expensive-phase message.
-        if getattr(self.config, "skip_charge_when_cheaper_cluster_coming", False):
+        if getattr(self.config, "skip_charge_when_cheaper_cluster_coming", False) \
+                and self.charging_strategy != "economic":
             self.abort_conditions_by_operation_mode["charging_abort"].update({
                 "Abort charge - strictly cheaper cluster coming and "
                 "battery bridges the gap safely":
@@ -522,7 +566,8 @@ class Conditions:
         # of any price). Broader and more correct horizon than the older
         # checks above. Conservative: doesn't model recharge from the
         # next cluster, only counts what's in the pack right now.
-        if getattr(self.config, "skip_charge_when_battery_covers_expensive_phase", False):
+        if getattr(self.config, "skip_charge_when_battery_covers_expensive_phase", False) \
+                and self.charging_strategy != "economic":
             self.abort_conditions_by_operation_mode["charging_abort"].update({
                 "Abort charge - battery covers entire expensive phase "
                 "until next charge cluster":
@@ -571,6 +616,399 @@ class Conditions:
         where such quarters show as olive instead of green.
         """
         return self._current_quarter_above_hard_cap()
+
+    # ------------------------------------------------------------------
+    # Economic charging strategy ("charging_strategy": "economic")
+    #
+    # Replaces the absolute hard cap with the economically correct
+    # question: "Is buying this kWh now cheaper than the grid purchase
+    # it will displace later?" The displaced price is the price of the
+    # most expensive hour an ADDITIONAL charged kWh can cover -- the
+    # merit-order stack of the upcoming expensive phase, cut off at the
+    # energy the battery can actually supply (usable SOC + what fits
+    # into the remaining charge window at charge_power_watts, after
+    # round-trip losses).
+    #
+    # Charge when:  quarter_price / round_trip_efficiency <= marginal
+    # ------------------------------------------------------------------
+
+    _economic_note_logged = False
+
+    @classmethod
+    def _note_economic_flags_subsumed(cls):
+        """Log ONCE per process that the SOC-based skip flags are
+        subsumed by the economic rule and therefore ignored."""
+        if cls._economic_note_logged:
+            return
+        cls._economic_note_logged = True
+        from core.log import CustomLogger
+        CustomLogger().log.info(
+            "charging_strategy=economic: skip_charge_when_cheaper_cluster_coming "
+            "and skip_charge_when_battery_covers_expensive_phase are subsumed by "
+            "the marginal-price rule and are IGNORED. The economic rule already "
+            "skips charging when the battery (plus future cheap windows) covers "
+            "the expensive phase, and charges above the old cap when the battery "
+            "would run empty otherwise."
+        )
+
+    def _normalized_efficiency(self):
+        try:
+            efficiency = float(getattr(self.config, "round_trip_efficiency", 0.90))
+        except (TypeError, ValueError):
+            efficiency = 0.90
+        return max(0.5, min(1.0, efficiency))
+
+    def _normalized_charge_power(self):
+        try:
+            power = float(getattr(self.config, "charge_power_watts", 2500))
+        except (TypeError, ValueError):
+            power = 2500.0
+        return max(100.0, power)
+
+    @staticmethod
+    def _marginal_from_stack(stack, supply_wh):
+        """
+        Pure merit-order math, kept static so it is unit-testable.
+
+        stack:  list of (price_millicent, consumption_wh) tuples.
+        supply: usable battery energy in Wh.
+
+        Returns the price (millicents) of the most expensive hour that
+        an additional charged kWh would displace: walk the stack from
+        the most expensive hour down, accumulating consumption; the
+        first hour that pushes the cumulative sum past the supply is
+        the marginal one. 0.0 when the supply covers the whole phase
+        (nothing left to displace -> never worth buying), None for an
+        empty stack.
+        """
+        if not stack:
+            return None
+        cumulative = 0.0
+        for price, wh in sorted(stack, key=lambda pair: pair[0], reverse=True):
+            cumulative += wh
+            if cumulative > supply_wh:
+                return float(price)
+        return 0.0
+
+    def _compute_economic_context(self):
+        """
+        Compute the merit-order context for the current evaluation
+        cycle. All prices internally in millicents; get_economic_info()
+        converts them for display/API use.
+        """
+        info = {
+            "strategy": self.charging_strategy,
+            "marginal_price": None,
+            "threshold_quarter_price": None,
+            "phase_quarters": 0,
+            "phase_consumption_wh": 0.0,
+            "supply_wh": 0.0,
+            "usable_soc_wh": 0.0,
+            "charge_energy_wh": 0.0,
+            "basis": "inactive" if self.charging_strategy != "economic" else "unknown",
+        }
+        if self.charging_strategy != "economic":
+            return info
+        try:
+            from datetime import datetime, timezone
+
+            now_utc = datetime.now(timezone.utc)
+
+            # Phase boundary: earliest future charge block start.
+            next_charge_start = None
+            for blk in self._charge_blocks:
+                start = blk.get_start_datetime()
+                if start is None:
+                    continue
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                if start > now_utc and (
+                        next_charge_start is None or start < next_charge_start):
+                    next_charge_start = start
+
+            # Quarters of the upcoming expensive phase. Note: the item
+            # list is NOT guaranteed to be chronologically ordered, so
+            # we filter instead of breaking at the phase boundary.
+            stack = []
+            for it in self.items.get_current_list():
+                q_start = it.get_start_datetime()
+                q_end = it.get_end_datetime()
+                if q_start is None or q_end is None:
+                    continue
+                if q_start.tzinfo is None:
+                    q_start = q_start.replace(tzinfo=timezone.utc)
+                if q_end.tzinfo is None:
+                    q_end = q_end.replace(tzinfo=timezone.utc)
+                if q_end <= now_utc:
+                    continue
+                if next_charge_start is not None and q_start >= next_charge_start:
+                    continue
+                try:
+                    price = float(it.get_price(convert=False))
+                except (TypeError, ValueError):
+                    continue
+                duration_h = (q_end - q_start).total_seconds() / 3600.0
+                stack.append((price, duration_h))
+            info["phase_quarters"] = len(stack)
+
+            # Expected consumption: historical hourly average from the
+            # StatsManager (uniformly distributed over the phase).
+            hourly_avg_w = 0.0
+            stats_ok = False
+            avg_list = self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"
+            )
+            if avg_list:
+                values = [float(v) for v in avg_list if v is not None]
+                if values and sum(values) > 0:
+                    hourly_avg_w = sum(values) / len(values)
+                    stats_ok = True
+
+            # Battery supply for the phase: usable SOC now + the energy
+            # the remainder of the ACTIVE charge block can still add
+            # (delivered Wh, i.e. after round-trip losses). Future
+            # charge blocks start beyond the phase boundary -- they
+            # refill the pack for the NEXT phase, not this one.
+            usable_wh = 0.0
+            if self.essunit is not None:
+                try:
+                    current_wh = self.essunit.get_battery_current_wh() or 0
+                    min_wh = self.essunit.get_battery_min_wh() or 0
+                    usable_wh = max(0.0, float(current_wh) - float(min_wh))
+                except Exception:
+                    usable_wh = 0.0
+
+            charge_minutes = 0.0
+            for blk in self._charge_blocks:
+                start = blk.get_start_datetime()
+                end = blk.get_end_datetime()
+                if start is None or end is None:
+                    continue
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                if end.tzinfo is None:
+                    end = end.replace(tzinfo=timezone.utc)
+                if start <= now_utc < end:
+                    charge_minutes = (end - now_utc).total_seconds() / 60.0
+                    break
+            charge_energy_wh = (
+                    self.charge_power_watts
+                    * (charge_minutes / 60.0)
+                    * self.round_trip_efficiency
+            )
+            supply_wh = usable_wh + charge_energy_wh
+            phase_hours = sum(d for _, d in stack)
+
+            info.update({
+                "usable_soc_wh": usable_wh,
+                "charge_energy_wh": charge_energy_wh,
+                "supply_wh": supply_wh,
+                "phase_consumption_wh": hourly_avg_w * phase_hours,
+            })
+
+            if not stack:
+                # Nothing ahead (data gap at horizon end): keep the
+                # normal block flow instead of forcing an abort.
+                info["basis"] = "no-phase"
+                return info
+
+            if stats_ok:
+                marginal = self._marginal_from_stack(stack, supply_wh)
+                info["basis"] = "stats"
+            else:
+                # No usable consumption history (fresh install, wiped
+                # stats): fall back to the phase-average price. Charging
+                # stays possible up to an average-price-equivalent level
+                # instead of degenerating into "always" or "never".
+                marginal = sum(p for p, _ in stack) / len(stack)
+                info["basis"] = "fallback"
+
+            info["marginal_price"] = marginal
+            if marginal is not None and marginal > 0:
+                # Highest quarter price still worth charging:
+                # cur / eff <= marginal  <=>  cur <= marginal * eff
+                info["threshold_quarter_price"] = marginal * self.round_trip_efficiency
+            return info
+        except Exception as e:
+            self.logger.log.warning(
+                f"Economic context computation failed: {e}. "
+                "Economic rule inactive this cycle."
+            )
+            info["basis"] = "error"
+            return info
+
+    def _abort_charging_economic(self):
+        """
+        True when charging the current quarter is not worth it: the
+        quarter price divided by the round-trip efficiency exceeds the
+        marginal displaced price of the upcoming expensive phase.
+        """
+        marginal = self.economic_info.get("marginal_price")
+        cur = self.items.get_current_price(convert=False)
+        if cur is None or marginal is None:
+            return False
+        try:
+            effective = float(cur) / self.round_trip_efficiency
+        except (TypeError, ZeroDivisionError, ValueError):
+            return False
+        should_abort = effective > marginal
+        if should_abort:
+            self.logger.log.info(
+                f"Economic abort: quarter {self._cent_str(cur)} ct "
+                f"(eff. {self._cent_str(effective)} ct after RTE) "
+                f"> marginal {self._cent_str(marginal)} ct "
+                f"(basis: {self.economic_info.get('basis')}, "
+                f"supply {self.economic_info.get('supply_wh', 0):.0f} Wh vs "
+                f"phase {self.economic_info.get('phase_consumption_wh', 0):.0f} Wh)."
+            )
+            self._record_abort_fired("economic")
+        return should_abort
+
+    def _cent_str(self, potency_value):
+        """Format an internal potency-scale price value as a
+        human-readable Cent/kWh string. Utils.millicent_to_cent returns
+        a formatted STRING, so a plain :.2f on its result fails."""
+        try:
+            return f"{float(Utils.millicent_to_cent(potency_value)):.2f}"
+        except (TypeError, ValueError):
+            return "?"
+
+    def _abort_charging_above_economic_ceiling(self):
+        """
+        Outlier leash for the economic strategy: never charge above
+        economic_price_ceiling regardless of the marginal math. This
+        protects against broken price feeds (bogus 500 ct quarters),
+        NOT against genuinely expensive -- but real -- days.
+        """
+        try:
+            ceiling = Utils.convert_to_millicents(
+                float(getattr(self.config, "economic_price_ceiling", 60))
+            )
+        except (TypeError, ValueError):
+            ceiling = Utils.convert_to_millicents(60)
+        cur = self.items.get_current_price(convert=False)
+        if cur is None:
+            return False
+        try:
+            return int(cur) > ceiling
+        except (TypeError, ValueError):
+            return False
+
+    def get_economic_info(self):
+        """
+        Economic context in DISPLAY units (Cent/kWh) for the web layer
+        and the /api/battery endpoint. Safe to call anytime.
+        """
+        info = dict(self.economic_info or {})
+        for key in ("marginal_price", "threshold_quarter_price"):
+            value = info.get(key)
+            if value is None:
+                info[key] = None
+            else:
+                try:
+                    info[key] = round(float(Utils.millicent_to_cent(value)), 3)
+                except (TypeError, ValueError):
+                    info[key] = None
+        info["round_trip_efficiency"] = self.round_trip_efficiency
+        info["charge_power_watts"] = self.charge_power_watts
+        return info
+
+    def build_dynamic_ess_slots(self, essunit):
+        """
+        Translate the current block plan into hourly Dynamic-ESS
+        schedule slots covering the known price horizon.
+
+          charge window      -> scheduler SOC target (fallback 100%)
+          discharge blocked  -> hold at the current SOC
+                                (smart-discharge drop or no block)
+          otherwise          -> minimum SOC (free discharge to floor)
+
+        The caller feeds the returned slots to
+        essunit.publish_dynamic_ess_schedule().
+        """
+        from datetime import datetime, timedelta, timezone
+
+        now_utc = datetime.now(timezone.utc)
+        items = self.items.get_current_list()
+        if not items:
+            return []
+
+        horizon = None
+        for it in items:
+            end = it.get_end_datetime()
+            if end is None:
+                continue
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if horizon is None or end > horizon:
+                horizon = end
+        if horizon is None:
+            return []
+
+        current_soc = 50.0
+        min_soc = 0.0
+        charge_target = 100.0
+        if essunit is not None:
+            try:
+                soc = essunit.get_soc()
+                if soc is not None:
+                    current_soc = float(soc)
+                msl = essunit.get_battery_minimum_soc_limit()
+                if msl is not None:
+                    min_soc = float(msl)
+                scheduler_soc = essunit.get_scheduler_soc()
+                if scheduler_soc:
+                    charge_target = float(scheduler_soc)
+            except Exception:
+                pass
+        current_soc = max(current_soc, min_soc)
+
+        def _overlap_minutes(blk, win_start, win_end):
+            start = blk.get_start_datetime()
+            end = blk.get_end_datetime()
+            if start is None or end is None:
+                return 0.0
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            overlap = (min(end, win_end) - max(start, win_start)).total_seconds() / 60.0
+            return max(0.0, overlap)
+
+        allow_set = self._discharge_allow_set
+        one_hour = timedelta(hours=1)
+        slots = []
+        win_start = now_utc.replace(minute=0, second=0, microsecond=0)
+        while win_start < horizon:
+            win_end = win_start + one_hour
+            charge_covered = any(
+                _overlap_minutes(blk, win_start, win_end) >= 30
+                for blk in self._charge_blocks
+            )
+            discharge_covered = False
+            for blk in self._discharge_blocks:
+                if allow_set is not None and blk not in allow_set:
+                    continue  # smart-discharge dropped this block
+                if _overlap_minutes(blk, win_start, win_end) >= 30:
+                    discharge_covered = True
+                    break
+            if charge_covered:
+                soc = charge_target
+            elif discharge_covered:
+                soc = min_soc
+            else:
+                soc = current_soc  # hold: grid serves loads, SOC frozen
+            slots.append({
+                "start": int(win_start.timestamp()),
+                "duration": 3600,
+                "soc": round(float(soc), 1),
+                "strategy": 0,
+                "allow_feed_in": 0,
+                "restrictions": 0,
+            })
+            win_start = win_end
+        return slots
+
 
     def _abort_charging_soc_target_reached(self):
         """

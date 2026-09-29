@@ -82,6 +82,39 @@ class Config(Singleton):
         # cheaper expensive-phase hours fall back to grid.
         "smart_discharge_priority_to_expensive_hours": False,
         "delay_grid_charging_below_active_soc_limit": False,
+        # Charging strategy:
+        #   "cap"      -- classic behaviour: charge the N cheapest
+        #                 clusters unless the per-quarter price exceeds
+        #                 charging_price_hard_cap.
+        #   "economic" -- charge unless the quarter price divided by the
+        #                 round-trip efficiency exceeds the MARGINAL
+        #                 displaced price (merit-order stack of the
+        #                 upcoming expensive phase). The hard cap is NOT
+        #                 applied in this mode; economic_price_ceiling
+        #                 acts as the outlier leash instead.
+        "charging_strategy": "cap",
+        # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
+        # Pure data-error protection (bogus feed prices); NOT an
+        # economic decision. Ignored in "cap" mode (hard cap rules there).
+        "economic_price_ceiling": 60,
+        # Victron control backend:
+        #   "auto"        -- use dynamic_ess when the firmware supports it,
+        #                    otherwise classic (default).
+        #   "classic"     -- toggles Schedule/Charge Day + MaxDischargePower
+        #                    (localsettings, SD-backed writes).
+        #   "dynamic_ess" -- drives the Victron Dynamic ESS scheduler
+        #                    (Mode 4) with target-SOC slots; never touches
+        #                    MaxDischargePower (user-owned power limit).
+        "control_backend": "auto",
+        # Charging power available to the inverter in W. Used by the
+        # economic strategy to compute how much energy can actually be
+        # charged inside a cheap window (50A @ 48V ~ 2500W).
+        "charge_power_watts": 2500,
+        # Round-trip efficiency (charge+discharge+inverter). The economic
+        # strategy divides the charge price by this before comparing it
+        # against the displaced price. Victron's SystemEfficiency default
+        # is 0.90.
+        "round_trip_efficiency": 0.90,
         "stats_history_retention_days": 400,
         "solar_adj_ewma_alpha": 0.3,
         "solar_adj_min_theoretical_wh": 1000.0,
@@ -279,6 +312,13 @@ class Config(Singleton):
             self.skip_charge_for_upcoming_negative_prices = False
             self.smart_discharge_priority_to_expensive_hours = False
             self.delay_grid_charging_below_active_soc_limit = False
+            # Charging strategy / economic-rule defaults (mirrored in
+            # DEFAULT_CONFIG_TEMPLATE; load_config reads the real values).
+            self.charging_strategy = "cap"
+            self.economic_price_ceiling = 60
+            self.control_backend = "auto"
+            self.charge_power_watts = 2500
+            self.round_trip_efficiency = 0.90
             # Days of per-day history to retain (energy_costs_by_day,
             # consumption_wh_by_day, etc.). 400 covers a full year-over-
             # year comparison plus a month buffer. Set to 0 to disable
@@ -368,6 +408,39 @@ class Config(Singleton):
                 setattr(self, attr, raw.strip().lower() in ("on", "true", "1", "yes"))
             else:
                 setattr(self, attr, bool(raw))
+
+        # Charging strategy: "cap" (classic hard-cap behaviour) or
+        # "economic" (merit-order marginal-price rule). Anything else
+        # falls back to "cap" so a typo can never disable the price
+        # safety logic entirely.
+        strategy = config_data.get("charging_strategy", "cap")
+        if isinstance(strategy, str):
+            strategy = strategy.strip().lower()
+        self.charging_strategy = strategy if strategy in ("cap", "economic") else "cap"
+
+        # Control backend selection (classic toggles vs Dynamic ESS
+        # schedules). "auto" is resolved at runtime against the actual
+        # firmware capabilities (see essunit.resolve_control_backend).
+        backend = config_data.get("control_backend", "auto")
+        if isinstance(backend, str):
+            backend = backend.strip().lower()
+        self.control_backend = backend if backend in ("auto", "classic", "dynamic_ess") else "auto"
+
+        # Numeric strategy tunables -- type-safe like the solar_adj block.
+        for attr, default in (
+            ("economic_price_ceiling", 60),
+            ("charge_power_watts", 2500),
+            ("round_trip_efficiency", 0.90),
+        ):
+            raw = config_data.get(attr, default)
+            try:
+                setattr(self, attr, float(raw))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
+        # Clamp the efficiency to a sane band. Below 0.5 no battery is
+        # that bad; above 1.0 would mean creating energy.
+        self.round_trip_efficiency = max(0.5, min(1.0, self.round_trip_efficiency))
+        self.charge_power_watts = max(100.0, self.charge_power_watts)
 
         # Solar adjustment-factor tunables -- top-level, with type-safe
         # fallback to the in-memory default if the config value is bogus.
