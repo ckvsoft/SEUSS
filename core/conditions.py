@@ -740,46 +740,45 @@ class Conditions:
             from datetime import datetime, timezone
 
             now_utc = datetime.now(timezone.utc)
+            items = list(self.items.get_current_list())
 
-            # Phase boundary: earliest future charge block start.
-            next_charge_start = None
-            for blk in self._charge_blocks:
-                start = blk.get_start_datetime()
-                if start is None:
-                    continue
-                if start.tzinfo is None:
-                    start = start.replace(tzinfo=timezone.utc)
-                if start > now_utc and (
-                        next_charge_start is None or start < next_charge_start):
-                    next_charge_start = start
+            def _charge_covered(it):
+                """True when >=50% of the item lies inside a charge
+                block (i.e. this quarter is charging time)."""
+                qs = it.get_start_datetime()
+                qe = it.get_end_datetime()
+                if qs is None or qe is None:
+                    return False
+                if qs.tzinfo is None:
+                    qs = qs.replace(tzinfo=timezone.utc)
+                if qe.tzinfo is None:
+                    qe = qe.replace(tzinfo=timezone.utc)
+                duration = (qe - qs).total_seconds() / 60.0
+                if duration <= 0:
+                    return False
+                for blk in self._charge_blocks:
+                    bs = blk.get_start_datetime()
+                    be = blk.get_end_datetime()
+                    if bs is None or be is None:
+                        continue
+                    if bs.tzinfo is None:
+                        bs = bs.replace(tzinfo=timezone.utc)
+                    if be.tzinfo is None:
+                        be = be.replace(tzinfo=timezone.utc)
+                    overlap = (min(be, qe) - max(bs, qs)).total_seconds() / 60.0
+                    if overlap >= duration * 0.5:
+                        return True
+                return False
 
-            # Quarters of the upcoming expensive phase. Note: the item
-            # list is NOT guaranteed to be chronologically ordered, so
-            # we filter instead of breaking at the phase boundary.
-            stack = []
-            for it in self.items.get_current_list():
-                q_start = it.get_start_datetime()
-                q_end = it.get_end_datetime()
-                if q_start is None or q_end is None:
-                    continue
-                if q_start.tzinfo is None:
-                    q_start = q_start.replace(tzinfo=timezone.utc)
-                if q_end.tzinfo is None:
-                    q_end = q_end.replace(tzinfo=timezone.utc)
-                if q_end <= now_utc:
-                    continue
-                if next_charge_start is not None and q_start >= next_charge_start:
-                    continue
-                try:
-                    price = float(it.get_price(convert=False))
-                except (TypeError, ValueError):
-                    continue
-                duration_h = (q_end - q_start).total_seconds() / 3600.0
-                stack.append((price, duration_h))
-            info["phase_quarters"] = len(stack)
+            # Chronological order is NOT guaranteed by the item list.
+            try:
+                items.sort(key=lambda it: it.get_start_datetime())
+            except (TypeError, ValueError):
+                pass
 
             # Expected consumption: historical hourly average from the
-            # StatsManager (uniformly distributed over the phase).
+            # StatsManager (uniformly distributed over the phase). Read
+            # BEFORE the stack build -- the stack carries Wh, not hours.
             hourly_avg_w = 0.0
             stats_ok = False
             avg_list = self.statsmanager.get_data(
@@ -791,40 +790,100 @@ class Conditions:
                     hourly_avg_w = sum(values) / len(values)
                     stats_ok = True
 
+            # Charge quarters are grid-served while charging and carry
+            # no displaced-consumption value. The phase therefore spans
+            # the NON-charge quarters from the end of the CURRENT charge
+            # chain until the start of the next chain (or data end).
+            # Chain-aware matters for ADJACENT clusters: with a 4h
+            # midday valley the naive "until next charge block" phase
+            # degenerates to one hour, the marginal collapses to 0 and
+            # the whole valley would be skipped while the expensive
+            # evening runs on grid.
+            #
+            # Stack contract: (price, consumption_Wh) -- duration_h is
+            # converted via the hourly average HERE. (Passing raw hours
+            # made the marginal compare hours against Wh-supply and
+            # collapse to 0 on every cycle.)
+            stack = []
+            phase_hours = 0.0
+            i = 0
+            n = len(items)
+            while i < n and _charge_covered(items[i]):
+                i += 1  # skip the current contiguous charge chain
+            while i < n:
+                if _charge_covered(items[i]):
+                    break  # next chain reached -> phase ends here
+                it = items[i]
+                q_start = it.get_start_datetime()
+                q_end = it.get_end_datetime()
+                if q_start.tzinfo is None:
+                    q_start = q_start.replace(tzinfo=timezone.utc)
+                if q_end.tzinfo is None:
+                    q_end = q_end.replace(tzinfo=timezone.utc)
+                if q_end > now_utc:
+                    try:
+                        price = float(it.get_price(convert=False))
+                    except (TypeError, ValueError):
+                        i += 1
+                        continue
+                    duration_h = (q_end - q_start).total_seconds() / 3600.0
+                    stack.append((price, hourly_avg_w * duration_h))
+                    phase_hours += duration_h
+                i += 1
+            info["phase_quarters"] = len(stack)
+
             # Battery supply for the phase: usable SOC now + the energy
-            # the remainder of the ACTIVE charge block can still add
-            # (delivered Wh, i.e. after round-trip losses). Future
-            # charge blocks start beyond the phase boundary -- they
-            # refill the pack for the NEXT phase, not this one.
+            # the remainder of the CURRENT charge CHAIN can still add
+            # (delivered Wh, i.e. after round-trip losses), CAPPED by
+            # the pack headroom -- a chain can never charge more than
+            # fits between the current SOC and full. Future chains lie
+            # beyond the phase boundary -- they refill the pack for the
+            # NEXT phase, not this one.
             usable_wh = 0.0
+            full_wh = 0.0
+            current_soc_wh = 0.0
             if self.essunit is not None:
                 try:
-                    current_wh = self.essunit.get_battery_current_wh() or 0
-                    min_wh = self.essunit.get_battery_min_wh() or 0
-                    usable_wh = max(0.0, float(current_wh) - float(min_wh))
+                    current_soc_wh = float(
+                        self.essunit.get_battery_current_wh() or 0)
+                    min_wh = float(self.essunit.get_battery_min_wh() or 0)
+                    full_wh = float(self.essunit.get_battery_full_wh() or 0)
+                    usable_wh = max(0.0, current_soc_wh - min_wh)
                 except Exception:
-                    usable_wh = 0.0
+                    usable_wh = full_wh = current_soc_wh = 0.0
 
-            charge_minutes = 0.0
-            for blk in self._charge_blocks:
-                start = blk.get_start_datetime()
-                end = blk.get_end_datetime()
-                if start is None or end is None:
-                    continue
-                if start.tzinfo is None:
-                    start = start.replace(tzinfo=timezone.utc)
-                if end.tzinfo is None:
-                    end = end.replace(tzinfo=timezone.utc)
-                if start <= now_utc < end:
-                    charge_minutes = (end - now_utc).total_seconds() / 60.0
-                    break
-            charge_energy_wh = (
+            # Chain remainder: minutes of charge-covered quarters from
+            # now until the CURRENT charge chain ends. Adjacent charge
+            # blocks merge into one chain -- the supply for the merit
+            # order includes everything the rest of the chain can still
+            # deliver (the rank semantics keep the decision stable and
+            # taper the marginal to zero at the chain's end).
+            chain_minutes = 0.0
+            seen_charge = False
+            for it in items:
+                covered = _charge_covered(it)
+                if covered:
+                    seen_charge = True
+                    qs = it.get_start_datetime()
+                    qe = it.get_end_datetime()
+                    if qs.tzinfo is None:
+                        qs = qs.replace(tzinfo=timezone.utc)
+                    if qe.tzinfo is None:
+                        qe = qe.replace(tzinfo=timezone.utc)
+                    overlap = (qe - max(qs, now_utc)).total_seconds() / 60.0
+                    if overlap > 0:
+                        chain_minutes += overlap
+                elif seen_charge:
+                    break  # chain ended
+            charge_minutes = chain_minutes
+            chain_energy_wh = (
                     self.charge_power_w
-                    * (charge_minutes / 60.0)
+                    * (chain_minutes / 60.0)
                     * self.round_trip_efficiency
             )
+            headroom_wh = max(0.0, full_wh - current_soc_wh)
+            charge_energy_wh = min(chain_energy_wh, headroom_wh)
             supply_wh = usable_wh + charge_energy_wh
-            phase_hours = sum(d for _, d in stack)
 
             info.update({
                 "usable_soc_wh": usable_wh,
