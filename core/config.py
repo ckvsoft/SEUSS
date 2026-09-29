@@ -82,17 +82,6 @@ class Config(Singleton):
         # cheaper expensive-phase hours fall back to grid.
         "smart_discharge_priority_to_expensive_hours": False,
         "delay_grid_charging_below_active_soc_limit": False,
-        # Charging strategy:
-        #   "cap"      -- classic behaviour: charge the N cheapest
-        #                 clusters unless the per-quarter price exceeds
-        #                 charging_price_hard_cap.
-        #   "economic" -- charge unless the quarter price divided by the
-        #                 round-trip efficiency exceeds the MARGINAL
-        #                 displaced price (merit-order stack of the
-        #                 upcoming expensive phase). The hard cap is NOT
-        #                 applied in this mode; economic_price_ceiling
-        #                 acts as the outlier leash instead.
-        "charging_strategy": "cap",
         # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
         # Pure data-error protection (bogus feed prices); NOT an
         # economic decision. Ignored in "cap" mode (hard cap rules there).
@@ -131,7 +120,19 @@ class Config(Singleton):
                 "switching_block_minutes": 60,
                 "fill_gaps_with_short_clusters": True,
                 "charging_price_limit": -999,
-                "charging_price_hard_cap": 999
+                "charging_price_hard_cap": 999,
+                # Charging strategy:
+                #   "cap"      -- classic behaviour: charge the N cheapest
+                #                 clusters unless the per-quarter price
+                #                 exceeds charging_price_hard_cap.
+                #   "economic" -- charge unless the quarter price divided
+                #                 by round_trip_efficiency exceeds the
+                #                 MARGINAL displaced price (merit-order
+                #                 stack of the upcoming expensive phase).
+                #                 The hard cap is NOT applied in this
+                #                 mode; economic_price_ceiling acts as
+                #                 the outlier leash instead.
+                "charging_strategy": "cap"
             }
         ],
         "pv_panels": [
@@ -409,11 +410,15 @@ class Config(Singleton):
             else:
                 setattr(self, attr, bool(raw))
 
-        # Charging strategy: "cap" (classic hard-cap behaviour) or
-        # "economic" (merit-order marginal-price rule). Anything else
-        # falls back to "cap" so a typo can never disable the price
-        # safety logic entirely.
-        strategy = config_data.get("charging_strategy", "cap")
+        # Charging strategy: lives in the prices block (next to the
+        # other price rules); read explicitly for type/enum safety.
+        # Order: last prices entry wins > legacy top-level key > "cap".
+        strategy = None
+        for item in config_data.get("prices", []):
+            if isinstance(item, dict) and "charging_strategy" in item:
+                strategy = item.get("charging_strategy")
+        if strategy is None:
+            strategy = config_data.get("charging_strategy", "cap")
         if isinstance(strategy, str):
             strategy = strategy.strip().lower()
         self.charging_strategy = strategy if strategy in ("cap", "economic") else "cap"
@@ -572,6 +577,19 @@ class Config(Singleton):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
     def update_config_with_template(self):
+        # Migration: charging_strategy moved from top level into the
+        # prices block (it belongs next to charging_price_limit /
+        # charging_price_hard_cap, and the editor renders it there).
+        # Copy a legacy top-level value into every prices entry that
+        # lacks the key, then drop the top-level key. Mirrors the
+        # tariff_resolution migration below.
+        if "charging_strategy" in self.config_data:
+            legacy_strategy = self.config_data.pop("charging_strategy")
+            for price_item in self.config_data.get("prices", []):
+                if isinstance(price_item, dict) and \
+                        "charging_strategy" not in price_item:
+                    price_item["charging_strategy"] = legacy_strategy
+
         # Migration: tariff_resolution moved from prices block to top
         # level in fix14. If an old config has it inside prices, copy
         # the value up (if top level is missing) and drop it from prices.
