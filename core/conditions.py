@@ -124,7 +124,9 @@ class Conditions:
         # ------------------------------------------------------------------
         self.charging_strategy = getattr(self.config, "charging_strategy", "cap")
         self.round_trip_efficiency = self._normalized_efficiency()
-        self.charge_power_watts = self._normalized_charge_power()
+        self.charge_power_w, self.charge_power_source = (
+            self._resolve_charge_power_w()
+        )
         self.economic_info = self._compute_economic_context()
 
         self._build_charging_conditions()
@@ -626,7 +628,8 @@ class Conditions:
     # most expensive hour an ADDITIONAL charged kWh can cover -- the
     # merit-order stack of the upcoming expensive phase, cut off at the
     # energy the battery can actually supply (usable SOC + what fits
-    # into the remaining charge window at charge_power_watts, after
+    # into the remaining charge window at the auto-detected charge
+    # power, after
     # round-trip losses).
     #
     # Charge when:  quarter_price / round_trip_efficiency <= marginal
@@ -658,12 +661,36 @@ class Conditions:
             efficiency = 0.90
         return max(0.5, min(1.0, efficiency))
 
-    def _normalized_charge_power(self):
+    def _resolve_charge_power_w(self):
+        """
+        Charging throughput (W) for the window-throughput math. There is
+        deliberately NO manual config knob: a static value goes stale
+        after every hardware change (charger current raised, 3-phase
+        retrofit). Priority:
+
+          1. MEASURED  -- last_grid_charge_power_w, auto-calibrated by
+             PowerConsumption during grid-charge sessions (peak, 7-day
+             freshness). Closest to what actually flowed into the pack.
+          2. CAPABILITY-- derived from the GX/BMS: min(MaxChargeCurrent
+             setting, BMS CCL) x pack voltage. Follows every setting or
+             hardware change automatically.
+          3. DEFAULT   -- conservative built-in value for fresh installs
+             without any measurement or readable capability.
+
+        Returns (watts, source).
+        """
+        measured = self._get_estimated_grid_charge_w()
+        if measured > 0:
+            return measured, "measured"
         try:
-            power = float(getattr(self.config, "charge_power_watts", 2500))
-        except (TypeError, ValueError):
-            power = 2500.0
-        return max(100.0, power)
+            if self.essunit is not None and \
+                    hasattr(self.essunit, "get_max_charge_capability_w"):
+                capability = self.essunit.get_max_charge_capability_w()
+                if capability and capability > 0:
+                    return float(capability), "capability"
+        except Exception:
+            pass
+        return 2500.0, "default"
 
     @staticmethod
     def _marginal_from_stack(stack, supply_wh):
@@ -792,7 +819,7 @@ class Conditions:
                     charge_minutes = (end - now_utc).total_seconds() / 60.0
                     break
             charge_energy_wh = (
-                    self.charge_power_watts
+                    self.charge_power_w
                     * (charge_minutes / 60.0)
                     * self.round_trip_efficiency
             )
@@ -804,6 +831,8 @@ class Conditions:
                 "charge_energy_wh": charge_energy_wh,
                 "supply_wh": supply_wh,
                 "phase_consumption_wh": hourly_avg_w * phase_hours,
+                "charge_power_w": self.charge_power_w,
+                "charge_power_source": self.charge_power_source,
             })
 
             if not stack:
@@ -910,7 +939,8 @@ class Conditions:
                 except (TypeError, ValueError):
                     info[key] = None
         info["round_trip_efficiency"] = self.round_trip_efficiency
-        info["charge_power_watts"] = self.charge_power_watts
+        info["charge_power_w"] = round(self.charge_power_w, 1)
+        info["charge_power_source"] = self.charge_power_source
         return info
 
     def build_dynamic_ess_slots(self, essunit, current_charge_allowed=None):

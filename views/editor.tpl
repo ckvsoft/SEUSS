@@ -39,6 +39,10 @@
                 deprecated_keys = [
                     "skip_charge_when_battery_sufficient",
                     "skip_charge_when_battery_covers_overnext",
+                    # Auto-detected since 0.8.58: measured grid-charge
+                    # power wins, else GX/BMS capability. Manual value
+                    # ignored (goes stale after hardware changes).
+                    "charge_power_watts",
                 ]
                 grouped_keys = set(solar_keys + battery_keys + deprecated_keys)
                 section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]

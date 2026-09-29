@@ -95,10 +95,6 @@ class Config(Singleton):
         #                    (Mode 4) with target-SOC slots; never touches
         #                    MaxDischargePower (user-owned power limit).
         "control_backend": "auto",
-        # Charging power available to the inverter in W. Used by the
-        # economic strategy to compute how much energy can actually be
-        # charged inside a cheap window (50A @ 48V ~ 2500W).
-        "charge_power_watts": 2500,
         # Round-trip efficiency (charge+discharge+inverter). The economic
         # strategy divides the charge price by this before comparing it
         # against the displaced price. Victron's SystemEfficiency default
@@ -318,7 +314,6 @@ class Config(Singleton):
             self.charging_strategy = "cap"
             self.economic_price_ceiling = 60
             self.control_backend = "auto"
-            self.charge_power_watts = 2500
             self.round_trip_efficiency = 0.90
             # Days of per-day history to retain (energy_costs_by_day,
             # consumption_wh_by_day, etc.). 400 covers a full year-over-
@@ -434,7 +429,6 @@ class Config(Singleton):
         # Numeric strategy tunables -- type-safe like the solar_adj block.
         for attr, default in (
             ("economic_price_ceiling", 60),
-            ("charge_power_watts", 2500),
             ("round_trip_efficiency", 0.90),
         ):
             raw = config_data.get(attr, default)
@@ -445,7 +439,6 @@ class Config(Singleton):
         # Clamp the efficiency to a sane band. Below 0.5 no battery is
         # that bad; above 1.0 would mean creating energy.
         self.round_trip_efficiency = max(0.5, min(1.0, self.round_trip_efficiency))
-        self.charge_power_watts = max(100.0, self.charge_power_watts)
 
         # Solar adjustment-factor tunables -- top-level, with type-safe
         # fallback to the in-memory default if the config value is bogus.

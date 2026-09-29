@@ -504,6 +504,38 @@ class Victron(ESSUnit):
         inverters = self.inverters
         return inverters
 
+    def get_max_charge_capability_w(self):
+        """
+        Charge power (W) the system can currently achieve, derived from
+        live GX/BMS values: min(MaxChargeCurrent setting, BMS CCL) x
+        pack voltage. Follows every setting or hardware change
+        automatically (e.g. raising the charge current for a 3-phase
+        retrofit) without any manual configuration. Returns None when
+        nothing readable is available.
+        """
+        amps = []
+        try:
+            setting = self._process_result(
+                self.subsribers.get('ChargeCap', 'MaxChargeCurrent'))
+            if isinstance(setting, (int, float)) and setting > 0:
+                amps.append(float(setting))
+        except (TypeError, ValueError):
+            pass
+        try:
+            ccl = self._process_result(
+                self.subsribers.get('CCL', 'MaxChargeCurrent'))
+            if isinstance(ccl, (int, float)) and ccl > 0:
+                amps.append(float(ccl))
+        except (TypeError, ValueError):
+            pass
+        try:
+            voltage = float(self.get_battery_current_voltage() or 0)
+        except (TypeError, ValueError):
+            voltage = 0.0
+        if not amps or voltage <= 0:
+            return None
+        return round(min(amps) * voltage, 1)
+
     def get_version(self):
         version = self._process_result(self.subsribers.get('Firmware', 'Version'))
         return version
@@ -607,6 +639,8 @@ class Victron(ESSUnit):
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
                 f"Battery:N/{self.unit_id}/battery/{instance}/InstalledCapacity",
+                f"ChargeCap:N/{self.unit_id}/settings/0/Settings/SystemSetup/MaxChargeCurrent",
+                f"CCL:N/{self.unit_id}/battery/{instance}/Info/MaxChargeCurrent",
                 f"Firmware:N/{self.unit_id}/platform/0/Firmware/Installed/Version"
             ]
 
