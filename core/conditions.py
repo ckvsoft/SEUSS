@@ -666,30 +666,38 @@ class Conditions:
         Charging throughput (W) for the window-throughput math. There is
         deliberately NO manual config knob: a static value goes stale
         after every hardware change (charger current raised, 3-phase
-        retrofit). Priority:
+        retrofit). Resolution:
 
-          1. MEASURED  -- last_grid_charge_power_w, auto-calibrated by
-             PowerConsumption during grid-charge sessions (peak, 7-day
-             freshness). Closest to what actually flowed into the pack.
-          2. CAPABILITY-- derived from the GX/BMS: min(MaxChargeCurrent
-             setting, BMS CCL) x pack voltage. Follows every setting or
-             hardware change automatically.
-          3. DEFAULT   -- conservative built-in value for fresh installs
+          1. best of MEASURED and CAPABILITY:
+             - measured  -- last_grid_charge_power_w, auto-calibrated
+               during grid-charge sessions (peak, 7-day freshness)
+             - capability-- essunit.get_max_charge_capability_w()
+               (MaxChargeCurrent setting x BMS CCL x pack voltage)
+             Taking the max guards against a stale tiny measurement
+             (e.g. one brief trickle session) suppressing a higher
+             known capability -- and vice versa after a hardware
+             DOWNGRADE the next fresh measurement pulls it back down.
+          2. DEFAULT  -- conservative built-in value for fresh installs
              without any measurement or readable capability.
 
         Returns (watts, source).
         """
         measured = self._get_estimated_grid_charge_w()
-        if measured > 0:
-            return measured, "measured"
+        capability = 0.0
         try:
             if self.essunit is not None and \
                     hasattr(self.essunit, "get_max_charge_capability_w"):
-                capability = self.essunit.get_max_charge_capability_w()
-                if capability and capability > 0:
-                    return float(capability), "capability"
+                cap = self.essunit.get_max_charge_capability_w()
+                if cap and cap > 0:
+                    capability = float(cap)
         except Exception:
-            pass
+            capability = 0.0
+        if measured > 0 and measured >= capability:
+            return measured, "measured"
+        if capability > 0:
+            return capability, "capability"
+        if measured > 0:
+            return measured, "measured"
         return 2500.0, "default"
 
     @staticmethod
@@ -740,7 +748,15 @@ class Conditions:
             from datetime import datetime, timezone
 
             now_utc = datetime.now(timezone.utc)
-            items = list(self.items.get_current_list())
+            # Drop items without usable timestamps FIRST -- a None in the
+            # sort key would throw inside sort() and leave the list
+            # UNSORTED, which silently breaks the chain/phase walk below
+            # (observed live with mixed ENTSO-E fallback series).
+            items = [
+                it for it in self.items.get_current_list()
+                if it.get_start_datetime() is not None
+                and it.get_end_datetime() is not None
+            ]
 
             def _charge_covered(it):
                 """True when >=50% of the item lies inside a charge
@@ -770,11 +786,8 @@ class Conditions:
                         return True
                 return False
 
-            # Chronological order is NOT guaranteed by the item list.
-            try:
-                items.sort(key=lambda it: it.get_start_datetime())
-            except (TypeError, ValueError):
-                pass
+            # Chronological order is essential for the chain/phase walk.
+            items.sort(key=lambda it: it.get_start_datetime())
 
             # Expected consumption: historical hourly average from the
             # StatsManager (uniformly distributed over the phase). Read
