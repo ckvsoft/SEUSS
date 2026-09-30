@@ -821,6 +821,22 @@ class Conditions:
             phase_hours = 0.0
             i = 0
             n = len(items)
+            # Start at the first non-expired item. Expired quarters
+            # BEFORE the chain would otherwise break the leading-chain
+            # detection: at 01:05 the expired midnight quarter made the
+            # walk treat the ACTIVE chain as "future chain", the phase
+            # collapsed to no-phase and the DESS grid-charged a FULL
+            # battery for an hour (2980 Wh @ 29.1 ct, 2026-09-30).
+            while i < n:
+                q_end = items[i].get_end_datetime()
+                if q_end is None:
+                    i += 1
+                    continue
+                if q_end.tzinfo is None:
+                    q_end = q_end.replace(tzinfo=timezone.utc)
+                if q_end > now_utc:
+                    break
+                i += 1
             while i < n and _charge_covered(items[i]):
                 i += 1  # skip the current contiguous charge chain
             while i < n:
