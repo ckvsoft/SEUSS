@@ -313,13 +313,37 @@ class SEUSSWeb:
             in_cheap_block = False
 
         # Per-hour bar colors for today/tomorrow (mirrors generate_chart_svg).
-        colors_today = self._hour_colors(charge_blocks, discharge_blocks, tomorrow=False)
-        colors_tomorrow = self._hour_colors(charge_blocks, discharge_blocks, tomorrow=True)
+        # Strategy-aware: under charging_strategy=economic a charge-block
+        # hour is only "green" when the hour price would actually pass the
+        # marginal rule -- block membership alone can lie (32-ct night
+        # clusters are charge blocks by rank but NOT cheap).
+        strategy = getattr(self.config, "charging_strategy", "cap")
+        ess_state = self._ess_state or {}
+        economic = ess_state.get("economic") or {}
+        charging_now = ess_state.get("state") == "charging"
+        marginal_cent = None
+        if strategy == "economic":
+            marginal_cent = economic.get("marginal_price")
+        rte = float(getattr(self.config, "round_trip_efficiency", 0.9) or 0.9)
+        colors_today = self._hour_colors(
+            charge_blocks, discharge_blocks, tomorrow=False,
+            hour_prices=data, marginal_cent=marginal_cent, rte=rte,
+        )
+        colors_tomorrow = self._hour_colors(
+            charge_blocks, discharge_blocks, tomorrow=True,
+            hour_prices=next_data, marginal_cent=marginal_cent, rte=rte,
+        )
 
         response.content_type = 'application/json'
         return json.dumps({
             "current_price": current_price,
+            # DEPRECATED for consumers under charging_strategy=economic:
+            # block membership != cheap there. Use charging_now /
+            # economic.threshold_quarter_price instead.
             "in_cheap_block": in_cheap_block,
+            "charging_now": charging_now,
+            "charging_strategy": strategy,
+            "economic": economic or None,
             "hard_cap": getattr(self.config, "charging_price_hard_cap", None),
             "charging_price_limit": getattr(self.config, "charging_price_limit", None),
             "avg_today": avg_today,
@@ -333,13 +357,21 @@ class SEUSSWeb:
         })
 
     @staticmethod
-    def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False):
+    def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False,
+                     hour_prices=None, marginal_cent=None, rte=0.9):
         """
         Build a 24-element list of per-hour colors for the chart/API:
         "green" when the hour is part of a cheap charging block,
         "red" when it is part of a discharging block, otherwise "gray".
         Mirrors the slice-coloring in generate_chart_svg so the
         thermostat's bar display agrees with the SEUSS web chart.
+
+        Strategy-aware (charging_strategy=economic): a charge-block hour
+        is only green when its average price divided by rte is within
+        the current marginal displaced price -- block membership alone
+        is rank-based and can mark expensive hours "green". With
+        marginal_cent=None (cap strategy or no data) membership decides
+        unchanged.
         """
         target = SEUSSWeb._target_date(tomorrow)
         charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
@@ -350,7 +382,15 @@ class SEUSSWeb:
             has_charge = any((h, q) in charge_quarters for q in range(4))
             has_discharge = any((h, q) in discharge_quarters for q in range(4))
             if has_charge:
-                hours[str(h)] = "green"
+                green = True
+                if hour_prices is not None and marginal_cent is not None:
+                    hour_cent = hour_prices.get(h, hour_prices.get(str(h)))
+                    if hour_cent is not None:
+                        try:
+                            green = (float(hour_cent) / rte) <= marginal_cent
+                        except (TypeError, ValueError):
+                            green = True
+                hours[str(h)] = "green" if green else "gray"
             elif has_discharge:
                 hours[str(h)] = "red"
             else:
