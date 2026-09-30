@@ -293,7 +293,7 @@ class SEUSSWeb:
 
         # Cheap-block detection: mirrored from core/conditions.py so the
         # API answer matches what SEUSS itself would decide right now.
-        in_cheap_block = False
+        in_charge_block = False
         charge_blocks, discharge_blocks = [], []
         try:
             count = getattr(self.config, "number_of_lowest_prices_for_charging", 0) or 0
@@ -302,7 +302,7 @@ class SEUSSWeb:
                 count, block_minutes=block_minutes
             )
             charge_blocks = blocks
-            in_cheap_block = any(b.is_active_now() for b in blocks)
+            in_charge_block = any(b.is_active_now() for b in blocks)
             discharge_blocks = self.market_items.get_highest_discharging_blocks(
                 getattr(self.config, "number_of_highest_prices_for_discharging", 0) or 0,
                 block_minutes=getattr(self.config, "discharging_block_minutes", 60) or 60,
@@ -310,7 +310,7 @@ class SEUSSWeb:
                 fill_gaps=getattr(self.config, "fill_gaps_with_short_clusters", True),
             )
         except Exception:
-            in_cheap_block = False
+            in_charge_block = False
 
         # Per-hour bar colors for today/tomorrow (mirrors generate_chart_svg).
         # Strategy-aware: under charging_strategy=economic a charge-block
@@ -337,10 +337,15 @@ class SEUSSWeb:
         response.content_type = 'application/json'
         return json.dumps({
             "current_price": current_price,
-            # DEPRECATED for consumers under charging_strategy=economic:
-            # block membership != cheap there. Use charging_now /
-            # economic.threshold_quarter_price instead.
-            "in_cheap_block": in_cheap_block,
+            # Backward-compatible MEANING: consumers read this as "cheap
+            # power available NOW -> good time for flexible loads". Under
+            # charging_strategy=economic block membership LIES (rank over
+            # the day: a 32-ct night cluster is a charge block but not
+            # cheap), so this carries the EFFECTIVE decision instead.
+            # Same JSON type, truthful under every strategy -- existing
+            # thermostats keep working without code changes.
+            "in_cheap_block": charging_now,
+            "in_charge_block": in_charge_block,
             "charging_now": charging_now,
             "charging_strategy": strategy,
             "economic": economic or None,
