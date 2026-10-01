@@ -274,12 +274,12 @@ class SEUSSWeb:
         and tomorrow and the effective hard cap.
 
         For each hour of today/tomorrow a per-hour color flag is also
-        returned ("green" = cheap charging block and the strategy buys,
-        "olive" = cheap charging block but the strategy skips the
-        purchase -- still a cheap hour for household loads, "red" =
-        discharge block, "gray" = neutral) that mirrors the SEUSS web
-        chart, so external displays can render the price curve as
-        colored bars without parsing SVG.
+        returned ("green" = cheap charging block, "red" = discharge
+        block, "gray" = neutral) that mirrors the SEUSS web chart, so
+        external displays can render the price curve as colored bars
+        without parsing SVG. Colors are PRICE-based: green marks the
+        cheap hours of the day for household loads -- whether the
+        battery buys there is reported separately (charging_now).
 
         Never raises on missing data -- a missing current price just
         comes back as None so the consumer can fall back to its own
@@ -315,67 +315,34 @@ class SEUSSWeb:
             in_charge_block = False
 
         # Per-hour bar colors for today/tomorrow (mirrors generate_chart_svg).
-        #
-        # FOUR colors, same semantics as the SEUSS web chart:
-        #   green  -- charge-block hour AND the strategy will charge here
-        #   olive  -- charge-block hour (cheap!) but the strategy skips
-        #             the purchase (economic: need already covered;
-        #             cap: above hard cap). STILL the cheap hours of the
-        #             day: flexible household loads (washing machine,
-        #             hot water) belong HERE, the house buys grid power
-        #             at the cheap price either way.
-        #   red    -- discharge block
+        # Purely PRICE-based -- the household signal:
+        #   green  -- charge-block hour = one of the cheap hours of the
+        #             day (flexible loads belong here: washing machine,
+        #             hot water). Whether the BATTERY buys in that hour
+        #             is a strategy decision and lives in charging_now /
+        #             economic -- NOT in the color.
+        #   red    -- discharge block (expensive)
         #   gray   -- neutral / hold
-        #
-        # in_cheap_block is deliberately PRICE-BASED (block membership):
-        # consumers poll it as the household signal "cheap power NOW ->
-        # run flexible loads". Whether the BATTERY buys in that hour is
-        # a different question and lives in charging_now / economic.
+        colors_today = self._hour_colors(
+            charge_blocks, discharge_blocks, tomorrow=False,
+            hour_prices=data,
+        )
+        colors_tomorrow = self._hour_colors(
+            charge_blocks, discharge_blocks, tomorrow=True,
+            hour_prices=next_data,
+        )
+
         strategy = getattr(self.config, "charging_strategy", "cap")
         ess_state = self._ess_state or {}
         economic = ess_state.get("economic") or {}
         charging_now = ess_state.get("state") == "charging"
-        rte = float(getattr(self.config, "round_trip_efficiency", 0.9) or 0.9)
-        marginal_cent = None
-        hard_cap_cent = None
-        if strategy == "economic":
-            marginal_cent = economic.get("marginal_price")
-        else:
-            hard_cap_cent = getattr(
-                self.config, "charging_price_hard_cap", None)
-
-        def _vetoed(price_cent):
-            """True when the active strategy would NOT buy this window
-            (-> olive instead of green). None-safe."""
-            if price_cent is None:
-                return False
-            try:
-                if strategy == "economic":
-                    if marginal_cent is None:
-                        return False
-                    return (float(price_cent) / rte) > marginal_cent
-                if hard_cap_cent is None:
-                    return False
-                return float(price_cent) > float(hard_cap_cent)
-            except (TypeError, ValueError):
-                return False
-
-        colors_today = self._hour_colors(
-            charge_blocks, discharge_blocks, tomorrow=False,
-            hour_prices=data, veto=_vetoed,
-        )
-        colors_tomorrow = self._hour_colors(
-            charge_blocks, discharge_blocks, tomorrow=True,
-            hour_prices=next_data, veto=_vetoed,
-        )
 
         response.content_type = 'application/json'
         return json.dumps({
             "current_price": current_price,
             # PRICE-BASED household signal: "cheap power available NOW
             # -> good time for flexible loads". True in every charge-
-            # block hour (green AND olive). The BATTERY decision is
-            # charging_now.
+            # block hour. The BATTERY decision is charging_now.
             "in_cheap_block": in_charge_block,
             "in_charge_block": in_charge_block,
             "charging_now": charging_now,
@@ -395,21 +362,18 @@ class SEUSSWeb:
 
     @staticmethod
     def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False,
-                     hour_prices=None, veto=None):
+                     hour_prices=None):
         """
         Build a 24-element list of per-hour colors for the chart/API:
         "green" when the hour is part of a cheap charging block,
-        "olive" when it is one but the strategy vetoes the purchase,
         "red" when it is part of a discharging block, otherwise "gray".
         Mirrors the slice-coloring in generate_chart_svg so the
         thermostat's bar display agrees with the SEUSS web chart.
 
-        veto: callable price_cent -> True when the active strategy
-        would NOT buy this window (economic: need already covered /
-        cap: above hard cap). A vetoed charge hour stays OLIVE, never
-        gray: it is still one of the cheap hours of the day and the
-        household signal (washing machine, hot water) depends on it --
-        the house buys grid power at the cheap price either way.
+        Purely PRICE-based (block membership): green marks the cheap
+        hours of the day for household loads, independent of whether
+        the battery actually buys there. The strategy's purchase
+        decision is reported separately (charging_now, economic).
         """
         target = SEUSSWeb._target_date(tomorrow)
         charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
@@ -420,12 +384,7 @@ class SEUSSWeb:
             has_charge = any((h, q) in charge_quarters for q in range(4))
             has_discharge = any((h, q) in discharge_quarters for q in range(4))
             if has_charge:
-                color = "green"
-                if veto is not None and hour_prices is not None:
-                    hour_cent = hour_prices.get(h, hour_prices.get(str(h)))
-                    if veto(hour_cent):
-                        color = "olive"
-                hours[str(h)] = color
+                hours[str(h)] = "green"
             elif has_discharge:
                 hours[str(h)] = "red"
             else:
