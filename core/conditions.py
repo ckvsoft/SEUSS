@@ -887,23 +887,41 @@ class Conditions:
             # order includes everything the rest of the chain can still
             # deliver (the rank semantics keep the decision stable and
             # taper the marginal to zero at the chain's end).
+            #
+            # Start at the FIRST NON-EXPIRED quarter (mirror of the
+            # leading-chain fix above): expired chains earlier in the
+            # list must neither seed the walk nor end it -- otherwise
+            # chain_minutes collapses to 0 whenever any earlier chain
+            # has expired (i.e. always after midnight), the supply
+            # loses the whole chain refill and the economic rule buys
+            # early-chain quarters it should defer. The chain must also
+            # begin EXACTLY at that quarter -- a later (future) chain
+            # refills the NEXT phase, not this one, and must not count
+            # into this supply.
             chain_minutes = 0.0
-            seen_charge = False
-            for it in items:
-                covered = _charge_covered(it)
-                if covered:
-                    seen_charge = True
-                    qs = it.get_start_datetime()
-                    qe = it.get_end_datetime()
-                    if qs.tzinfo is None:
-                        qs = qs.replace(tzinfo=timezone.utc)
-                    if qe.tzinfo is None:
-                        qe = qe.replace(tzinfo=timezone.utc)
-                    overlap = (qe - max(qs, now_utc)).total_seconds() / 60.0
-                    if overlap > 0:
-                        chain_minutes += overlap
-                elif seen_charge:
-                    break  # chain ended
+            start_idx = 0
+            while start_idx < n:
+                q_end = items[start_idx].get_end_datetime()
+                if q_end is None:
+                    start_idx += 1
+                    continue
+                if q_end.tzinfo is None:
+                    q_end = q_end.replace(tzinfo=timezone.utc)
+                if q_end > now_utc:
+                    break
+                start_idx += 1
+            for it in items[start_idx:]:
+                if not _charge_covered(it):
+                    break  # current chain ended (or never started)
+                qs = it.get_start_datetime()
+                qe = it.get_end_datetime()
+                if qs.tzinfo is None:
+                    qs = qs.replace(tzinfo=timezone.utc)
+                if qe.tzinfo is None:
+                    qe = qe.replace(tzinfo=timezone.utc)
+                overlap = (qe - max(qs, now_utc)).total_seconds() / 60.0
+                if overlap > 0:
+                    chain_minutes += overlap
             charge_minutes = chain_minutes
             chain_energy_wh = (
                     self.charge_power_w
