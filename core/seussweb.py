@@ -60,6 +60,12 @@ class SEUSSWeb:
         # persisted (see _publish_ess_state) so the /api/battery polling
         # endpoint costs zero SD writes.
         self._ess_state = {}
+        # RAM-only freeze of past hours' charge decisions (green/olive),
+        # keyed by ISO-date -> {hour: color}. Without it the chart
+        # re-paints HISTORY with the current marginal: hours that were
+        # green when they passed flipped olive later (or the reverse),
+        # contradicting the evaluation log and the SOC curve.
+        self._frozen_hour_colors = {}
 
         # Routen einrichten
         self.setup_routes()
@@ -330,6 +336,8 @@ class SEUSSWeb:
             charge_blocks, discharge_blocks, tomorrow=False,
             hour_prices=data, veto=veto,
         )
+        colors_today = self._freeze_past_decisions(
+            colors_today, self._target_date(False), veto, data)
         colors_tomorrow = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=True,
             hour_prices=next_data, veto=veto,
@@ -441,6 +449,35 @@ class SEUSSWeb:
             else:
                 hours[str(h)] = "gray"
         return hours
+
+    def _freeze_past_decisions(self, colors, target_date, veto, hour_prices):
+        """
+        Freeze each PAST hour's green/olive verdict at the first render
+        after the hour ended, and serve the frozen value from then on.
+        The current and future hours stay live (the veto may flip inside
+        the hour). RAM-only; keeps the last 3 days.
+        """
+        now_hour = datetime.now().hour
+        key = target_date.isoformat()
+        frozen = self._frozen_hour_colors.setdefault(key, {})
+        for h_str, color in list(colors.items()):
+            try:
+                hour = int(h_str)
+            except (TypeError, ValueError):
+                continue
+            if hour >= now_hour or color not in ("green", "olive"):
+                continue
+            if hour in frozen:
+                colors[h_str] = frozen[hour]
+            elif hour_prices is not None:
+                price = hour_prices.get(hour, hour_prices.get(str(hour)))
+                if price is not None:
+                    # only freeze a verdict backed by an actual price
+                    frozen[hour] = color
+        if len(self._frozen_hour_colors) > 3:
+            for old in sorted(self._frozen_hour_colors.keys())[:-3]:
+                self._frozen_hour_colors.pop(old, None)
+        return colors
 
     def index(self):
         chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
@@ -1877,6 +1914,8 @@ class SEUSSWeb:
         # now it inherits the hour's block colour.
         charge_hours = {h for (h, _q) in charge_quarters}
         discharge_hours = {h for (h, _q) in discharge_quarters}
+        frozen_day = self._frozen_hour_colors.setdefault(
+            target_date.isoformat(), {})
 
         # Draw each hour as 4 stacked quarter-width slices.
         # Each hour bar is wrapped in a <g> element with a <title>
@@ -1940,8 +1979,20 @@ class SEUSSWeb:
                     # Strategy veto (economic marginal rule / hard cap):
                     # a charge quarter the strategy would NOT buy shows
                     # olive, exactly matching the evaluation log's
-                    # "Abort charge" line.
-                    strategy_veto = self._charge_veto()(q_price)
+                    # "Abort charge" line. PAST hours serve the FROZEN
+                    # decision (frozen the first time they were rendered
+                    # after their end) so history keeps the colour the
+                    # decision had at decision time instead of being
+                    # re-painted with the current marginal.
+                    base_veto = self._charge_veto()(q_price)
+                    if hour < current_hour and hour in frozen_day:
+                        strategy_veto = frozen_day[hour] == "olive"
+                    else:
+                        strategy_veto = base_veto
+                        if (hour < current_hour and in_charge
+                                and q_price is not None):
+                            frozen_day[hour] = (
+                                "olive" if strategy_veto else "green")
 
                     if (in_charge or below_limit) and below_cap and not strategy_veto:
                         slice_color = self._green_color(hour, current_hour, tomorrow)
