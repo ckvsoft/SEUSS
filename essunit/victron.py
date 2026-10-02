@@ -376,11 +376,13 @@ class Victron(ESSUnit):
     def resolve_control_backend(self, config):
         """
         Honour config.control_backend ("auto" | "classic" |
-        "dynamic_ess"). "auto" picks dynamic_ess when the firmware
-        supports it, classic otherwise. A forced dynamic_ess on an
-        unsupported firmware falls back to classic WITH a warning
-        instead of silently not controlling anything. Accepts either a
-        config object or a raw backend string.
+        "dynamic_ess"). "auto" resolves to CLASSIC: the register toggles
+        (MaxDischargePower 0/user-value, BatteryLife charge schedule)
+        are the enforcement that really switches on every box. The
+        Dynamic-ESS schedule path only works where a GX-side consumer
+        for /Settings/DynamicEss/Schedule exists -- on stock systems it
+        silently controls nothing, so it is never auto-selected.
+        Accepts either a config object or a raw backend string.
         """
         if isinstance(config, str):
             configured = config
@@ -388,16 +390,15 @@ class Victron(ESSUnit):
             configured = getattr(config, "control_backend", "auto")
         if configured not in ("auto", "classic", "dynamic_ess"):
             configured = "auto"
-        if configured == "classic":
+        if configured in ("classic", "auto"):
             return "classic"
         if self.supports_dynamic_ess():
             return "dynamic_ess"
-        if configured == "dynamic_ess":
-            self.logger.log.warning(
-                "control_backend=dynamic_ess requested but this VenusOS "
-                f"(version {self.get_version()}) does not expose the Dynamic "
-                "ESS scheduler -- falling back to classic."
-            )
+        self.logger.log.warning(
+            "control_backend=dynamic_ess requested but this VenusOS "
+            f"(version {self.get_version()}) does not expose the Dynamic "
+            "ESS scheduler -- falling back to classic."
+        )
         return "classic"
 
     def publish_dynamic_ess_schedule(self, slots, battery_capacity_kwh=None,
