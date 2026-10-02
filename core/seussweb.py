@@ -315,21 +315,24 @@ class SEUSSWeb:
             in_charge_block = False
 
         # Per-hour bar colors for today/tomorrow (mirrors generate_chart_svg).
-        # Purely PRICE-based -- the household signal:
-        #   green  -- charge-block hour = one of the cheap hours of the
-        #             day (flexible loads belong here: washing machine,
-        #             hot water). Whether the BATTERY buys in that hour
-        #             is a strategy decision and lives in charging_now /
-        #             economic -- NOT in the color.
+        # Same semantics as the chart's slice shading:
+        #   green  -- charge-block hour and the strategy buys here
+        #   olive  -- charge-block hour but the strategy vetoes the
+        #             purchase (economic: need already covered; cap:
+        #             above hard cap) -- the LOG says "Abort charge",
+        #             so the display must NOT claim green
         #   red    -- discharge block (expensive)
         #   gray   -- neutral / hold
+        # in_cheap_block stays PRICE-based (household signal: cheap power
+        # NOW -> flexible loads); the battery decision is charging_now.
+        veto = self._charge_veto()
         colors_today = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=False,
-            hour_prices=data,
+            hour_prices=data, veto=veto,
         )
         colors_tomorrow = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=True,
-            hour_prices=next_data,
+            hour_prices=next_data, veto=veto,
         )
 
         strategy = getattr(self.config, "charging_strategy", "cap")
@@ -360,20 +363,58 @@ class SEUSSWeb:
             "timestamp": datetime.now().astimezone().isoformat(),
         })
 
+    def _charge_veto(self):
+        """
+        Callable price_cent -> True when the active strategy would NOT
+        buy this window. Used by the API hour colors AND the web chart
+        slice shading so both agree with the evaluation log:
+          economic -- quarter / round_trip_efficiency above the current
+                      marginal displaced price
+          cap      -- quarter above the hard cap
+        """
+        strategy = getattr(self.config, "charging_strategy", "cap")
+        ess_state = self._ess_state or {}
+        economic = ess_state.get("economic") or {}
+        marginal_cent = None
+        hard_cap_cent = None
+        if strategy == "economic":
+            marginal_cent = economic.get("marginal_price")
+        else:
+            hard_cap_cent = getattr(
+                self.config, "charging_price_hard_cap", None)
+        rte = float(getattr(self.config, "round_trip_efficiency", 0.9) or 0.9)
+
+        def veto(price_cent):
+            if price_cent is None:
+                return False
+            try:
+                if strategy == "economic":
+                    if marginal_cent is None:
+                        return False
+                    return (float(price_cent) / rte) > marginal_cent
+                if hard_cap_cent is None:
+                    return False
+                return float(price_cent) > float(hard_cap_cent)
+            except (TypeError, ValueError):
+                return False
+
+        return veto
+
     @staticmethod
     def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False,
-                     hour_prices=None):
+                     hour_prices=None, veto=None):
         """
         Build a 24-element list of per-hour colors for the chart/API:
-        "green" when the hour is part of a cheap charging block,
-        "red" when it is part of a discharging block, otherwise "gray".
-        Mirrors the slice-coloring in generate_chart_svg so the
-        thermostat's bar display agrees with the SEUSS web chart.
+        "green" when the hour is part of a cheap charging block and the
+        strategy buys there, "olive" when it is one but the strategy
+        vetoes the purchase (the log says "Abort charge" -- the display
+        must not claim green), "red" when it is part of a discharging
+        block, otherwise "gray". Mirrors the slice-coloring in
+        generate_chart_svg so the thermostat's bar display agrees with
+        the SEUSS web chart.
 
-        Purely PRICE-based (block membership): green marks the cheap
-        hours of the day for household loads, independent of whether
-        the battery actually buys there. The strategy's purchase
-        decision is reported separately (charging_now, economic).
+        veto: callable price_cent -> True when the active strategy
+        would NOT buy this window (economic marginal rule / hard cap).
         """
         target = SEUSSWeb._target_date(tomorrow)
         charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
@@ -384,7 +425,12 @@ class SEUSSWeb:
             has_charge = any((h, q) in charge_quarters for q in range(4))
             has_discharge = any((h, q) in discharge_quarters for q in range(4))
             if has_charge:
-                hours[str(h)] = "green"
+                color = "green"
+                if veto is not None and hour_prices is not None:
+                    hour_cent = hour_prices.get(h, hour_prices.get(str(h)))
+                    if veto(hour_cent):
+                        color = "olive"
+                hours[str(h)] = color
             elif has_discharge:
                 hours[str(h)] = "red"
             else:
@@ -1886,20 +1932,26 @@ class SEUSSWeb:
                     # expensive quarter that the cap will skip.
                     below_limit = q_price < self.config.charging_price_limit
                     below_cap = q_price < self._effective_price_ceiling()
+                    # Strategy veto (economic marginal rule / hard cap):
+                    # a charge quarter the strategy would NOT buy shows
+                    # olive, exactly matching the evaluation log's
+                    # "Abort charge" line.
+                    strategy_veto = self._charge_veto()(q_price)
 
-                    if (in_charge or below_limit) and below_cap:
+                    if (in_charge or below_limit) and below_cap and not strategy_veto:
                         slice_color = self._green_color(hour, current_hour, tomorrow)
-                    elif in_charge and not below_cap:
+                    elif in_charge and (not below_cap or strategy_veto):
                         # Algorithm picked this quarter for charging, but
-                        # this individual quarter exceeds the hard cap so
-                        # SEUSS won't actually charge here. Show in olive
-                        # so the user can tell at a glance "would charge
-                        # but cap blocks it" rather than confusing it
-                        # with an unrelated grey hour.
+                        # the strategy refuses it (above hard cap, or the
+                        # economic marginal rule says the need is already
+                        # covered). Show in olive so the user can tell at
+                        # a glance "cheap hour, but SEUSS won't charge
+                        # here" rather than confusing it with an
+                        # unrelated grey hour.
                         slice_color = self._olive_color(hour, current_hour, tomorrow)
                     elif in_discharge and not in_charge:
                         slice_color = self._red_color(hour, current_hour, tomorrow)
-                    elif hour_has_charge and below_cap:
+                    elif hour_has_charge and below_cap and not strategy_veto:
                         # This quarter is the leftover of a 3-quarter
                         # charge block (fill-gap result). Inherit the
                         # hour's charge colour so the bar looks solid.
