@@ -359,17 +359,40 @@ class Conditions:
         avg_list = self.statsmanager.get_data(
             "powerconsumption", "hourly_watt_average"
         )
-        avg_per_hour = round(avg_list[0], 2) if avg_list else 0
+        # Expected average consumption: the array MEAN (same basis as
+        # the economic context). A single hour's value (the old
+        # avg_list[0]) can be heating-rod-inflated by 3-5x, which
+        # starved the budget and demoted most discharge blocks.
+        avg_per_hour = 0
+        if avg_list:
+            values = [float(v) for v in avg_list if v is not None]
+            if values and sum(values) > 0:
+                avg_per_hour = round(sum(values) / len(values), 2)
         if avg_per_hour <= 0:
             # No consumption history -- can't make a meaningful split,
             # default to legacy behaviour.
             return None
 
-        # Compute per-block remaining-duration energy needs.
-        # Use REMAINING duration for active blocks (block already partly
-        # used), full duration for future ones.
+        # Only blocks BEFORE the next charge window compete for the
+        # current budget -- blocks after it are re-allocated on a
+        # refilled pack (PV / cheap window) and must not starve the
+        # hours we have to bridge right now.
         from datetime import datetime, timezone, timedelta
         now_utc = datetime.now(timezone.utc)
+        next_charge_start = self._next_charge_start_after(now_utc)
+        if next_charge_start is not None:
+            def _start_utc(blk):
+                s = blk.get_start_datetime()
+                if s is not None and s.tzinfo is None:
+                    s = s.replace(tzinfo=timezone.utc)
+                return s
+            future_high = [
+                blk for blk in future_high
+                if _start_utc(blk) is not None
+                and _start_utc(blk) < next_charge_start
+            ]
+            if not future_high:
+                return None
 
         block_costs = []  # list of (block, energy_wh, avg_price)
         for blk in future_high:
@@ -2966,37 +2989,72 @@ class Conditions:
     # Surplus / discharge math
     # ------------------------------------------------------------------
 
+    def _next_charge_start_after(self, now_utc):
+        """Start of the next charge block after now_utc (or None)."""
+        from datetime import timezone
+        next_start = None
+        for blk in self._charge_blocks:
+            blk_start = (
+                blk.get_start_datetime()
+                if hasattr(blk, "get_start_datetime") else None)
+            if blk_start is None:
+                continue
+            if blk_start.tzinfo is None:
+                blk_start = blk_start.replace(tzinfo=timezone.utc)
+            if blk_start > now_utc and (
+                    next_start is None or blk_start < next_start):
+                next_start = blk_start
+        return next_start
+
     def _calculate_required_capacity(self, future_high_blocks):
         """
-        Required reserve = expected average consumption rate * minutes
-        we still need to cover before the next charge block.
+        Required reserve = expected average consumption rate * the
+        wall-clock span we still need to bridge before the next charge
+        block -- counted ONCE. The old per-block remainder sum was a
+        triangular overcount (17 sequential blocks summed ~150 h of
+        "time until block end" instead of ~17 h), inflating the reserve
+        to ~131 kWh -- 12x the pack -- which pinned the discharge
+        surplus to zero and blocked every discharge.
         """
         avg_list = self.statsmanager.get_data(
             "powerconsumption", "hourly_watt_average"
         )
-        avg_consumption_per_hour = round(avg_list[0], 2) if avg_list else 0
+        # Expected average consumption: the array MEAN (same basis as
+        # the economic context), not a single hour's value.
+        avg_consumption_per_hour = 0
+        if avg_list:
+            values = [float(v) for v in avg_list if v is not None]
+            if values and sum(values) > 0:
+                avg_consumption_per_hour = round(
+                    sum(values) / len(values), 2)
 
-        # Use REMAINING minutes per block, not full duration. A block
-        # that's currently active 18:00-20:00 still has only 30 minutes
-        # left at 19:30 -- we shouldn't reserve capacity for the full 2h.
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timezone
         now_utc = datetime.now(timezone.utc)
-        total_minutes = 0
-        for blk in future_high_blocks:
-            blk_end = blk.get_end_datetime() if hasattr(blk, "get_end_datetime") else None
-            if blk_end is None:
-                blk_start = blk.get_start_datetime()
-                if blk_start is None:
-                    continue
-                if blk_start.tzinfo is None:
-                    blk_start = blk_start.replace(tzinfo=timezone.utc)
-                blk_end = blk_start + timedelta(minutes=blk.get_duration_minutes() or 0)
-            if blk_end.tzinfo is None:
-                blk_end = blk_end.replace(tzinfo=timezone.utc)
-            remaining_seconds = max(0, (blk_end - now_utc).total_seconds())
-            total_minutes += int(remaining_seconds / 60)
 
-        # Convert to hours, apply 10% safety buffer like before.
+        # Wall-clock span from now to the next charge opportunity
+        # (counted once -- hours are hours, however many blocks sit in
+        # between). Fall back to the last high block's end when no
+        # charge block lies ahead in the known horizon.
+        next_charge_start = self._next_charge_start_after(now_utc)
+        if next_charge_start is not None:
+            span_end = next_charge_start
+        else:
+            span_end = None
+            for blk in future_high_blocks:
+                blk_end = (
+                    blk.get_end_datetime()
+                    if hasattr(blk, "get_end_datetime") else None)
+                if blk_end is None:
+                    continue
+                if blk_end.tzinfo is None:
+                    blk_end = blk_end.replace(tzinfo=timezone.utc)
+                if span_end is None or blk_end > span_end:
+                    span_end = blk_end
+        if span_end is None:
+            return 0.0
+
+        total_minutes = max(
+            0.0, (span_end - now_utc).total_seconds() / 60.0)
         required = (total_minutes / 60.0) * avg_consumption_per_hour * 1.10
         self.logger.log.debug(f"Required capacity: {required:.2f} Wh")
         return required
