@@ -2238,8 +2238,8 @@ class SEUSSWeb:
         matching the green/red dimming convention.
         """
         if tomorrow:
-            return "#9ACD32"        # yellowgreen, bright
-        return "#556B2F" if current_hour > hour else "#9ACD32"  # darkolivegreen / yellowgreen
+            return "#9E9E0D"        # dark yellow-olive, same tone as the
+        return "#6B6B14" if current_hour > hour else "#9E9E0D"  # thermostat's olive
 
     def generate_legend_svg(self):
         average_price_today, average_price_tomorrow = (
@@ -2269,7 +2269,7 @@ class SEUSSWeb:
         )
         legend_svg += (
             '<rect x="10" y="40" width="20" height="20" '
-            'fill="#556B2F" stroke="#000" stroke-width="1"/>'
+            'fill="#9E9E0D" stroke="#000" stroke-width="1"/>'
             '<text x="40" y="55" font-size="12" class="chart-text">'
             f'{blocked_label}</text>'
         )
