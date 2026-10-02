@@ -740,6 +740,8 @@ class Conditions:
             "supply_wh": 0.0,
             "usable_soc_wh": 0.0,
             "charge_energy_wh": 0.0,
+            "preload_deficit_wh": 0.0,
+            "serving_chain_price": None,
             "basis": "inactive" if self.charging_strategy != "economic" else "unknown",
         }
         if self.charging_strategy != "economic":
@@ -958,6 +960,74 @@ class Conditions:
                 marginal = sum(p for p, _ in stack) / len(stack)
                 info["basis"] = "fallback"
 
+            # --- Pre-load look-ahead -----------------------------------
+            # The phase-local marginal above only values energy for the
+            # stretch up to the NEXT charge chain. When that phase is
+            # already covered (marginal 0), a cheap CURRENT window would
+            # be skipped even though the phase AFTER the next chain runs
+            # a deficit -- and the serving chain may be MORE expensive
+            # than the current hour (cheap night, pricier midday). Look
+            # one window ahead: value the current buy at the serving
+            # chain's average price for that far deficit, so the pack
+            # pre-loads whenever the current hour is the cheaper
+            # supplier. The far deficit shrinks 1:1 with the usable SOC
+            # while pre-loading, so the buy self-limits to exactly what
+            # the far phase needs (pack headroom caps it physically
+            # anyway). A genuinely covered horizon yields deficit <= 0
+            # and keeps the phase-local marginal 0 -- covered days still
+            # buy nothing.
+            if stats_ok and (marginal is None or marginal <= 0.0) and i < n:
+                serving_prices = []
+                j = i
+                while j < n and _charge_covered(items[j]):
+                    qe = items[j].get_end_datetime()
+                    if qe.tzinfo is None:
+                        qe = qe.replace(tzinfo=timezone.utc)
+                    if qe > now_utc:
+                        try:
+                            serving_prices.append(
+                                float(items[j].get_price(convert=False)))
+                        except (TypeError, ValueError):
+                            pass
+                    j += 1
+                far_stack = []
+                k = j
+                while k < n:
+                    if _charge_covered(items[k]):
+                        break  # window after the far phase -> not ours
+                    it = items[k]
+                    qs = it.get_start_datetime()
+                    qe = it.get_end_datetime()
+                    if qs.tzinfo is None:
+                        qs = qs.replace(tzinfo=timezone.utc)
+                    if qe.tzinfo is None:
+                        qe = qe.replace(tzinfo=timezone.utc)
+                    if qe > now_utc:
+                        try:
+                            price = float(it.get_price(convert=False))
+                        except (TypeError, ValueError):
+                            k += 1
+                            continue
+                        duration_h = (qe - qs).total_seconds() / 3600.0
+                        far_stack.append((price, hourly_avg_w * duration_h))
+                    k += 1
+                if serving_prices and far_stack:
+                    # Pack state when the serving chain starts: the
+                    # current phase drains the battery (uniform hourly
+                    # average, same simplification as the stack above).
+                    soc_at_chain = max(
+                        0.0, usable_wh - hourly_avg_w * phase_hours)
+                    deficit_wh = (
+                        sum(wh for _, wh in far_stack) - soc_at_chain)
+                    if deficit_wh > 0.0:
+                        serving_avg = (
+                            sum(serving_prices) / len(serving_prices))
+                        if serving_avg > (marginal or 0.0):
+                            marginal = serving_avg
+                            info["basis"] = "preload"
+                            info["preload_deficit_wh"] = deficit_wh
+                            info["serving_chain_price"] = serving_avg
+
             info["marginal_price"] = marginal
             if marginal is not None and marginal > 0:
                 # Highest quarter price still worth charging:
@@ -1035,7 +1105,8 @@ class Conditions:
         and the /api/battery endpoint. Safe to call anytime.
         """
         info = dict(self.economic_info or {})
-        for key in ("marginal_price", "threshold_quarter_price"):
+        for key in ("marginal_price", "threshold_quarter_price",
+                    "serving_chain_price"):
             value = info.get(key)
             if value is None:
                 info[key] = None
