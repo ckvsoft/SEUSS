@@ -52,6 +52,7 @@ from core.config import Config
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
 from solar.solardata import Solardata
+from solar.sunposition import sun_position, horizon_elevation
 
 
 class SolarForecastProvider:
@@ -211,6 +212,39 @@ class SolarForecastProvider:
         except Exception:
             return 1.0
 
+    def _horizon_factor(self, panel, hour_index, now_local):
+        """
+        Season-correct horizon shading: compute the sun's elevation and
+        azimuth for the forecast hour (mid-hour, at the panel's
+        location) and compare against the panel's horizon profile
+        ("horizon": [[azimuth, elevation], ...]). Below the silhouette
+        the panel still sees diffuse light, so a small residual factor
+        applies instead of a hard 0 ("horizon_residual", percent).
+        Panels without a horizon profile are unaffected (1.0).
+        """
+        horizon = panel.get('horizon') or []
+        if not horizon:
+            return 1.0
+        try:
+            lat = float(panel.get('locLat'))
+            lon = float(panel.get('locLong'))
+        except (TypeError, ValueError):
+            return 1.0
+        try:
+            residual = max(0.0, min(1.0,
+                float(panel.get('horizon_residual', 15) or 0) / 100.0))
+            midnight = now_local.replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            when_local = midnight + timedelta(hours=hour_index + 0.5)
+            when_utc = when_local.astimezone(pytz.utc)
+        except (TypeError, ValueError):
+            return 1.0
+        elevation, azimuth = sun_position(lat, lon, when_utc)
+        obstruction = horizon_elevation(horizon, azimuth)
+        if elevation <= obstruction:
+            return residual
+        return 1.0
+
     # --------------------------------------------------------------
     # The public template-method
     # --------------------------------------------------------------
@@ -303,6 +337,7 @@ class SolarForecastProvider:
                         raw_wh = min(raw_wh, p_max)
 
                     damp = self.calculate_exponential_damping(h % 24, panel, sr, ss)
+                    damp *= self._horizon_factor(panel, h, now)
                     damped_wh = raw_wh * damp
 
                     if is_today:

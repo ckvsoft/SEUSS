@@ -144,6 +144,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             },
             {
@@ -157,6 +163,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             },
             {
@@ -170,6 +182,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             }
         ],
