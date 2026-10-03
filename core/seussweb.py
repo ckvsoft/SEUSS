@@ -483,6 +483,11 @@ class SEUSSWeb:
         key = target_date.isoformat()
         frozen = self._frozen_hour_colors.setdefault(key, {})
         observed = self._hour_state_observations.get(key, {})
+        # Never freeze while no economic verdict is published (fresh
+        # boot, state gap): the gap veto is conservative-olive and
+        # freezing it would pin WRONG colours until midnight.
+        verdict_ok = (self._ess_state or {}).get("economic", {}).get(
+            "marginal_price") is not None
         for h_str, color in list(colors.items()):
             try:
                 hour = int(h_str)
@@ -495,13 +500,13 @@ class SEUSSWeb:
                 frozen_colour = "green" if "charging" in observed[hour] else "olive"
             elif hour in frozen:
                 frozen_colour = frozen[hour]
-            elif hour_prices is not None:
+            elif verdict_ok and hour_prices is not None:
                 price = hour_prices.get(hour, hour_prices.get(str(hour)))
                 if price is None:
                     continue  # no price, no verdict -- freeze nothing
                 frozen_colour = color
             else:
-                continue
+                continue  # verdict gap -- stay unfrozen, retry next render
             frozen[hour] = frozen_colour
             colors[h_str] = frozen_colour
         if len(self._frozen_hour_colors) > 3:
