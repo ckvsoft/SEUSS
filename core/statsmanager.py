@@ -28,6 +28,7 @@
 from datetime import datetime
 import json
 import os, sys
+import time
 
 from design_patterns.singleton import Singleton
 
@@ -39,6 +40,12 @@ class StatsManager(Singleton):
     main_script_path = os.path.abspath(sys.argv[0])
     main_script_directory = os.path.dirname(main_script_path)
     file_path = os.path.join(main_script_directory, 'status.json')
+    # SD-friendly flush debounce: updates land in the RAM cache
+    # immediately; the file is rewritten at most every 6 h and once on
+    # graceful shutdown. A power cut / restart costs the last minutes of
+    # STATS only -- the Victron keeps the system running regardless.
+    min_save_interval = 21600  # seconds
+    _last_save = 0.0
 
     data = {}
 
@@ -47,7 +54,11 @@ class StatsManager(Singleton):
 
     def __init__(self):
         super().__init__()
-        self.load_data()
+        # Load only on the first instantiation -- later ones must NOT
+        # reload from disk, or they would wipe RAM updates that the
+        # flush debounce has not written yet.
+        if not StatsManager.data:
+            self.load_data()
 
     @classmethod
     def load_data(cls):
@@ -58,7 +69,11 @@ class StatsManager(Singleton):
             cls.data = {}
 
     @classmethod
-    def save_data(cls):
+    def save_data(cls, force=False):
+        now = time.time()
+        if not force and (now - cls._last_save) < cls.min_save_interval:
+            return
+        cls._last_save = now
         with open(cls.file_path, 'w') as file:
             json.dump(cls.data, file, indent=2, sort_keys=True)
 

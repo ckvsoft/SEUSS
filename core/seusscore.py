@@ -736,7 +736,7 @@ class SEUSS:
         self.logger.log.info(f"Program will be terminated... signal: {signum}")
 
         self.power_consumption_manager.stop_instance()
-        self.statsmanager.save_data()
+        self.statsmanager.save_data(force=True)
         self.ws_server.stop()
         self.seuss_web.stop()
         self.svs_thread_stop_flag.set()
