@@ -66,6 +66,11 @@ class SEUSSWeb:
         # green when they passed flipped olive later (or the reverse),
         # contradicting the evaluation log and the SOC curve.
         self._frozen_hour_colors = {}
+        # RAM-only per-hour observed states (what SEUSS actually DID:
+        # charging / idle / discharging), recorded from the evaluation
+        # payloads. The frozen hour colours are derived from these, so
+        # history reflects reality, not a re-computation.
+        self._hour_state_observations = {}
 
         # Routen einrichten
         self.setup_routes()
@@ -131,9 +136,22 @@ class SEUSSWeb:
 
     def set_ess_state(self, state):
         """Called by seusscore after every evaluation cycle. Keeps the
-        latest decision + battery snapshot in RAM only."""
+        latest decision + battery snapshot in RAM only, and records the
+        observed per-hour state (charging/idle/...) so past chart hours
+        can freeze their TRUE colour instead of a retro-active veto
+        computation."""
         if isinstance(state, dict):
             self._ess_state = state
+            try:
+                ts = str(state.get("timestamp") or "")
+                day, hour = ts[:10], int(ts[11:13])
+                obs = self._hour_state_observations.setdefault(day, {})
+                obs.setdefault(hour, set()).add(str(state.get("state")))
+                if len(self._hour_state_observations) > 3:
+                    for old in sorted(self._hour_state_observations)[:-3]:
+                        self._hour_state_observations.pop(old, None)
+            except Exception:
+                pass
 
     def _effective_price_ceiling(self):
         """
@@ -452,14 +470,19 @@ class SEUSSWeb:
 
     def _freeze_past_decisions(self, colors, target_date, veto, hour_prices):
         """
-        Freeze each PAST hour's green/olive verdict at the first render
-        after the hour ended, and serve the frozen value from then on.
-        The current and future hours stay live (the veto may flip inside
-        the hour). RAM-only; keeps the last 3 days.
+        Freeze each PAST hour's green/olive verdict from what SEUSS
+        actually DID (observed evaluation states), not from the current
+        veto math: an hour where charging was observed is green, a
+        charge-block hour without observed charging is olive. Hours
+        with no observations (e.g. SEUSS restarted mid-day) keep the
+        first-seen computed colour. The current and future hours stay
+        live (the veto may flip inside the hour). RAM-only; keeps the
+        last 3 days.
         """
         now_hour = datetime.now().hour
         key = target_date.isoformat()
         frozen = self._frozen_hour_colors.setdefault(key, {})
+        observed = self._hour_state_observations.get(key, {})
         for h_str, color in list(colors.items()):
             try:
                 hour = int(h_str)
@@ -467,13 +490,20 @@ class SEUSSWeb:
                 continue
             if hour >= now_hour or color not in ("green", "olive"):
                 continue
-            if hour in frozen:
-                colors[h_str] = frozen[hour]
+            if hour in observed:
+                # Physical truth: charging observed -> green, else olive.
+                frozen_colour = "green" if "charging" in observed[hour] else "olive"
+            elif hour in frozen:
+                frozen_colour = frozen[hour]
             elif hour_prices is not None:
                 price = hour_prices.get(hour, hour_prices.get(str(hour)))
-                if price is not None:
-                    # only freeze a verdict backed by an actual price
-                    frozen[hour] = color
+                if price is None:
+                    continue  # no price, no verdict -- freeze nothing
+                frozen_colour = color
+            else:
+                continue
+            frozen[hour] = frozen_colour
+            colors[h_str] = frozen_colour
         if len(self._frozen_hour_colors) > 3:
             for old in sorted(self._frozen_hour_colors.keys())[:-3]:
                 self._frozen_hour_colors.pop(old, None)
@@ -1984,12 +2014,26 @@ class SEUSSWeb:
                     # after their end) so history keeps the colour the
                     # decision had at decision time instead of being
                     # re-painted with the current marginal.
+                    # Strategy veto (economic marginal rule / hard cap):
+                    # a charge quarter the strategy would NOT buy shows
+                    # olive, exactly matching the evaluation log's
+                    # "Abort charge" line. PAST hours serve the OBSERVED
+                    # truth (did SEUSS actually charge in this hour?)
+                    # or the frozen decision -- history is never
+                    # re-painted with the current marginal. The tomorrow
+                    # chart never freezes (its hours are all future).
                     base_veto = self._charge_veto()(q_price)
-                    if hour < current_hour and hour in frozen_day:
+                    observed_day = self._hour_state_observations.get(
+                        target_date.isoformat(), {})
+                    if not tomorrow and hour < current_hour \
+                            and hour in observed_day:
+                        strategy_veto = "charging" not in observed_day[hour]
+                    elif not tomorrow and hour < current_hour \
+                            and hour in frozen_day:
                         strategy_veto = frozen_day[hour] == "olive"
                     else:
                         strategy_veto = base_veto
-                        if (hour < current_hour and in_charge
+                        if (not tomorrow and hour < current_hour and in_charge
                                 and q_price is not None):
                             frozen_day[hour] = (
                                 "olive" if strategy_veto else "green")
