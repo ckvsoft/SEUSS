@@ -356,9 +356,13 @@ class SEUSSWeb:
         )
         colors_today = self._freeze_past_decisions(
             colors_today, self._target_date(False), veto, data)
+        # Tomorrow(+): PLAN display, not a decision -- the veto verdict
+        # for a future day cannot exist yet (the deficit math re-runs
+        # with tomorrow's SOC and prices). Charge windows render green
+        # as planned candidates; the live decision happens that day.
         colors_tomorrow = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=True,
-            hour_prices=next_data, veto=veto,
+            hour_prices=next_data, veto=None,
         )
 
         strategy = getattr(self.config, "charging_strategy", "cap")
@@ -2030,11 +2034,14 @@ class SEUSSWeb:
                     base_veto = self._charge_veto()(q_price)
                     observed_day = self._hour_state_observations.get(
                         target_date.isoformat(), {})
-                    if not tomorrow and hour < current_hour \
-                            and hour in observed_day:
+                    if tomorrow:
+                        # Tomorrow(+): PLAN display -- charge windows are
+                        # planned candidates; the live veto decision
+                        # happens that day, never pre-painted.
+                        strategy_veto = False
+                    elif hour < current_hour and hour in observed_day:
                         strategy_veto = "charging" not in observed_day[hour]
-                    elif not tomorrow and hour < current_hour \
-                            and hour in frozen_day:
+                    elif hour < current_hour and hour in frozen_day:
                         strategy_veto = frozen_day[hour] == "olive"
                     else:
                         strategy_veto = base_veto
