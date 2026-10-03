@@ -492,6 +492,7 @@ class SEUSSWeb:
             day = datetime.now().strftime("%Y-%m-%d")
             obs = self._hour_state_observations.setdefault(day, {})
             charging = False
+            state_known = False
             with open(path, "r", errors="replace") as fh:
                 for line in fh:
                     m = re.match(r"\[.\s+(\d{6})\s+(\d{2}):(\d{2}):", line)
@@ -503,12 +504,19 @@ class SEUSSWeb:
                     quarter = int(m.group(3)) // 15
                     if re.search(r"(?<!dis)charging is turned on\.", line):
                         charging = True
+                        state_known = True
                     elif re.search(r"(?<!dis)charging is turned off\.", line):
                         charging = False
-                    if charging:
-                        # Per-quarter record (same shape as the live
-                        # observation recording).
-                        obs.setdefault(hour, {})[quarter] = "charging"
+                        state_known = True
+                    if state_known:
+                        # Per-quarter record of the OBSERVED state --
+                        # charging AND not-charging quarters. Without
+                        # the not-charging records the gaps inherited
+                        # "the hour charged somehow" and rendered green
+                        # although nothing was charged there (e.g. the
+                        # rest of an hour after an abort at :25).
+                        obs.setdefault(hour, {})[quarter] = (
+                            "charging" if charging else "idle")
         except Exception:
             pass
 
@@ -2093,10 +2101,12 @@ class SEUSSWeb:
                         q_state = hour_obs.get(q)
                         if q_state is not None:
                             strategy_veto = q_state != "charging"
-                        elif hour < current_hour:
-                            strategy_veto = "charging" not in set(
-                                hour_obs.values())
                         else:
+                            # No record for THIS quarter: never inherit
+                            # "the hour charged somehow" -- that used to
+                            # paint not-charged past quarters green
+                            # (the rest of an hour after an abort).
+                            # Fall back to the computed veto instead.
                             strategy_veto = base_veto
                     elif hour < current_hour and hour in frozen_day:
                         strategy_veto = frozen_day[hour] == "olive"
