@@ -146,8 +146,13 @@ class SEUSSWeb:
             try:
                 ts = str(state.get("timestamp") or "")
                 day, hour = ts[:10], int(ts[11:13])
+                quarter = int(ts[14:16]) // 15
                 obs = self._hour_state_observations.setdefault(day, {})
-                obs.setdefault(hour, set()).add(str(state.get("state")))
+                # Per-QUARTER record: the latest state of each 15-min
+                # slice -- lets the current hour render a split (e.g.
+                # charged until the SOC target hit mid-hour).
+                hour_obs = obs.setdefault(hour, {})
+                hour_obs[quarter] = str(state.get("state"))
                 if len(self._hour_state_observations) > 3:
                     for old in sorted(self._hour_state_observations)[:-3]:
                         self._hour_state_observations.pop(old, None)
@@ -533,7 +538,8 @@ class SEUSSWeb:
                 continue
             if hour in observed:
                 # Physical truth: charging observed -> green, else olive.
-                frozen_colour = "green" if "charging" in observed[hour] else "olive"
+                frozen_colour = ("green" if "charging" in
+                                 observed[hour].values() else "olive")
             elif hour in frozen:
                 frozen_colour = frozen[hour]
             elif verdict_ok and hour_prices is not None:
@@ -2066,13 +2072,19 @@ class SEUSSWeb:
                     base_veto = self._charge_veto()(q_price)
                     observed_day = self._hour_state_observations.get(
                         target_date.isoformat(), {})
-                    if tomorrow:
-                        # Tomorrow(+): PLAN display -- charge windows are
-                        # planned candidates; the live veto decision
-                        # happens that day, never pre-painted.
-                        strategy_veto = False
-                    elif hour < current_hour and hour in observed_day:
-                        strategy_veto = "charging" not in observed_day[hour]
+                    hour_obs = observed_day.get(hour) if not tomorrow else None
+                    if hour_obs is not None and hour <= current_hour:
+                        # Observed truth: this quarter's own recorded
+                        # state (current hour), or the hour's charging
+                        # history (past hours). Never the live veto.
+                        q_state = hour_obs.get(q)
+                        if q_state is not None:
+                            strategy_veto = q_state != "charging"
+                        elif hour < current_hour:
+                            strategy_veto = "charging" not in set(
+                                hour_obs.values())
+                        else:
+                            strategy_veto = base_veto
                     elif hour < current_hour and hour in frozen_day:
                         strategy_veto = frozen_day[hour] == "olive"
                     else:
