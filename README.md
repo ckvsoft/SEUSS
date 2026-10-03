@@ -229,11 +229,26 @@ Check `timestamp` for staleness before acting on it — the value only updates w
 | `unit_id`             | VRM Portal ID<br/>can be found in the `Settings / VRM online portal / VRM Portal Id`.<br/>Note: This ID is required to access the Victron even if you are not using a VRM portal                                                                                                                                                                                                                                         |
 | `user`                | mail adress you use to connect to VRM portal                                                                                                                                                                                                                                                                                                                                                                             |
 | `password`            | password you use to connect to VRM portal                                                                                                                                                                                                                                                                                                                                                                                |
-| `max_discharge_power` | Default: -1<br/>If you use `Limit inverter power` in the ESS menu then this value must be entered here.<br/>If the inverter is set to `Discharge false` by this app then this value will be overwritten in the ESS.<br/>This limit here is set in discharge mode in the ESS.<br/>If no limit is set then leave the value at `-1`.<br/>Example: Enter `1000` to limit the discharge to `1000W`, Enter `-1` for full Power |
+| `max_discharge_power` | Default: -1<br/>If you use `Limit inverter power` in the ESS menu then this value must be entered here.<br/>If the inverter is set to `Discharge false` by this app then this value will be overwritten in the ESS.<br/>This limit here is set in discharge mode in the ESS.<br/>If no limit is set then leave the value at `-1`.<br/>Example: Enter `1000` to limit the discharge to `1000W`, Enter `-1` for full Power<br/>**VenusOS ≥ 3.50:** SEUSS writes this value ONCE (only if the register was 0) and then gates discharge per decision via the hub4 **RAM override** (`/Overrides/MaxDischargePower`) -- the register itself keeps YOUR value permanently. On **older firmware** the register is toggled `value ↔ 0` per decision (as before). |
 | `only_observation`    | If `only observation` is activated the essunit will only be used for statistical purposes. The essunit does not execute any conditions                                                                                                                                                                                                                                                                                   |
 | `enabled`             | To use this entry it must be `enabled`. Otherwise `disabled`                                                                                                                                                                                                                                                                                                                                                             |
 
-## Spot Markets
+### Charge/discharge switching (classic backend)
+
+Charge = the ESS **Scheduled charge levels** window (armed during green
+blocks, target = the SoC level you set in the Victron GUI). Discharge =
+the limit above.
+
+* **VenusOS ≥ 3.50:** the per-decision gating happens through the hub4
+  **RAM overrides** (`/Overrides/ForceCharge`, `/Overrides/MaxDischargePower`)
+  -- zero SD writes for switching; the SD registers keep your values.
+* **Older firmware:** the SD registers are toggled per decision
+  (`Schedule/Charge/0/Day` 7/-7, `MaxDischargePower` value/0), guarded to
+  write only on change.
+* SEUSS **never** writes `/Settings/DynamicEss/*` -- the former Dynamic-ESS
+  backend was removed 2026-10. A leftover `DynamicEss/Mode=4` disables the
+  classic "Scheduled charge levels" feature on VenusOS 3.7x (shows
+  *Inactive*); set Dynamic ESS to off once if that page shows *Inactive*.
 
 ### aWATTar
 
@@ -278,7 +293,36 @@ Check `timestamp` for staleness before acting on it — the value only updates w
 | `efficiency`      | Module efficiency in **%** (typical 18–22 for modern silicon). Multiplied with `total_area` to convert irradiance into Wh. You can also lower this value over time to model panel ageing or persistent partial shading without changing the physical area.                                                                                                                                                                                                                                                                                       |
 | `damping_morning` | With this parameter you can adjust the result in the morning. Value float 0..1, default 0    |
 | `damping_evening` | With this parameter you can adjust the result in the evening. Value float 0..1, default 0    |
+| `horizon`         | Season-correct horizon shading: obstruction silhouette as `[[azimuth_deg, elevation_deg], ...]` (compass direction of the obstruction from the panel's point of view and the elevation angle below which it blocks the sun; linear interpolation between waypoints; wraps at 360). Empty (`[]`, default) = open sky, no shading. See [Horizon shading](#horizon-shading-season-correct) below. |
+| `horizon_residual`| Share of the forecast kept in hours where the sun is BEHIND an obstruction (a tree never blocks 100% -- diffuse light remains). Percent, default `15`. Blocked hours get this residual instead of a hard 0. |
 | `enabled`         | To use this entry it must be `enabled`. Otherwise `disabled`                                 |
+
+### Horizon shading (season-correct)
+
+A fixed `damping_evening` factor cannot distinguish seasons: a tree that
+shades the array on autumn afternoons (low sun) does nothing in summer,
+and a southern hill eats winter hours. The horizon profile models the
+actual geometry instead -- the sun's elevation and azimuth are computed
+per forecast hour (NOAA solar position, no network) and compared with
+your silhouette:
+
+```json
+"horizon": [[120, 0], [180, 8], [210, 8], [240, 25], [280, 25], [320, 0]],
+"horizon_residual": 15
+```
+
+This example reads: *open sky from the east up to 180°; a hill to the
+south blocking everything below ~8°; a tree in the southwest blocking
+everything below 25° between 240° and 280°; open sky from 320°.*
+
+Measuring the values (once, from the panel position): a compass app for
+the azimuth of tree/hill, a free inclinometer app for the elevation of
+the treetop / hill ridge. Rough values are fine -- linear interpolation
+smooths the rest.
+
+Behaviour: hours with the sun behind the silhouette produce
+`horizon_residual` % of the forecast; hours above it run the normal
+damping. Panels without a `horizon` entry behave exactly as before.
 
 ## Smart Switches  
 
