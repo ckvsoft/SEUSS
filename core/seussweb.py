@@ -520,6 +520,14 @@ class SEUSSWeb:
         except Exception:
             pass
 
+    def _ensure_log_seeded(self):
+        """One-shot log reconstruction of today's observed quarters.
+        Idempotent per process: only the first render after a restart
+        reads the log, every later call is a no-op flag check."""
+        if not self._log_seeded:
+            self._log_seeded = True
+            self._seed_observations_from_log()
+
     def _freeze_past_decisions(self, colors, target_date, veto, hour_prices):
         """
         Freeze each PAST hour's green/olive verdict from what SEUSS
@@ -531,9 +539,7 @@ class SEUSSWeb:
         live (the veto may flip inside the hour). RAM-only; keeps the
         last 3 days.
         """
-        if not self._log_seeded:
-            self._log_seeded = True
-            self._seed_observations_from_log()
+        self._ensure_log_seeded()
         now_hour = datetime.now().hour
         key = target_date.isoformat()
         frozen = self._frozen_hour_colors.setdefault(key, {})
@@ -1933,6 +1939,10 @@ class SEUSSWeb:
         (already-passed -> dark gray, future -> light gray, tomorrow ->
         always light gray).
         """
+        # First chart render after a restart must show the truth
+        # immediately -- do not wait for the first /api/prices poll
+        # to reconstruct today's observed quarters from the log.
+        self._ensure_log_seeded()
         current_time = datetime.now()
         current_hour = current_time.hour
         width = 37
