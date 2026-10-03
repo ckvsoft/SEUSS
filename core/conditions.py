@@ -1050,6 +1050,25 @@ class Conditions:
                             info["basis"] = "preload"
                             info["preload_deficit_wh"] = deficit_wh
                             info["serving_chain_price"] = serving_avg
+                    else:
+                        # Deficit covered, but the pack sits below the
+                        # scheduler SoC target (85%): a window CHEAPER
+                        # than the future refill windows is still the
+                        # better deal -- fill toward the target as a
+                        # buffer for bad days. Capped by the target
+                        # itself: at/above it, nothing is bought.
+                        target_soc = (self.essunit.get_scheduler_soc()
+                                      if self.essunit else None)
+                        current_soc = (self.essunit.get_soc()
+                                       if self.essunit else None)
+                        if (target_soc and current_soc is not None
+                                and current_soc < target_soc):
+                            serving_avg = (
+                                sum(serving_prices) / len(serving_prices))
+                            if serving_avg > (marginal or 0.0):
+                                marginal = serving_avg
+                                info["basis"] = "preload"
+                                info["serving_chain_price"] = serving_avg
 
             info["marginal_price"] = marginal
             if marginal is not None and marginal > 0:
