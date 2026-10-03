@@ -71,6 +71,7 @@ class SEUSSWeb:
         # payloads. The frozen hour colours are derived from these, so
         # history reflects reality, not a re-computation.
         self._hour_state_observations = {}
+        self._log_seeded = False
 
         # Routen einrichten
         self.setup_routes()
@@ -471,6 +472,37 @@ class SEUSSWeb:
             else:
                 hours[str(h)] = "gray"
         return hours
+
+    def _seed_observations_from_log(self):
+        """
+        Reconstruct today's per-hour charging truth from the SEUSS log
+        (tmpfs -- zero extra disk writes). Seeds the observed states so
+        past hours keep their TRUE colour across SEUSS restarts: every
+        cycle logs "charging is turned on/off", which maps exactly to
+        the green/olive display semantics.
+        """
+        try:
+            path = getattr(self.config, "log_file_path", None) or "/tmp/seuss.log"
+            today = datetime.now().strftime("%y%m%d")
+            day = datetime.now().strftime("%Y-%m-%d")
+            obs = self._hour_state_observations.setdefault(day, {})
+            charging = False
+            with open(path, "r", errors="replace") as fh:
+                for line in fh:
+                    m = re.match(r"\[.\s+(\d{6})\s+(\d{2}):", line)
+                    if not m:
+                        continue
+                    if m.group(1) != today:
+                        continue  # not today
+                    hour = int(m.group(2))
+                    if re.search(r"(?<!dis)charging is turned on\.", line):
+                        charging = True
+                    elif re.search(r"(?<!dis)charging is turned off\.", line):
+                        charging = False
+                    if charging:
+                        obs.setdefault(hour, set()).add("charging")
+        except Exception:
+            pass
 
     def _freeze_past_decisions(self, colors, target_date, veto, hour_prices):
         """
