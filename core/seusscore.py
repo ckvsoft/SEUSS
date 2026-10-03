@@ -86,10 +86,8 @@ class SEUSS:
     def run_essunit(self):
         essunit = self.initialize_essunit()
         if essunit is not None:
-            # Resolve the control backend (classic toggles vs Victron
-            # Dynamic ESS schedule) against the actual firmware. "auto"
-            # prefers dynamic_ess when the GX supports it and silently
-            # falls back to classic otherwise. Logged once per change.
+            # Resolve the control backend (classic register toggles)
+            # against the actual firmware. Logged once per change.
             self._resolve_control_backend(essunit)
 
             unit_config = essunit.get_config()
@@ -445,25 +443,13 @@ class SEUSS:
             conditions_instance,
         )
 
-        # In the dynamic_ess backend the schedule replaces the classic
-        # charge/discharge toggles -- push the translated plan. The
-        # final charging decision of THIS cycle rides along so the
-        # current window honours live aborts (cheaper-cluster-coming,
-        # solar, SOC target, ...).
-        self._apply_dynamic_ess_schedule(
-            essunit, conditions_instance, condition_charging_result.execute
-            if condition_charging_result.condition else None,
-        )
-
         self.items.log_items()
         self.no_data[0] = 0
 
     def _resolve_control_backend(self, essunit):
         """
         Resolve + log the Victron control backend. Cheap enough to run
-        every cycle; only backend CHANGES are logged, and switching away
-        from dynamic_ess cleanly deactivates Mode 4 so the GX never
-        follows a frozen schedule.
+        every cycle; only backend CHANGES are logged.
         """
         if not hasattr(essunit, "resolve_control_backend"):
             return
@@ -472,9 +458,6 @@ class SEUSS:
             previous = getattr(essunit, "get_control_backend", lambda: None)()
             essunit.set_control_backend(backend)
             if backend != previous:
-                if previous is not None and previous != "classic" and \
-                        hasattr(essunit, "disable_dynamic_ess"):
-                    essunit.disable_dynamic_ess()
                 self.logger.log.info(
                     f"Control backend: {backend}"
                     + (f" (was {previous})" if previous is not None else "")
@@ -483,41 +466,6 @@ class SEUSS:
             self.logger.log.warning(
                 f"Control backend resolution failed, keeping classic: {e}"
             )
-
-    def _apply_dynamic_ess_schedule(self, essunit, conditions_instance,
-                                    current_charge_allowed=None):
-        """
-        dynamic_ess backend: translate the evaluated block plan into
-        hourly target-SOC slots and publish them. Skipped entirely in
-        observation mode and for essunits without the backend support.
-        """
-        if essunit is None or conditions_instance is None:
-            return
-        if getattr(essunit, "get_control_backend", lambda: "classic")() != "dynamic_ess":
-            return
-        if self._is_observation_mode(essunit):
-            self.logger.log.info(
-                "[OBSERVATION] Would publish Dynamic ESS schedule"
-            )
-            return
-        try:
-            slots = conditions_instance.build_dynamic_ess_slots(
-                essunit, current_charge_allowed=current_charge_allowed,
-            )
-            if not slots:
-                return
-            full_wh = 0
-            try:
-                full_wh = essunit.get_battery_full_wh() or 0
-            except Exception:
-                pass
-            essunit.publish_dynamic_ess_schedule(
-                slots,
-                battery_capacity_kwh=(full_wh / 1000.0) if full_wh else None,
-                efficiency=getattr(self.config, "round_trip_efficiency", 0.9),
-            )
-        except Exception as e:
-            self.logger.log.error(f"Dynamic ESS schedule push failed: {e}")
 
     def _publish_ess_state(self, essunit, charge_result, discharge_result,
                            conditions_instance=None):

@@ -78,9 +78,8 @@
                             </select><br>
                         % elif key == "control_backend":
                             <select id="{{ key }}" name="{{ key }}">
-                                <option value="auto" {{ 'selected' if value == 'auto' else '' }}>Auto (detect firmware)</option>
+                                <option value="auto" {{ 'selected' if value == 'auto' else '' }}>Auto (classic registers)</option>
                                 <option value="classic" {{ 'selected' if value == 'classic' else '' }}>Classic (Day/MaxDischargePower toggles)</option>
-                                <option value="dynamic_ess" {{ 'selected' if value == 'dynamic_ess' else '' }}>Dynamic ESS (target-SOC schedule)</option>
                             </select><br>
                         % else:
                             <input type="text" id="{{ key }}" name="{{ key }} " value="{{ value }}"><br>

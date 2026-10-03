@@ -87,13 +87,14 @@ class Config(Singleton):
         # economic decision. Ignored in "cap" mode (hard cap rules there).
         "economic_price_ceiling": 60,
         # Victron control backend:
-        #   "auto"        -- use dynamic_ess when the firmware supports it,
-        #                    otherwise classic (default).
+        #   "auto"        -- classic (default; kept for old config.json
+        #                    files, resolves to classic).
         #   "classic"     -- toggles Schedule/Charge Day + MaxDischargePower
         #                    (localsettings, SD-backed writes).
-        #   "dynamic_ess" -- drives the Victron Dynamic ESS scheduler
-        #                    (Mode 4) with target-SOC slots; never touches
-        #                    MaxDischargePower (user-owned power limit).
+        # The former "dynamic_ess" backend was removed 2026-10: its
+        # leftover /Settings/DynamicEss/Mode=4 disabled the classic
+        # scheduled charging on VenusOS 3.7x. Legacy values resolve to
+        # classic.
         "control_backend": "auto",
         # Round-trip efficiency (charge+discharge+inverter). The economic
         # strategy divides the charge price by this before comparing it
@@ -424,6 +425,8 @@ class Config(Singleton):
         backend = config_data.get("control_backend", "auto")
         if isinstance(backend, str):
             backend = backend.strip().lower()
+        # Legacy values ("auto", "dynamic_ess") resolve to classic --
+        # the dynamic_ess backend was removed 2026-10.
         self.control_backend = backend if backend in ("auto", "classic", "dynamic_ess") else "auto"
 
         # Numeric strategy tunables -- type-safe like the solar_adj block.
