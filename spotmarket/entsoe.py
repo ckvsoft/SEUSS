@@ -196,9 +196,12 @@ class Entsoe(MarketData):
         # so none of those fields can distinguish them. The only
         # discriminator is
         #   <classificationSequence_AttributeInstanceComponent.position>
-        # which is 1 for the PRIMARY hourly day-ahead auction (the one
+        # which is 1 for the PRIMARY day-ahead auction (the one
         # that matches Awattar / Tibber / EPEX SPOT day-ahead) and 2 for
         # the secondary 15-minute coupling auction published later.
+        # NOTE: since the SDAC quarter-hour go-live BOTH series are
+        # quarter-hourly (PT15M) -- pos=1 is NOT "hourly" any more, it
+        # is simply the primary auction.
         #
         # Without this filter the parser previously walked all <Period>s
         # in document order, took the first one for each start time, and
