@@ -494,18 +494,21 @@ class SEUSSWeb:
             charging = False
             with open(path, "r", errors="replace") as fh:
                 for line in fh:
-                    m = re.match(r"\[.\s+(\d{6})\s+(\d{2}):", line)
+                    m = re.match(r"\[.\s+(\d{6})\s+(\d{2}):(\d{2}):", line)
                     if not m:
                         continue
                     if m.group(1) != today:
                         continue  # not today
                     hour = int(m.group(2))
+                    quarter = int(m.group(3)) // 15
                     if re.search(r"(?<!dis)charging is turned on\.", line):
                         charging = True
                     elif re.search(r"(?<!dis)charging is turned off\.", line):
                         charging = False
                     if charging:
-                        obs.setdefault(hour, set()).add("charging")
+                        # Per-quarter record (same shape as the live
+                        # observation recording).
+                        obs.setdefault(hour, {})[quarter] = "charging"
         except Exception:
             pass
 
@@ -520,6 +523,9 @@ class SEUSSWeb:
         live (the veto may flip inside the hour). RAM-only; keeps the
         last 3 days.
         """
+        if not self._log_seeded:
+            self._log_seeded = True
+            self._seed_observations_from_log()
         now_hour = datetime.now().hour
         key = target_date.isoformat()
         frozen = self._frozen_hour_colors.setdefault(key, {})
@@ -2073,7 +2079,14 @@ class SEUSSWeb:
                     observed_day = self._hour_state_observations.get(
                         target_date.isoformat(), {})
                     hour_obs = observed_day.get(hour) if not tomorrow else None
-                    if hour_obs is not None and hour <= current_hour:
+                    strategy_veto = base_veto
+                    if tomorrow:
+                        # Tomorrow(+): PLAN display -- charge windows are
+                        # planned candidates. The veto verdict for a
+                        # FUTURE day cannot exist: the deficit math
+                        # re-runs with that day's SOC and prices.
+                        strategy_veto = False
+                    elif hour_obs is not None and hour <= current_hour:
                         # Observed truth: this quarter's own recorded
                         # state (current hour), or the hour's charging
                         # history (past hours). Never the live veto.
