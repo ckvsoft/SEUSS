@@ -2304,7 +2304,7 @@ class SEUSSWeb:
 
         # Legend dimensions: enough room for 6 entries.
         legend_svg = (
-            '<svg width="280" height="225" '
+            '<svg width="280" height="240" '
             'xmlns="http://www.w3.org/2000/svg" '
             'style="border: 1px solid #ccc; margin-top: 18px;">'
         )
@@ -2312,7 +2312,7 @@ class SEUSSWeb:
         # Charging block (green)
         legend_svg += (
             '<rect x="10" y="10" width="20" height="20" '
-            'fill="green" stroke="#000" stroke-width="1"/>'
+            'fill="#32CD32" stroke="#000" stroke-width="1"/>'
             '<text x="40" y="25" font-size="12" class="chart-text">'
             'Charging</text>'
         )
@@ -2325,7 +2325,7 @@ class SEUSSWeb:
         )
         legend_svg += (
             '<rect x="10" y="40" width="20" height="20" '
-            'fill="#556B2F" stroke="#000" stroke-width="1"/>'
+            'fill="#9ACD32" stroke="#000" stroke-width="1"/>'
             '<text x="40" y="55" font-size="12" class="chart-text">'
             f'{blocked_label}</text>'
         )
@@ -2374,6 +2374,21 @@ class SEUSSWeb:
             f'<text x="40" y="205" font-size="12" class="chart-text">'
             f'{ceiling_label} ({self._effective_price_ceiling()})</text>'
         )
+
+        # Active market data source (RAM attributes of the itemlist --
+        # shows which feed the chart data came from).
+        try:
+            market_line = (
+                f"Data source: {self.market_items.current_market_name}"
+                f" (failback: {self.market_items.failback_market_name})"
+            )
+        except Exception:
+            market_line = None
+        if market_line:
+            legend_svg += (
+                '<text x="10" y="228" font-size="12" '
+                f'class="chart-text">{market_line}</text>'
+            )
 
         legend_svg += "</svg>"
         return legend_svg
