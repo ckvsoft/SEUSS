@@ -27,7 +27,6 @@
 
 import json
 import os
-import re
 import socket
 import sys
 from typing import Tuple
@@ -87,6 +86,14 @@ class Victron(ESSUnit):
         # its leftover /Settings/DynamicEss/Mode=4 disabled the classic
         # scheduled charging on VenusOS 3.7x. Only classic remains.
         self._control_backend = "classic"
+        # hub4 RAM overrides (com.victronenergy.hub4): the modern ESS
+        # control service exposes /Overrides/ForceCharge and
+        # /Overrides/MaxDischargePower as pure RAM registers -- using
+        # them keeps the SD-backed /Settings registers untouched.
+        self._hub4_available = None      # None = not probed yet
+        self._force_charge_state = None  # last written ForceCharge value
+        self._maxdischarge_override_state = None
+        self._maxdischarge_settings_restored = False
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -245,6 +252,29 @@ class Victron(ESSUnit):
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
+            if self.hub4_available():
+                # Modern firmware: gate discharge via the RAM override.
+                # The SD-backed /Settings register keeps the USER's
+                # configured value permanently (restored once, below) --
+                # SEUSS stops stomping it.
+                if status_enum == ESSStatus.ON:
+                    if not self._maxdischarge_settings_restored:
+                        self._maxdischarge_settings_restored = True
+                        value = self._process_result(
+                            self.subsribers.get('DisCharge', 'MaxDischargePower'))
+                        if value == 0 and self.max_discharge_power:
+                            self._publish(
+                                f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                                self.max_discharge_power,
+                            )
+                            self.logger.log.info(
+                                f"Restored MaxDischargePower setting -> "
+                                f"{self.max_discharge_power} (was 0)."
+                            )
+                    self.set_max_discharge_override(-1)
+                else:
+                    self.set_max_discharge_override(0)
+                return
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
                 if value == self.max_discharge_power: return
@@ -264,9 +294,13 @@ class Victron(ESSUnit):
                 if value == 7: return
                 self._set_scheduler()
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", 7)
+                if self.hub4_available():
+                    self.set_force_charge(True)
             elif status_enum == ESSStatus.OFF:
                 if value == -7: return
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", -7)
+                if self.hub4_available():
+                    self.set_force_charge(False)
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
@@ -307,6 +341,45 @@ class Victron(ESSUnit):
                 "using classic."
             )
         return "classic"
+
+    def hub4_available(self):
+        """
+        True when the hub4 ESS control service answered (RAM override
+        registers /Overrides/* available). Probed via the subscribed
+        ProductName item; retried until it answers either way, so slow
+        brokers are not misdetected as "old firmware".
+        """
+        if self._hub4_available is None:
+            name = self._process_result(self.subsribers.get('Hub4', 'ProductName'))
+            if name is not None:
+                self._hub4_available = True
+        return bool(self._hub4_available)
+
+    def set_force_charge(self, on):
+        """
+        RAM override hub4:/Overrides/ForceCharge -- force grid charging
+        (1) or release the force (0). Pure RAM: no settings writes.
+        """
+        value = 1 if on else 0
+        if self._force_charge_state == value:
+            return
+        self._force_charge_state = value
+        self._hub4_publish("/Overrides/ForceCharge", value)
+
+    def set_max_discharge_override(self, watts):
+        """
+        RAM override hub4:/Overrides/MaxDischargePower -- 0 blocks
+        discharge, None/-1 releases the override (the /Settings value
+        applies). Pure RAM: no settings writes.
+        """
+        value = -1 if watts is None else watts
+        if self._maxdischarge_override_state == value:
+            return
+        self._maxdischarge_override_state = value
+        self._hub4_publish("/Overrides/MaxDischargePower", value)
+
+    def _hub4_publish(self, path, value):
+        self._publish(f"/{self.unit_id}/hub4/0{path}", value)
 
     def _publish_many(self, topic_values):
         """
@@ -468,6 +541,7 @@ class Victron(ESSUnit):
                 f"Battery:N/{self.unit_id}/system/0/Dc/Battery/Soc",
                 f"Control:N/{self.unit_id}/system/0/Control/ActiveSocLimit",
                 f"DisCharge:N/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                f"Hub4:N/{self.unit_id}/hub4/0/ProductName",
                 f"Battery:N/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Dc/0/Voltage",
                 f"Battery:N/{self.unit_id}/battery/{instance}/Capacity",
