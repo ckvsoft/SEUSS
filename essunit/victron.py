@@ -249,24 +249,14 @@ class Victron(ESSUnit):
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            if self.hub4_available():
-                # RAM-Override: JEDEN Zyklus schreiben, kein Dedupe --
-                # Venus fragt den letzten Wert ab, ein verlorener Publish
-                # wuerde sonst bis zum naechsten Neustart klemmen. Der
-                # Soll-Wert kommt verbatim aus der Config (-1 = Override
-                # entfernen, denn im GUI beginnt das Entladelimit bei
-                # 0 W -- "unbegrenzt" ist nur als AUS darstellbar).
-                if status_enum == ESSStatus.ON:
-                    # Unbegrenzt: das AUS-Abschalten ist genauso eine
-                    # aktive Schreiboperation wie das Aktivieren --
-                    # -1 auf DEMSELBEN Register stellt den Limiter ab
-                    # (GUI: AUS). Kein leeres Payload, keine Entfernung.
-                    self._hub4_write(
-                        "/Overrides/MaxDischargePower",
-                        self.max_discharge_power)
-                else:
-                    self._hub4_write("/Overrides/MaxDischargePower", 0)
-                return
+            # Rueckbau auf die jahrelang bewaehrten ON/OFF-Funktionen:
+            # Die Einstellung (SD-Register) ist das effektive Gate der
+            # ESS (und die Flaeche, die GX-GUI/VRM anzeigen) -- das
+            # hub4-Overlay-Experiment hat Selbstverbrauch-Absenkungen
+            # wieder moeglich gemacht (30-80 W) und die Versions-
+            # Weiche hat Register bewegt, ohne dass eine Anzeige
+            # mitzog. Schreiben nur bei Abweichung, IST aus dem Feed,
+            # Soll verbatim aus der Config.
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
                 if value == self.max_discharge_power: return
@@ -367,17 +357,6 @@ class Victron(ESSUnit):
                 f"{self._name} Hub4-Override {path} NICHT uebernommen "
                 f"(gelesen {readback!r}, soll {value!r}) -- "
                 "Hub4-Bridge pruefen.")
-
-    def _hub4_override_clear(self, path):
-        """
-        Override entfernen (leeres Retained-Payload) -- der Zustand
-        "unbegrenzt"/"kein Limit", den das GUI als AUS anzeigt.
-        """
-        with MqttClient(self.mqtt_config) as mqtt:
-            rc = mqtt.publish(
-                f"W/{self.unit_id}/hub4/0{path}", "", retain=True)
-            self.logger.log.info(
-                f"{self._name} Hub4-Override {path} entfernt (rc={rc}).")
 
     def _hub4_read(self, path):
         """
