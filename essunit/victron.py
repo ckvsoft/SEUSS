@@ -91,9 +91,6 @@ class Victron(ESSUnit):
         # /Overrides/MaxDischargePower as pure RAM registers -- using
         # them keeps the SD-backed /Settings registers untouched.
         self._hub4_available = None      # None = not probed yet
-        self._force_charge_state = None  # last written ForceCharge value
-        self._maxdischarge_override_state = None
-        self._maxdischarge_settings_restored = False
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -253,27 +250,21 @@ class Victron(ESSUnit):
         try:
             status_enum = ESSStatus(status.lower())
             if self.hub4_available():
-                # Modern firmware: gate discharge via the RAM override.
-                # The SD-backed /Settings register keeps the USER's
-                # configured value permanently (restored once, below) --
-                # SEUSS stops stomping it.
+                # RAM-Override: JEDEN Zyklus schreiben, kein Dedupe --
+                # Venus fragt den letzten Wert ab, ein verlorener Publish
+                # wuerde sonst bis zum naechsten Neustart klemmen. Der
+                # Soll-Wert kommt verbatim aus der Config (-1 = Override
+                # entfernen, denn im GUI beginnt das Entladelimit bei
+                # 0 W -- "unbegrenzt" ist nur als AUS darstellbar).
                 if status_enum == ESSStatus.ON:
-                    if not self._maxdischarge_settings_restored:
-                        self._maxdischarge_settings_restored = True
-                        value = self._process_result(
-                            self.subsribers.get('DisCharge', 'MaxDischargePower'))
-                        if value == 0 and self.max_discharge_power:
-                            self._publish(
-                                f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
-                                self.max_discharge_power,
-                            )
-                            self.logger.log.info(
-                                f"Restored MaxDischargePower setting -> "
-                                f"{self.max_discharge_power} (was 0)."
-                            )
-                    self.set_max_discharge_override(-1)
+                    if self.max_discharge_power == -1:
+                        self._hub4_override_clear("/Overrides/MaxDischargePower")
+                    else:
+                        self._hub4_write(
+                            "/Overrides/MaxDischargePower",
+                            max(0, int(self.max_discharge_power)))
                 else:
-                    self.set_max_discharge_override(0)
+                    self._hub4_write("/Overrides/MaxDischargePower", 0)
                 return
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
@@ -295,12 +286,12 @@ class Victron(ESSUnit):
                 self._set_scheduler()
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", 7)
                 if self.hub4_available():
-                    self.set_force_charge(True)
+                    self._hub4_write("/Overrides/ForceCharge", 1)
             elif status_enum == ESSStatus.OFF:
                 if value == -7: return
                 self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", -7)
                 if self.hub4_available():
-                    self.set_force_charge(False)
+                    self._hub4_write("/Overrides/ForceCharge", 0)
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
@@ -355,31 +346,49 @@ class Victron(ESSUnit):
                 self._hub4_available = True
         return bool(self._hub4_available)
 
-    def set_force_charge(self, on):
-        """
-        RAM override hub4:/Overrides/ForceCharge -- force grid charging
-        (1) or release the force (0). Pure RAM: no settings writes.
-        """
-        value = 1 if on else 0
-        if self._force_charge_state == value:
-            return
-        self._force_charge_state = value
-        self._hub4_publish("/Overrides/ForceCharge", value)
-
-    def set_max_discharge_override(self, watts):
-        """
-        RAM override hub4:/Overrides/MaxDischargePower -- 0 blocks
-        discharge, None/-1 releases the override (the /Settings value
-        applies). Pure RAM: no settings writes.
-        """
-        value = -1 if watts is None else watts
-        if self._maxdischarge_override_state == value:
-            return
-        self._maxdischarge_override_state = value
-        self._hub4_publish("/Overrides/MaxDischargePower", value)
-
     def _hub4_publish(self, path, value):
-        self._publish(f"/{self.unit_id}/hub4/0{path}", value)
+        self._publish(f"/{self.unit_id}/hub4/0{path}", value, retain=True)
+
+    def _hub4_write(self, path, value):
+        """
+        Override-Register setzen UND verifizieren: _publish liest nach
+        dem Schreiben das N-Topic zurueck -- das Ergebnis geht auf
+        INFO-Level ins Log, damit der Gate-Zustand live nachvollziehbar
+        ist (verlorene Schreibvorgaenge sind sonst unsichtbar).
+        """
+        self._hub4_publish(path, value)
+        readback = self._hub4_read(path)
+        self.logger.log.info(
+            f"{self._name} Hub4-Override {path} = {readback} "
+            f"(soll {value}).")
+        if readback != value:
+            self.logger.log.warning(
+                f"{self._name} Hub4-Override {path} NICHT uebernommen "
+                f"(gelesen {readback!r}, soll {value!r}) -- "
+                "Hub4-Bridge pruefen.")
+
+    def _hub4_override_clear(self, path):
+        """
+        Override entfernen (leeres Retained-Payload) -- der Zustand
+        "unbegrenzt"/"kein Limit", den das GUI als AUS anzeigt.
+        """
+        with MqttClient(self.mqtt_config) as mqtt:
+            rc = mqtt.publish(
+                f"W/{self.unit_id}/hub4/0{path}", "", retain=True)
+            self.logger.log.info(
+                f"{self._name} Hub4-Override {path} entfernt (rc={rc}).")
+
+    def _hub4_read(self, path):
+        """
+        Aktuellen Wert des Override-Registers lesen (Snapshot-Query,
+        wie bei _publish der Read-back).
+        """
+        mqtt_result = MqttResult()
+        with MqttClient(self.mqtt_config) as mqtt:
+            if mqtt.subscribe(
+                    mqtt_result, f"N/{self.unit_id}/hub4/0{path}") == 0:
+                return self._process_result(mqtt_result.result)
+        return None
 
     def _publish_many(self, topic_values):
         """
@@ -487,12 +496,12 @@ class Victron(ESSUnit):
         if soc == 0:
             self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Soc", 100)
 
-    def _publish(self, topic, value):
+    def _publish(self, topic, value, retain=False):
         name = topic.split("/")[-1]
         data = {"value": value}
         with MqttClient(self.mqtt_config) as mqtt:
             mqtt_result = MqttResult()
-            rc = mqtt.publish(f"W{topic}", json.dumps(data))
+            rc = mqtt.publish(f"W{topic}", json.dumps(data), retain=retain)
             self.logger.log.debug(f"{self._name} {name}: rc={rc}")
             if rc == 0:
                 if mqtt.subscribe(mqtt_result, f"N{topic}") == 0:

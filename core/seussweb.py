@@ -2024,6 +2024,14 @@ class SEUSSWeb:
         # individual quarter prices, so the user can see what's behind
         # the hourly average.
         slice_width = (width - 3) / 4.0  # leave 3px gap between hour groups
+        # SOC-Ziel-Stopp: Ist er im aktuellen Zyklus aktiv (Charge
+        # Condition "SOC target reached"), streicht SEUSS die restlichen
+        # geplanten Lade-Viertel des Tages -- die Chart darf sie nicht
+        # als Gruen weiterzeigen (beobachtet 2026-10-04: 15 Uhr gruen
+        # gemalt, obwohl der Ziel-Stopp das Laden beendet hatte).
+        _charge_condition = str((self._ess_state or {}).get(
+            "charge_condition") or "")
+        soc_stop = "SOC target" in _charge_condition
         for hour in range(24):
             price = data.get(hour)
             # If hourly aggregation lost this hour but per-quarter prices
@@ -2117,11 +2125,11 @@ class SEUSSWeb:
                             # paint not-charged past quarters green
                             # (the rest of an hour after an abort).
                             # Fall back to the computed veto instead.
-                            strategy_veto = base_veto
+                            strategy_veto = base_veto or soc_stop
                     elif hour < current_hour and hour in frozen_day:
                         strategy_veto = frozen_day[hour] == "olive"
                     else:
-                        strategy_veto = base_veto
+                        strategy_veto = base_veto or soc_stop
                         if (not tomorrow and hour < current_hour and in_charge
                                 and q_price is not None):
                             frozen_day[hour] = (
