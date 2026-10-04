@@ -862,7 +862,10 @@ class Conditions:
                 if q_end > now_utc:
                     break
                 i += 1
+            chain_skip_start = None
             while i < n and _charge_covered(items[i]):
+                if chain_skip_start is None:
+                    chain_skip_start = i
                 i += 1  # skip the current contiguous charge chain
             while i < n:
                 if _charge_covered(items[i]):
@@ -1001,6 +1004,7 @@ class Conditions:
             # buy nothing.
             if stats_ok and (marginal is None or marginal <= 0.0) and i < n:
                 serving_prices = []
+                serving_offers = []  # (raw price, delivered Wh) je Viertel
                 j = i
                 while j < n and _charge_covered(items[j]):
                     qe = items[j].get_end_datetime()
@@ -1008,11 +1012,52 @@ class Conditions:
                         qe = qe.replace(tzinfo=timezone.utc)
                     if qe > now_utc:
                         try:
-                            serving_prices.append(
-                                float(items[j].get_price(convert=False)))
+                            price = float(items[j].get_price(convert=False))
+                            qs = items[j].get_start_datetime()
+                            if qs.tzinfo is None:
+                                qs = qs.replace(tzinfo=timezone.utc)
+                            overlap_h = max(
+                                0.0, (qe - max(qs, now_utc)).total_seconds()
+                                / 3600.0)
+                            serving_prices.append(price)
+                            serving_offers.append((price, self.charge_power_w
+                                                   * overlap_h
+                                                   * self.round_trip_efficiency))
                         except (TypeError, ValueError):
                             pass
                     j += 1
+                if not serving_prices and chain_skip_start is not None:
+                    # Zirkel-Fix (2026-10-04): Der Phasen-Walk hat die
+                    # laufende/geplante Kette UEBERSPRUNGEN (i steht
+                    # dahinter) -- ihre Rest-Viertel SIND die Bezugs-
+                    # kette. Ohne sie blieb serving leer, der Grenzpreis
+                    # 0 und der Veto strich genau die Kette, auf die
+                    # sich die Rechnung berief (alles oliv bei 35 % SOC,
+                    # Billigfenster ungenutzt; nach Neustart korrekt,
+                    # weil dann der Anker passte).
+                    j = chain_skip_start
+                    while j < n and _charge_covered(items[j]):
+                        qe = items[j].get_end_datetime()
+                        if qe.tzinfo is None:
+                            qe = qe.replace(tzinfo=timezone.utc)
+                        if qe > now_utc:
+                            try:
+                                price = float(
+                                    items[j].get_price(convert=False))
+                                qs = items[j].get_start_datetime()
+                                if qs.tzinfo is None:
+                                    qs = qs.replace(tzinfo=timezone.utc)
+                                overlap_h = max(0.0, (qe - max(
+                                    qs, now_utc)).total_seconds() / 3600.0)
+                                serving_prices.append(price)
+                                serving_offers.append((price, self.
+                                                       charge_power_w
+                                                       * overlap_h
+                                                       * self.
+                                                       round_trip_efficiency))
+                            except (TypeError, ValueError):
+                                pass
+                        j += 1
                 far_stack = []
                 k = j
                 while k < n:
@@ -1045,8 +1090,25 @@ class Conditions:
                     if deficit_wh > 0.0:
                         serving_avg = (
                             sum(serving_prices) / len(serving_prices))
-                        if serving_avg > (marginal or 0.0):
-                            marginal = serving_avg
+                        # Merit-Order-Schnitt: Nur die billigsten
+                        # Bezugs-Viertel, die das Fern-Defizit abdecken,
+                        # lohnen den Kauf -- teurere Ketten-Viertel werden
+                        # getrimmt (Defer innerhalb der Kette). Der
+                        # Grenzpreis ist input-seitig (durch RTE geteilt),
+                        # damit der Veto den rohen Viertelpreis direkt
+                        # gegen den Schnitt pruefen kann.
+                        serving_offers.sort(key=lambda o: o[0])
+                        covered_offer_wh = 0.0
+                        cut_price = serving_avg
+                        for offer_price, offer_wh in serving_offers:
+                            if covered_offer_wh >= deficit_wh:
+                                break
+                            covered_offer_wh += offer_wh
+                            cut_price = offer_price
+                        eff_marginal = (
+                            cut_price / self.round_trip_efficiency)
+                        if eff_marginal > (marginal or 0.0):
+                            marginal = eff_marginal
                             info["basis"] = "preload"
                             info["preload_deficit_wh"] = deficit_wh
                             info["serving_chain_price"] = serving_avg
