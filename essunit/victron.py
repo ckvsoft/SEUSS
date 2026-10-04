@@ -257,12 +257,13 @@ class Victron(ESSUnit):
                 # entfernen, denn im GUI beginnt das Entladelimit bei
                 # 0 W -- "unbegrenzt" ist nur als AUS darstellbar).
                 if status_enum == ESSStatus.ON:
-                    if self.max_discharge_power == -1:
-                        self._hub4_override_clear("/Overrides/MaxDischargePower")
-                    else:
-                        self._hub4_write(
-                            "/Overrides/MaxDischargePower",
-                            max(0, int(self.max_discharge_power)))
+                    # Unbegrenzt: das AUS-Abschalten ist genauso eine
+                    # aktive Schreiboperation wie das Aktivieren --
+                    # -1 auf DEMSELBEN Register stellt den Limiter ab
+                    # (GUI: AUS). Kein leeres Payload, keine Entfernung.
+                    self._hub4_write(
+                        "/Overrides/MaxDischargePower",
+                        self.max_discharge_power)
                 else:
                     self._hub4_write("/Overrides/MaxDischargePower", 0)
                 return
