@@ -249,45 +249,24 @@ class Victron(ESSUnit):
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            # ECHTER FEHLER (User-Recherche, 2026-10-04): "-1" ist KEIN
-            # gueltiger Wert in der Register-Domaene (0 aufwaerts) --
-            # alle -1-Schreibvorgaende wurden verworfen, das Register
-            # blieb null und der Limiter ging nicht an/aus.
-            #
-            # Abbildung:
-            #   Sperre (OFF)   -> 0      (AN, 0 W)
-            #   ON, cfg -1     -> UNLIMITED_W  (utopisch ueber jeder
-            #                    Max-Leistung, 15-kVA-Klasse sicher drunter)
-            #   ON, cfg +X     -> X      (AN, X W)
-            #
-            # Zwei Flaechen, Reihenfolge entscheidet:
-            #  (1) SD-Grundflaeche: nur der EIN/AUS-Schalter hat kein
-            #      RAM-Overlay -> einmal aktivieren (EIN, utopisch) und
-            #      den Status NICHT den Phasen folgen lassen (die
-            #      Umschaltfrequenz ist unbekannt => null Verschleiss).
-            #  (2) RAM-Watt-Angabe (hub4, FW-abhaengig): ALLE Phasen hier;
-            #      wirkt erst durch den aktivierten Schalter (1).
-            UNLIMITED_W = 65000
-
-            # (1) SD-Schalter sicherstellen (IST aus dem frischen
-            #     Zyklus-Feed; schreiben nur bei Abweichung)
-            sd_value = self._process_result(
-                self.subsribers.get('DisCharge', 'MaxDischargePower'))
-            if sd_value != UNLIMITED_W:
-                self._publish(
-                    f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
-                    UNLIMITED_W)
-
-            # (2) RAM-Watt-Overlay: die Phasenwerte
-            if self.hub4_available():
-                soll_ram = (UNLIMITED_W
-                            if self.max_discharge_power == -1
-                            else max(0, int(self.max_discharge_power)))
-                if status_enum == ESSStatus.OFF:
-                    soll_ram = 0
-                if self._hub4_read("/Overrides/MaxDischargePower") != soll_ram:
-                    self._hub4_write(
-                        "/Overrides/MaxDischargePower", soll_ram)
+            # RUECKZUG auf die nativen Venus-Semantiken (User-Klaerung,
+            # 2026-10-04): Die Einstellung (SD-Register) ist der
+            # WATT-REGULATOR und die Flaeche der GX-GUI/VRM-Anzeige:
+            #   Sperre (OFF) -> 0    (Limiter AN, 0 W -- kein Trickle)
+            #   Freigabe (ON) -> Config verbatim:
+            #       -1  -> "AUS"-Anzeige = unbegrenzt  (jahrelang bewaehrt)
+            #       +X  -> "AN"-Anzeige = X W
+            # Keine 65000-Sicherung (gegen die User-Spez. gebaut), kein
+            # Overlay-Tanzen: schreiben nur bei Abweichung, IST aus dem
+            # frischen Zyklus-Feed, Soll verbatim aus der Config. Der
+            # 65000-Restbestand heilt sich im naechsten OFF-Zyklus.
+            value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
+            if status_enum == ESSStatus.ON:
+                if value == self.max_discharge_power: return
+                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower", self.max_discharge_power)
+            elif status_enum == ESSStatus.OFF:
+                if value == 0: return
+                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower", 0)
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
