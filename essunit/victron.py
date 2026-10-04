@@ -249,21 +249,45 @@ class Victron(ESSUnit):
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            # Rueckbau auf die jahrelang bewaehrten ON/OFF-Funktionen:
-            # Die Einstellung (SD-Register) ist das effektive Gate der
-            # ESS (und die Flaeche, die GX-GUI/VRM anzeigen) -- das
-            # hub4-Overlay-Experiment hat Selbstverbrauch-Absenkungen
-            # wieder moeglich gemacht (30-80 W) und die Versions-
-            # Weiche hat Register bewegt, ohne dass eine Anzeige
-            # mitzog. Schreiben nur bei Abweichung, IST aus dem Feed,
-            # Soll verbatim aus der Config.
-            value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
-            if status_enum == ESSStatus.ON:
-                if value == self.max_discharge_power: return
-                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower", self.max_discharge_power)
-            elif status_enum == ESSStatus.OFF:
-                if value == 0: return
-                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower", 0)
+            # ECHTER FEHLER (User-Recherche, 2026-10-04): "-1" ist KEIN
+            # gueltiger Wert in der Register-Domaene (0 aufwaerts) --
+            # alle -1-Schreibvorgaende wurden verworfen, das Register
+            # blieb null und der Limiter ging nicht an/aus.
+            #
+            # Abbildung:
+            #   Sperre (OFF)   -> 0      (AN, 0 W)
+            #   ON, cfg -1     -> UNLIMITED_W  (utopisch ueber jeder
+            #                    Max-Leistung, 15-kVA-Klasse sicher drunter)
+            #   ON, cfg +X     -> X      (AN, X W)
+            #
+            # Zwei Flaechen, Reihenfolge entscheidet:
+            #  (1) SD-Grundflaeche: nur der EIN/AUS-Schalter hat kein
+            #      RAM-Overlay -> einmal aktivieren (EIN, utopisch) und
+            #      den Status NICHT den Phasen folgen lassen (die
+            #      Umschaltfrequenz ist unbekannt => null Verschleiss).
+            #  (2) RAM-Watt-Angabe (hub4, FW-abhaengig): ALLE Phasen hier;
+            #      wirkt erst durch den aktivierten Schalter (1).
+            UNLIMITED_W = 65000
+
+            # (1) SD-Schalter sicherstellen (IST aus dem frischen
+            #     Zyklus-Feed; schreiben nur bei Abweichung)
+            sd_value = self._process_result(
+                self.subsribers.get('DisCharge', 'MaxDischargePower'))
+            if sd_value != UNLIMITED_W:
+                self._publish(
+                    f"/{self.unit_id}/settings/0/Settings/CGwacs/MaxDischargePower",
+                    UNLIMITED_W)
+
+            # (2) RAM-Watt-Overlay: die Phasenwerte
+            if self.hub4_available():
+                soll_ram = (UNLIMITED_W
+                            if self.max_discharge_power == -1
+                            else max(0, int(self.max_discharge_power)))
+                if status_enum == ESSStatus.OFF:
+                    soll_ram = 0
+                if self._hub4_read("/Overrides/MaxDischargePower") != soll_ram:
+                    self._hub4_write(
+                        "/Overrides/MaxDischargePower", soll_ram)
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
