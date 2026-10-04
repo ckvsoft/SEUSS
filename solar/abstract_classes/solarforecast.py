@@ -394,13 +394,21 @@ class SolarForecastProvider:
             pv_measured_today_wh = solar_data.pv_measured_today_wh or 0.0
             theoretical_past_net = sum_forecast_past_today_raw * self.inverter_efficiency
 
+            # StatsManager speichert per-percent-Werte als Tuple
+            # (wert, count) -- nicht als List (beobachtetes CRASH 2026-
+            # 10-04: "unsupported operand type(s) for /: 'tuple' and
+            # 'float'" warf ALLE Provider-Forecasts). Tuple-tolerant:
             adj_data = self.statsmanager.get_data('solar', 'efficiency')
-            adj_legacy = (adj_data[0] / 100.0) if isinstance(adj_data, list) and len(adj_data) > 0 else (
-                (adj_data / 100.0) if adj_data else 1.0)
+            if isinstance(adj_data, (list, tuple)) and len(adj_data) > 0:
+                adj_legacy = adj_data[0] / 100.0
+            elif isinstance(adj_data, (int, float)):
+                adj_legacy = adj_data / 100.0
+            else:
+                adj_legacy = 1.0
 
             def _read_pct(key, default):
                 v = self.statsmanager.get_data('solar', key)
-                if isinstance(v, list) and v:
+                if isinstance(v, (list, tuple)) and len(v) > 0:
                     return v[0] / 100.0
                 if isinstance(v, (int, float)) and v:
                     return v / 100.0
