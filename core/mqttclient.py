@@ -510,7 +510,7 @@ class MqttClient:
 
         return result
 
-    def publish(self, query_topic, query_message):
+    def publish(self, query_topic, query_message, retain=False):
         self.logger.log.debug(f"query_topic: {query_topic} {query_message}")
         try:
             if self.user:
@@ -533,7 +533,7 @@ class MqttClient:
                     raise TimeoutError
 
             self.logger.log.debug(f"publish: {query_topic} message: {query_message}")
-            result = self.client.publish(query_topic, query_message)
+            result = self.client.publish(query_topic, query_message, retain=retain)
             self.logger.log.debug(f"result rc: {result.rc}")
             result = result.rc
 
