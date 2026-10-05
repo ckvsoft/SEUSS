@@ -742,24 +742,38 @@ class Conditions:
             efficiency = 0.90
         return max(0.5, min(1.0, efficiency))
 
+    @staticmethod
+    def _pick_charge_power_w(measured, capability):
+        """
+        Resolution order (measured-first, 2026-10-05):
+
+          1. MEASURED -- last_grid_charge_power_w, auto-calibrated from
+             real grid-charge sessions (rolling peak, 7-day freshness).
+             The measurement is the truth about what the system
+             actually delivers (tapering near full SOC, BMS derating,
+             wiring limits) and beats any theoretical ceiling -- the
+             old max(measured, capability) let the capability ceiling
+             win and inflated the supply/deficit math.
+          2. CAPABILITY -- essunit.get_max_charge_capability_w()
+             (MaxChargeCurrent setting x BMS CCL x pack voltage), only
+             when nothing has ever been measured (fresh install).
+          3. DEFAULT  -- conservative built-in 2500 W.
+
+        Returns (watts, source).
+        """
+        if measured and measured > 0:
+            return float(measured), "measured"
+        if capability and capability > 0:
+            return float(capability), "capability"
+        return 2500.0, "default"
+
     def _resolve_charge_power_w(self):
         """
         Charging throughput (W) for the window-throughput math. There is
         deliberately NO manual config knob: a static value goes stale
         after every hardware change (charger current raised, 3-phase
-        retrofit). Resolution:
-
-          1. best of MEASURED and CAPABILITY:
-             - measured  -- last_grid_charge_power_w, auto-calibrated
-               during grid-charge sessions (peak, 7-day freshness)
-             - capability-- essunit.get_max_charge_capability_w()
-               (MaxChargeCurrent setting x BMS CCL x pack voltage)
-             Taking the max guards against a stale tiny measurement
-             (e.g. one brief trickle session) suppressing a higher
-             known capability -- and vice versa after a hardware
-             DOWNGRADE the next fresh measurement pulls it back down.
-          2. DEFAULT  -- conservative built-in value for fresh installs
-             without any measurement or readable capability.
+        retrofit). Delegates to _pick_charge_power_w() (measured
+        first -- see there for the resolution order and rationale).
 
         Returns (watts, source).
         """
@@ -773,13 +787,7 @@ class Conditions:
                     capability = float(cap)
         except Exception:
             capability = 0.0
-        if measured > 0 and measured >= capability:
-            return measured, "measured"
-        if capability > 0:
-            return capability, "capability"
-        if measured > 0:
-            return measured, "measured"
-        return 2500.0, "default"
+        return self._pick_charge_power_w(measured, capability)
 
     @staticmethod
     def _marginal_from_stack(stack, supply_wh):
