@@ -821,6 +821,24 @@ class Conditions:
                 return float(price)
         return 0.0
 
+    @staticmethod
+    def _merit_cut(offers, need_wh, fallback):
+        """
+        Merit-Schnitt: die billigsten (Preis, Wh)-Angebote akkumulieren,
+        bis der Bedarf gedeckt ist -- der Preis des letzten dafuer
+        noetigen Angebots ist der Schnitt-Preis. Kein Angebot -> fallback.
+        """
+        if not offers:
+            return fallback
+        covered = 0.0
+        cut = fallback
+        for price, wh in sorted(offers, key=lambda o: o[0]):
+            if covered >= need_wh:
+                break
+            covered += wh
+            cut = price
+        return cut
+
     def _compute_economic_context(self):
         """
         Compute the merit-order context for the current evaluation
@@ -1164,6 +1182,7 @@ class Conditions:
                         duration_h = (qe - qs).total_seconds() / 3600.0
                         far_stack.append((price, hourly_avg_w * duration_h))
                     k += 1
+                deficit_wh = 0.0
                 if serving_prices and far_stack:
                     # Pack state when the serving chain starts: the
                     # current phase drains the battery (uniform hourly
@@ -1175,21 +1194,10 @@ class Conditions:
                     if deficit_wh > 0.0:
                         serving_avg = (
                             sum(serving_prices) / len(serving_prices))
-                        # Merit-Order-Schnitt: Nur die billigsten
-                        # Bezugs-Viertel, die das Fern-Defizit abdecken,
-                        # lohnen den Kauf -- teurere Ketten-Viertel werden
-                        # getrimmt (Defer innerhalb der Kette). Der
-                        # Grenzpreis ist input-seitig (durch RTE geteilt),
-                        # damit der Veto den rohen Viertelpreis direkt
-                        # gegen den Schnitt pruefen kann.
-                        serving_offers.sort(key=lambda o: o[0])
-                        covered_offer_wh = 0.0
-                        cut_price = serving_avg
-                        for offer_price, offer_wh in serving_offers:
-                            if covered_offer_wh >= deficit_wh:
-                                break
-                            covered_offer_wh += offer_wh
-                            cut_price = offer_price
+                        cut_price = self._merit_cut(
+                            serving_offers, deficit_wh, serving_avg)
+                        # Grenzpreis input-seitig (RTE-geteilt), damit der
+                        # Veto den rohen Viertelpreis direkt pruefen kann.
                         eff_marginal = (
                             cut_price / self.round_trip_efficiency)
                         if eff_marginal > (marginal or 0.0):
@@ -1197,36 +1205,59 @@ class Conditions:
                             info["basis"] = "preload"
                             info["preload_deficit_wh"] = deficit_wh
                             info["serving_chain_price"] = serving_avg
-                    else:
-                        # Deficit covered, but the pack sits below the
-                        # scheduler SoC target (85%): a window CHEAPER
-                        # than the future refill windows is still the
-                        # better deal -- fill toward the target as a
-                        # buffer for bad days. Capped by the target
-                        # itself: at/above it, nothing is bought.
-                        target_soc = (self.essunit.get_scheduler_soc()
-                                      if self.essunit else None)
-                        current_soc = (self.essunit.get_soc()
-                                       if self.essunit else None)
-                        if (target_soc and current_soc is not None
-                                and current_soc < target_soc):
-                            serving_avg = (
-                                sum(serving_prices) / len(serving_prices))
-                            # RTE-Konsistenz: der Abort vergleicht die
-                            # Viertelpreise durch die RTE -- der
-                            # Referenz-Grenzpreis muss dieselbe Teilung
-                            # tragen (wie im Deficit-Zweig). Zuvor galt
-                            # der rohe Serving-Durchschnitt => ~11%
-                            # Phantom-Huerte: die billigste Nachtstunde
-                            # wurde vetoiert, obwohl sie billiger war
-                            # als ihre eigene Alternative (32.17 vs
-                            # 32.56, Nacht 04./05.10.).
+                if deficit_wh <= 0.0:
+                    # Pak ist unter dem Scheduler-Ziel: jetzt nur
+                    # kaufen, wenn kein BILLIGERES zukuenftiges
+                    # Ladeviertel die Ziel-Luecke fuellen kann.
+                    # Merit-korrekt (2026-10-05): Referenz sind ALLE
+                    # zukuenftigen Ladeviertel (spaetere der laufenden
+                    # Kette + alle Folge-Ketten), nicht mehr nur die
+                    # naechste Kette -- ein Fenster bestand sonst
+                    # seinen eigenen Test (02:00 @ 35.5 vs sich selbst,
+                    # Nacht 05./06.10.) und die Nacht-Blöcke wurden
+                    # gegen 25-31-ct-Mittagsketten nicht vetoiert.
+                    target_soc = (self.essunit.get_scheduler_soc()
+                                  if self.essunit else None)
+                    current_soc = (self.essunit.get_soc()
+                                   if self.essunit else None)
+                    if (target_soc and current_soc is not None
+                            and current_soc < target_soc
+                            and full_wh > 0):
+                        gap_wh = max(
+                            0.0,
+                            (float(target_soc) - float(current_soc))
+                            / 100.0 * full_wh)
+                        offers = []
+                        for it in items:
+                            if not _charge_covered(it):
+                                continue
+                            qs = it.get_start_datetime()
+                            qe = it.get_end_datetime()
+                            if qs is None or qe is None:
+                                continue
+                            if qs.tzinfo is None:
+                                qs = qs.replace(tzinfo=timezone.utc)
+                            if qe.tzinfo is None:
+                                qe = qe.replace(tzinfo=timezone.utc)
+                            if qs <= now_utc:
+                                continue  # laufendes Viertel: keine Alternative
+                            try:
+                                price = float(it.get_price(convert=False))
+                            except (TypeError, ValueError):
+                                continue
+                            offers.append((
+                                price,
+                                self.charge_power_w
+                                * (qe - qs).total_seconds() / 3600.0
+                                * self.round_trip_efficiency))
+                        cut_price = self._merit_cut(offers, gap_wh, None)
+                        if cut_price is not None:
                             eff_marginal = (
-                                serving_avg / self.round_trip_efficiency)
+                                cut_price / self.round_trip_efficiency)
                             if eff_marginal > (marginal or 0.0):
                                 marginal = eff_marginal
                                 info["basis"] = "preload"
-                                info["serving_chain_price"] = serving_avg
+                                info["serving_chain_price"] = cut_price
 
             info["marginal_price"] = marginal
             if marginal is not None and marginal > 0:
