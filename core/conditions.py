@@ -367,15 +367,11 @@ class Conditions:
         avg_list = self.statsmanager.get_data(
             "powerconsumption", "hourly_watt_average"
         )
-        # Expected average consumption: the array MEAN (same basis as
-        # the economic context). A single hour's value (the old
-        # avg_list[0]) can be heating-rod-inflated by 3-5x, which
-        # starved the budget and demoted most discharge blocks.
-        avg_per_hour = 0
-        if avg_list:
-            values = [float(v) for v in avg_list if v is not None]
-            if values and sum(values) > 0:
-                avg_per_hour = round(sum(values) / len(values), 2)
+        # Expected average consumption: the EWMA value of the
+        # (value, count) store -- never an array-mean over the pair:
+        # the count field dilutes the average, largest right after
+        # every restart. See _watt_average for the history.
+        avg_per_hour = round(self._watt_average(avg_list), 2)
         if avg_per_hour <= 0:
             # No consumption history -- can't make a meaningful split,
             # default to legacy behaviour.
@@ -703,6 +699,42 @@ class Conditions:
             "would run empty otherwise."
         )
 
+    @staticmethod
+    def _watt_average(avg_list):
+        """
+        Read the EWMA hourly-average watt value from a StatsManager
+        per-percent store. The store keeps (value, count) as a
+        2-field list: count is the number of hourly entries MERGED
+        into the average -- never a second sample.
+
+        BUG fixed 2026-10-05 (three call sites): the old array-mean
+        `sum(values)/len(values)` over [704.9, 2] returned
+        (704.9 + 2) / 2 = 353 W -- the count diluted the average.
+        The dilution is largest right after every restart (count
+        resets into RAM): an 8-hour phase was seen as 2824 Wh instead
+        of ~5.6 kWh, the economic walk concluded "supply covers
+        everything" and the marginal collapsed to 0.00 ct -- every
+        cheap hour was vetoed (all charge-block hours olive in the
+        chart). Count grows per runtime-hour, so the error faded
+        with uptime -- "some green before the restart, all olive
+        after" was exactly this.
+
+        Returns 0.0 for anything that is not a positive number.
+        """
+        if isinstance(avg_list, (list, tuple)) and avg_list:
+            value = avg_list[0]
+        elif isinstance(avg_list, (list, tuple)):
+            return 0.0
+        else:
+            value = avg_list
+        if isinstance(value, bool):
+            return 0.0
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return value if value > 0.0 else 0.0
+
     def _normalized_efficiency(self):
         try:
             efficiency = float(getattr(self.config, "round_trip_efficiency", 0.90))
@@ -848,11 +880,13 @@ class Conditions:
             avg_list = self.statsmanager.get_data(
                 "powerconsumption", "hourly_watt_average"
             )
-            if avg_list:
-                values = [float(v) for v in avg_list if v is not None]
-                if values and sum(values) > 0:
-                    hourly_avg_w = sum(values) / len(values)
-                    stats_ok = True
+            # (value, count) store: read the VALUE only -- folding the
+            # count into an array mean halved the average right after
+            # every restart (marginal collapsed to 0.00 ct, every
+            # cheap hour vetoed -- observed 2026-10-05).
+            hourly_avg_w = self._watt_average(avg_list)
+            if hourly_avg_w > 0.0:
+                stats_ok = True
 
             # Charge quarters are grid-served while charging and carry
             # no displaced-consumption value. The phase therefore spans
@@ -1028,7 +1062,17 @@ class Conditions:
             # anyway). A genuinely covered horizon yields deficit <= 0
             # and keeps the phase-local marginal 0 -- covered days still
             # buy nothing.
-            if stats_ok and (marginal is None or marginal <= 0.0) and i < n:
+            # NOTE (2026-10-05): the old `and i < n` gate suppressed the
+            # preload look-ahead EXACTLY when the phase walk exhausted
+            # the item list (phase runs from the current chain's end all
+            # the way to the horizon -- no next chain found, i == n).
+            # In that state the fallback below (serving = the CURRENT
+            # chain's remainder, built precisely for this case on
+            # 2026-10-04) never ran: the marginal stayed 0.00 and the
+            # veto killed the whole running chain -- "alles olive".
+            # The branch itself is fully guarded (`serving_prices and
+            # far_stack`, deficit check), so the gate is removed.
+            if stats_ok and (marginal is None or marginal <= 0.0):
                 serving_prices = []
                 serving_offers = []  # (raw price, delivered Wh) je Viertel
                 j = i
@@ -3022,14 +3066,11 @@ class Conditions:
         avg_list = self.statsmanager.get_data(
             "powerconsumption", "hourly_watt_average"
         )
-        # Expected average consumption: the array MEAN (same basis as
-        # the economic context), not a single hour's value.
-        avg_consumption_per_hour = 0
-        if avg_list:
-            values = [float(v) for v in avg_list if v is not None]
-            if values and sum(values) > 0:
-                avg_consumption_per_hour = round(
-                    sum(values) / len(values), 2)
+        # Expected average consumption: the EWMA value of the
+        # (value, count) store (see _watt_average) -- the array-mean
+        # over the pair diluted the reserve the same way it diluted
+        # the phase walk above.
+        avg_consumption_per_hour = round(self._watt_average(avg_list), 2)
 
         from datetime import datetime, timezone
         now_utc = datetime.now(timezone.utc)
