@@ -33,6 +33,10 @@
                     "delay_grid_charging_below_active_soc_limit",
                     "discharge_fallthrough_on_charge_veto",
                 ]
+                economics_keys = [
+                    "economic_price_ceiling",
+                    "round_trip_efficiency",
+                ]
                 # Hidden from the editor: deprecated flags. They stay
                 # functional for backward compatibility (existing
                 # configs keep working) but must not be configured
@@ -45,7 +49,7 @@
                     # ignored (goes stale after hardware changes).
                     "charge_power_watts",
                 ]
-                grouped_keys = set(solar_keys + battery_keys + deprecated_keys)
+                grouped_keys = set(solar_keys + battery_keys + economics_keys + deprecated_keys)
                 section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]
                 %>
                 % for key, value in config.items():
@@ -118,6 +122,33 @@
                 <fieldset>
                     <legend>Battery / Charging</legend>
                     % for key in battery_keys:
+                        % if key in config:
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
+
+                <fieldset>
+                    <legend>Economic strategy</legend>
+                    % for key in economics_keys:
                         % if key in config:
                             <%
                             value = config[key]

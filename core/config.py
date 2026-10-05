@@ -47,11 +47,35 @@ class Info:
 
 class Config(Singleton):
     DEFAULT_CONFIG_TEMPLATE = {
+        # ------------------------------------------------------------------
+        # Web / Logging
+        # ------------------------------------------------------------------
         "time_zone": "Europe/Vienna",
-        "tariff_resolution": "hourly",
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
-        "use_solar_forecast_to_abort": False,
+        # ------------------------------------------------------------------
+        # Tariff / price-feed resolution
+        # ------------------------------------------------------------------
+        "tariff_resolution": "hourly",
+        # ------------------------------------------------------------------
+        # Charging-strategy constants (both modes). The strategy switch
+        # and the cap/limit knobs live in the prices block below; these
+        # two tune the economic rule globally.
+        # ------------------------------------------------------------------
+        # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
+        # Pure data-error protection (bogus feed prices); NOT an
+        # economic decision. Ignored in "cap" mode (hard cap rules there).
+        "economic_price_ceiling": 60,
+        # Round-trip efficiency (charge+discharge+inverter). The economic
+        # strategy divides the charge price by this before comparing it
+        # against the displaced price. Victron's SystemEfficiency default
+        # is 0.90.
+        "round_trip_efficiency": 0.90,
+        # ------------------------------------------------------------------
+        # Charging skips -- cap-strategy helper group. In the economic
+        # strategy several of these are subsumed by the marginal-price
+        # rule and dormant; the editor hides cap-only flags there.
+        # ------------------------------------------------------------------
         # DEPRECATED: replaced by skip_charge_when_battery_covers_expensive_phase
         "skip_charge_when_battery_sufficient": False,
         # DEPRECATED: never useful in practice, replaced
@@ -77,10 +101,19 @@ class Config(Singleton):
         # window). Lets you avoid paying for charge now when you can
         # be paid for it shortly.
         "skip_charge_for_upcoming_negative_prices": False,
-        # New: when battery is too small to cover the full expensive
-        # phase, prioritise discharge to the most expensive blocks only;
-        # cheaper expensive-phase hours fall back to grid.
-        "smart_discharge_priority_to_expensive_hours": False,
+        # ------------------------------------------------------------------
+        # Gates / control
+        # ------------------------------------------------------------------
+        # Victron control backend:
+        #   "auto"        -- classic (default; kept for old config.json
+        #                    files, resolves to classic).
+        #   "classic"     -- toggles Schedule/Charge Day + MaxDischargePower
+        #                    (localsettings, SD-backed writes).
+        # The former "dynamic_ess" backend was removed 2026-10: its
+        # leftover /Settings/DynamicEss/Mode=4 disabled the classic
+        # scheduled charging on VenusOS 3.7x. Legacy values resolve to
+        # classic.
+        "control_backend": "auto",
         "delay_grid_charging_below_active_soc_limit": False,
         # Discharge fall-through for vetoed charge windows ("olive
         # hours"): when a charge window matches (block rule true) but a
@@ -93,30 +126,22 @@ class Config(Singleton):
         # removes the blind pause, it never adds discharge entitlement.
         # Default OFF = the historical behaviour.
         "discharge_fallthrough_on_charge_veto": False,
-        # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
-        # Pure data-error protection (bogus feed prices); NOT an
-        # economic decision. Ignored in "cap" mode (hard cap rules there).
-        "economic_price_ceiling": 60,
-        # Victron control backend:
-        #   "auto"        -- classic (default; kept for old config.json
-        #                    files, resolves to classic).
-        #   "classic"     -- toggles Schedule/Charge Day + MaxDischargePower
-        #                    (localsettings, SD-backed writes).
-        # The former "dynamic_ess" backend was removed 2026-10: its
-        # leftover /Settings/DynamicEss/Mode=4 disabled the classic
-        # scheduled charging on VenusOS 3.7x. Legacy values resolve to
-        # classic.
-        "control_backend": "auto",
-        # Round-trip efficiency (charge+discharge+inverter). The economic
-        # strategy divides the charge price by this before comparing it
-        # against the displaced price. Victron's SystemEfficiency default
-        # is 0.90.
-        "round_trip_efficiency": 0.90,
-        "stats_history_retention_days": 400,
+        # New: when battery is too small to cover the full expensive
+        # phase, prioritise discharge to the most expensive blocks only;
+        # cheaper expensive-phase hours fall back to grid.
+        "smart_discharge_priority_to_expensive_hours": False,
+        # ------------------------------------------------------------------
+        # Solar forecast adjustment
+        # ------------------------------------------------------------------
+        "use_solar_forecast_to_abort": False,
         "solar_adj_ewma_alpha": 0.3,
         "solar_adj_min_theoretical_wh": 1000.0,
         "solar_adj_min_sun_hours": 4.0,
         "solar_adj_max_daily_change": 0.20,
+        # ------------------------------------------------------------------
+        # Stats / history
+        # ------------------------------------------------------------------
+        "stats_history_retention_days": 400,
         "prices": [
             {
                 "use_second_day": False,
@@ -665,6 +690,25 @@ class Config(Singleton):
                 for field_name in ("lowest_prices_per_ip", "block_minutes_per_ip"):
                     if field_name in sub_item and not isinstance(sub_item[field_name], str):
                         sub_item[field_name] = str(sub_item[field_name])
+
+        # Migration: reorder the top-level keys into the template's
+        # domain-grouped order. Every earlier version appended its new
+        # keys at the END of the dict (missing-key merge is an insert),
+        # so long-lived configs interleaved domains (solar_adj between
+        # the skip flags, economic_price_ceiling at the very bottom).
+        # Rebuild the dict in template order; unknown/legacy keys
+        # (e.g. charge_power_watts, web_socket_url) are appended at the
+        # END unchanged so nothing is lost. Idempotent: runs every
+        # start and keeps the canonical order stable even when a web
+        # save appends something new.
+        reordered = {}
+        for template_key in self.DEFAULT_CONFIG_TEMPLATE:
+            if template_key in self.config_data:
+                reordered[template_key] = self.config_data[template_key]
+        for existing_key in list(self.config_data.keys()):
+            if existing_key not in reordered:
+                reordered[existing_key] = self.config_data[existing_key]
+        self.config_data = reordered
 
         self.save_config(self.config_data)
 
