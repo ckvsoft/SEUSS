@@ -432,39 +432,6 @@ class Victron(ESSUnit):
                 self._hub4_available = True
         return bool(self._hub4_available)
 
-    def _hub4_publish(self, path, value):
-        self._publish(f"/{self.unit_id}/hub4/0{path}", value, retain=True)
-
-    def _hub4_write(self, path, value):
-        """
-        Override-Register setzen UND verifizieren: _publish liest nach
-        dem Schreiben das N-Topic zurueck -- das Ergebnis geht auf
-        INFO-Level ins Log, damit der Gate-Zustand live nachvollziehbar
-        ist (verlorene Schreibvorgaenge sind sonst unsichtbar).
-        """
-        self._hub4_publish(path, value)
-        readback = self._hub4_read(path)
-        self.logger.log.info(
-            f"{self._name} Hub4-Override {path} = {readback} "
-            f"(soll {value}).")
-        if readback != value:
-            self.logger.log.warning(
-                f"{self._name} Hub4-Override {path} NICHT uebernommen "
-                f"(gelesen {readback!r}, soll {value!r}) -- "
-                "Hub4-Bridge pruefen.")
-
-    def _hub4_read(self, path):
-        """
-        Aktuellen Wert des Override-Registers lesen (Snapshot-Query,
-        wie bei _publish der Read-back).
-        """
-        mqtt_result = MqttResult()
-        with MqttClient(self.mqtt_config) as mqtt:
-            if mqtt.subscribe(
-                    mqtt_result, f"N/{self.unit_id}/hub4/0{path}") == 0:
-                return self._process_result(mqtt_result.result)
-        return None
-
     def _publish_many(self, topic_values):
         """
         Batch publish through ONE mqtt connection. _publish() opens a
