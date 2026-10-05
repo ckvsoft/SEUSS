@@ -33,9 +33,8 @@ class Remotegpio(SmartSwitch):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # User/Pass optional, leer = keine Auth
+        # User/Pass optional, leer = keine Auth (bases decoded password).
         self.user = kwargs.get("user", "")
-        self.password = kwargs.get("password", "")
 
         # self.ips is already a list (parsed by SmartSwitch base).
         self.pin_groups = [grp.split(",") for grp in kwargs.get("pins", "").split("|")]

@@ -56,7 +56,9 @@ class TibberItem(Item):
         if price_value is None:
             raise ValueError("Ungültige Tibber-Preisdaten. 'price_value' muss gesetzt sein.")
         end_time = start_time + timedelta(minutes=slot_minutes)
-        super().__init__(start_time, end_time, price_value, fee_str, 15)
+        # Tibber delivers currency/kWh (0.19 EUR/kWh = 19 ct), Awattar/
+        # ENTSO-E deliver EUR/MWh -> potency 13. Display divisor is 10^14.
+        super().__init__(start_time, end_time, price_value, fee_str, 16)
 
     def extend_endtime(self):
         """

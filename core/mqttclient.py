@@ -200,21 +200,23 @@ class GridMetersResults(MqttResult):
 
     def get_forward_kwh(self, device_id):
         pi = 1000
-        forward = self.get_value(device_id, 'Ac/Energy/Forward')
-        if forward is None:
+        # raw = current meter reading
+        forward_raw = self.get_value(device_id, 'Ac/Energy/Forward')
+        if forward_raw is None:
             return 0.0
 
         stats_manager_instance = StatsManager()
-        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward_raw)
         forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
         if forward_start is None:
             return 0.0
 
-        forward = forward - forward_start
+        forward = forward_raw - forward_start
         if forward < 0.0:
+            # Meter counter was reset -- re-baseline with the raw reading.
             stats_manager_instance.remove_data("gridmeters", "date_forward_start")
             stats_manager_instance.remove_data("gridmeters", "forward_start")
-            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward_raw)
             return self.get_forward_kwh(device_id)
 
         return float(forward * pi)

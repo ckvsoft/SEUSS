@@ -26,6 +26,7 @@
 #
 
 from core.log import CustomLogger
+from core.utils import Utils
 
 
 class SmartSwitch:
@@ -64,7 +65,8 @@ class SmartSwitch:
             self.ips = []
 
         self.user = kwargs.get("user", "")
-        self.password = kwargs.get("password", "")
+        # Passwords are stored base64-encoded by the web save.
+        self.password = Utils.decode_from_base64(kwargs.get("password", ""))
         self.enabled = kwargs.get("enable", "")
 
         # Per-IP overrides (pipe-separated, position-aligned with `ips`).

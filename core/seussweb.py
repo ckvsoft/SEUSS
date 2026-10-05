@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from core.utils import Utils
 from bottle import template, static_file, response, request, redirect
 import bottle
+import copy
 import json
 import os, sys, glob
 import zipfile
@@ -115,10 +116,13 @@ class SEUSSWeb:
 
             # Check if the entry was found
             if existing_entry:
-                # Kopiere den vorhandenen Eintrag und aktualisiere die Daten mit den neuen Daten
-                count = len(existing_entry)
-                new_entry = existing_entry[0]
-                new_entry["name"] = f"{param_name}{count + 1}"
+                new_entry = copy.deepcopy(existing_entry[0])
+                taken_names = {entry.get("name") for entry in existing_entry}
+                base_name = new_entry.get("name") or param_name
+                count = 2
+                while f"{base_name} {count}" in taken_names:
+                    count += 1
+                new_entry["name"] = f"{base_name} {count}"
                 self.config.config_data[param_name].append(new_entry)
 
                 return {'status': 'success', 'config': self.config.config_data}

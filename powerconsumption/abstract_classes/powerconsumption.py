@@ -694,7 +694,7 @@ class PowerConsumptionBase:
         if current_hour_grid_wh and current_hour_grid_wh[1] == self.current_hour:
             self.hour_grid_wh = current_hour_grid_wh[0]
         else:
-            self.statsmanager.remove_data("powerconsumption", "current_hourly_grid_wh")
+            self.statsmanager.remove_data("powerconsumption", "current_hour_grid_wh")
 
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
@@ -866,6 +866,7 @@ class PowerConsumptionBase:
             self.pv_wh_by_day,
             self.battery_charge_wh_by_day,
             self.battery_discharge_wh_by_day,
+            self.pv_estimated_wh_by_day,
             self.hourly_wh_by_day,
             self.loss_wh_by_day,
             self.imbalance_wh_by_day,

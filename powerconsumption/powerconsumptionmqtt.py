@@ -23,6 +23,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
         # MQTT client
         self.client = None
+        self._loop_running = False
 
         self.update_config(mqtt_config)
 
@@ -76,6 +77,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
             self.client.connect(self.broker, self.port, keepalive=60)
             self.logger.log.debug("Connected to MQTT broker.")
+            if self._loop_running:
+                for topic in (self.data_topics or {}).values():
+                    self.client.subscribe(topic)
+                threading.Thread(target=self.mqtt_loop, daemon=True).start()
         except socket.gaierror as e:
             self.logger.log.error(f"Network error: {e}. Broker hostname could not be resolved.")
         except ConnectionRefusedError as e:
@@ -220,9 +225,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     except Exception as e:
                         self.logger.log.error(f"Error sending keep-alive: {e}")
                 else:
-                    self.logger.log.debug("MQTT connection lost. Reconnecting...")
-                    self.client = None
-                    self.update_config(self.mqtt_config)
+                    # loop_forever reconnects the existing client by
+                    # itself; no client rebuild (the old one was orphaned
+                    # with its stuck loop thread, and the rebuilt one had
+                    # no loop serving it).
+                    self.logger.log.debug("MQTT connection lost. Waiting for reconnect.")
 
     def stop(self):
         self.keep_alive_running = False
@@ -235,11 +242,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.logger.log.debug(f"Subscribing to topic: {topic}")
             self.client.subscribe(topic)
 
-        # Start keep-alive thread
         self.keep_alive_running = True
         threading.Thread(target=self.send_keep_alive, daemon=True).start()
 
         # Start MQTT loop in a separate thread
+        self._loop_running = True
         threading.Thread(target=self.mqtt_loop, daemon=True).start()
 
         # Wait until stop_event is set

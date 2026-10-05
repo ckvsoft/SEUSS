@@ -50,12 +50,12 @@ class Utils:
     @staticmethod
     def decode_from_base64(encoded_string: str) -> str:
         try:
-            # Füge das Padding wieder hinzu, wenn es fehlt
-            missing_padding = len(encoded_string) % 4
+            # Add the padding back if it missing
+            padded = encoded_string
+            missing_padding = len(padded) % 4
             if missing_padding:
-                encoded_string += '=' * (4 - missing_padding)
-
-            decoded_bytes = base64.urlsafe_b64decode(encoded_string)
+                padded += '=' * (4 - missing_padding)
+            decoded_bytes = base64.urlsafe_b64decode(padded)
             decoded_string = decoded_bytes.decode('utf-8')
             return decoded_string
         except (binascii.Error, UnicodeDecodeError):

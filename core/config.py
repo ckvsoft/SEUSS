@@ -415,6 +415,12 @@ class Config(Singleton):
         self.config_data = config_data
         self.log_file_path = config_data.get("log_file_path", "")
         self.log_level = config_data.get("log_level", "INFO")
+        try:
+            import pytz
+            pytz.timezone(config_data.get("time_zone", ""))
+            self.time_zone = config_data["time_zone"]
+        except Exception:
+            pass
 
         # tariff_resolution lives at top level (it's a market-level
         # property, not a price-strategy one). Read it directly. For
