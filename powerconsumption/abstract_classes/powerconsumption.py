@@ -28,6 +28,7 @@
 import threading
 import time
 import calendar
+from datetime import date, datetime, timedelta
 
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
@@ -48,6 +49,14 @@ class PowerDataHandler:
         self.checked_data = {}
         self.total_loss = 0
         self.last_loss_efficiency = (0, 100)
+        # Epoch of the last complete PV aggregate. Initialised to
+        # BOOT TIME (not 0): if the DTU/WLAN is already down when
+        # SEUSS starts, no aggregate ever arrives -- with a 0 init
+        # the staleness checks (`last_ts and age > 180`) would stay
+        # disabled forever and neither the display fallback nor the
+        # balance reconstruction would ever engage. Boot-time init
+        # gives a natural 3-minute grace period instead.
+        self.last_pv_aggregate_ts = time.time()
 
     def update_values(self, topic, payload):
         """Empfängt MQTT-Daten und aktualisiert Werte."""
@@ -134,6 +143,13 @@ class PowerDataHandler:
 
         if all(self.pv_data.get(key) is not None for key in keys):
             self.final_data["PV_POWER"] = sum(self.pv_data.values())
+            # Timestamp of the last COMPLETE PV aggregate. Consumers
+            # (live display fallback) use this to detect a stale PV
+            # feed: when the OpenDTU/WLAN path drops out, no fresh PV
+            # messages arrive, this timestamp ages, and the UI can
+            # substitute the forecast-based estimate instead of showing
+            # a bogus 0 W in bright daylight.
+            self.last_pv_aggregate_ts = time.time()
             self.reset(self.pv_data)
 
         if len([value for value in self.final_data.values() if value is not None]) >= 3:
@@ -197,24 +213,38 @@ class PowerDataHandler:
 
         ac_grid_power = self.final_data.get("AC_GRID_POWER", 0)
         dc_power = self.final_data.get("DC_POWER", 0)
-        # Calculate total energy input (DC + positive grid + PV)
+        # Energy entering the system from known sources:
+        #   battery discharge (dc_power < 0 means OUT of pack), grid
+        #   import (ac_grid_power > 0 means INTO the house), and PV.
+        # Each term is taken as a positive Watt contribution.
         energy_input = (
-            -min(dc_power, 0)  # Nur negative Werte von DC-Power (Entladung)
-            # abs(self.final_data.get("DC_POWER", 0))  # DC power (absolute value)
-            + max(ac_grid_power, 0)  # Only positive grid power (import)
-            + self.final_data.get("PV_POWER", 0)  # PV power (incoming)
+            -min(dc_power, 0)
+            + max(ac_grid_power, 0)
+            + self.final_data.get("PV_POWER", 0)
         )
 
-        # Calculate usable energy (AC power + exported grid power)
+        # Energy leaving the system to known sinks:
+        #   AC consumption (always positive), grid export (the
+        #   ac_grid_power < 0 case), and battery charge (dc_power > 0).
+        # Grid export was previously added as `min(ac_grid_power, 0)`
+        # (a negative number), which subtracted instead of summing
+        # and made `usable_energy` go strongly negative on export-heavy
+        # PV days, producing nonsensical "Loss > total throughput" and
+        # "Efficiency < 0" readings. Fix: add the magnitude of the
+        # export, i.e. `-min(ac_grid_power, 0)` which is non-negative.
         usable_energy = (
-            self.final_data.get("AC_POWER", 0)  # AC power (energy consumed)
-            + min(ac_grid_power, 0)  # Negative grid power (exported energy)
+            self.final_data.get("AC_POWER", 0)
+            + (-min(ac_grid_power, 0))
             + max(dc_power, 0)
         )
 
-        # Calculate losses (negative values shouldn't count as losses, so use max())
+        # Loss is the unaccounted-for excess of input over usable. With
+        # both terms now correctly signed, this is the inverter /
+        # wiring loss when positive; negative values indicate a sensor
+        # or convention issue and are clamped to 0 here (the daily
+        # `imbalance_wh` accumulator preserves the signed value for
+        # diagnostics).
         loss = max(energy_input - usable_energy, 0)
-        # loss = abs(energy_input - usable_energy)
 
 
         # Calculate efficiency and ensure it doesn't exceed 100%
@@ -223,9 +253,17 @@ class PowerDataHandler:
         # Clamp efficiency to 100% if necessary
         efficiency = min(efficiency, 100)
 
-        if efficiency < 100.0 and loss > 0.0:
-            self.total_loss = loss
-            self.last_loss_efficiency = (loss, efficiency)
+        # Always update the cache so the live snapshot reflects the
+        # CURRENT frame. The previous guard (`if efficiency < 100 and
+        # loss > 0`) only stored "unhealthy" frames: a single tick with
+        # half-updated MQTT aggregates (e.g. PV already fresh, AC_POWER
+        # still stale) produced a huge phantom loss, and because every
+        # healthy frame afterwards was NOT stored, the display stayed
+        # frozen on that outlier forever (observed: Loss 1769 W /
+        # Efficiency 38% shown permanently while the real balance was
+        # ~0 W / ~100%).
+        self.total_loss = loss
+        self.last_loss_efficiency = (loss, efficiency)
 
         return self.last_loss_efficiency
 
@@ -245,7 +283,11 @@ class PowerDataHandler:
           - "AC_GRID_POWER": Aggregierte Grid-Leistung
           - "AC_POWER": Aggregierte AC-Leistung
           - "BATTERY_POWER": Den Batterieverbrauchswert (P_DC_consumption_Battery)
-          - "TOTAL_POWER": Der berechnete Gesamtverbrauch (total_consumption)
+          - "TOTAL_POWER": HISTORICAL MISNOMER -- returns the most
+            recently computed energy-balance LOSS in W (see
+            process_data), NOT a consumption total. Kept for
+            compatibility; prefer "LOSS".
+          - "LOSS": same value under its correct name.
         """
         if power_type == "PV_POWER":
             pv = self.final_data.get("PV_POWER", 0)
@@ -261,6 +303,9 @@ class PowerDataHandler:
             return self.final_data.get("DC_POWER", 0)
 
         elif power_type == "TOTAL_POWER":
+            return self.total_loss
+
+        elif power_type == "LOSS":
             return self.total_loss
 
         elif power_type == "EFFICIENCY":
@@ -294,11 +339,68 @@ class PowerConsumptionBase:
         self.hourly_wh = 0          # Consumption for the current hour in kWh
         self.hour_grid_wh = 0
         self.energy_costs_by_hour = {}
-        self.energy_costs_by_day = {}
+        self.energy_costs_by_day = {}    # ISO-date-keyed: "2026-04-27" -> €
+        self.consumption_wh_by_day = {}  # ISO-date-keyed daily totals (Wh)
+        self.grid_wh_by_day = {}
+        self.grid_export_wh_by_day = {}
+        self.pv_wh_by_day = {}
+        self.battery_charge_wh_by_day = {}
+        self.battery_discharge_wh_by_day = {}
+        self.loss_wh_by_day = {}
+        self.imbalance_wh_by_day = {}
+        self.hourly_wh_by_day = {}  # ISO_date -> [24] hourly Wh array
         self.hourly_start_time = time.time()  # Start time of the current hour
 
-        self.daily_wh = 0           # Daily consumption in kWh
-        self.daily_grid_wh = 0
+        # Daily totals (Wh, in-RAM running sums; persisted across restarts).
+        self.daily_wh = 0           # House consumption
+        self.daily_grid_wh = 0      # Grid import only (positive flow)
+        self.daily_grid_export_wh = 0   # Grid export only (negative flow)
+        self.daily_pv_wh = 0        # PV production
+        self.daily_pv_estimated_wh = 0  # balance-reconstructed PV during feed dropout
+        # Battery split. Convention: BATTERY_POWER > 0 = charging (energy
+        # into the battery), BATTERY_POWER < 0 = discharging. Matches
+        # Victron's signs and the existing process_data() interpretation.
+        # Both totals are stored as positive Wh -- it's nicer to read
+        # "1234 Wh discharged" than "-1234".
+        self.daily_battery_charge_wh = 0
+        self.daily_battery_discharge_wh = 0
+        # Battery session tracker. Tracks continuous charge/discharge
+        # phases across day boundaries. `current_session` holds the
+        # running session (or None if neither direction has hit the
+        # threshold yet); `session_history` is the last 7 days of
+        # finalised sessions, capped at ~50 entries. Pause-tolerance
+        # threshold and grace period are tuned so a brief reversal
+        # (e.g. PV blip during discharge) doesn't end the session.
+        self.current_session = None
+        self.session_history = []
+        self.session_threshold_w = 50.0
+        self.session_pause_max_s = 600
+        self._session_pending_flip_until = None
+        # Diagnostic accumulators for energy-balance integrity.
+        # daily_loss_wh:  integrated max(input - usable, 0). Same
+        #     "Loss" definition that process_data() shows as a single
+        #     instantaneous number, but accumulated over the day.
+        # daily_imbalance_wh: integrated (input - usable) WITHOUT the
+        #     max(...,0) clamp. Negative values mean "more energy went
+        #     to sinks than came from known sources" -- a sign that a
+        #     sensor or our interpretation of it is missing energy.
+        # Both are sanity-check fields that get rendered in the stats
+        # tiles; they don't drive any control decisions.
+        self.daily_loss_wh = 0
+        self.daily_imbalance_wh = 0
+        # Per-hour Wh breakdown for today (key "0".."23"). Reset on
+        # day-rollover. Lets the stats UI show in WHICH hour a negative
+        # imbalance accumulates -- nights with no PV vs days with PV
+        # tend to have very different signs.
+        self.loss_wh_by_hour_today = {}
+        self.imbalance_wh_by_hour_today = {}
+        # Per-hour PV yield for today (key "0".."23"). Reset on
+        # day-rollover. Drives the "actual today" line on the
+        # forecast-vs-actual today chart on the stats page; it's
+        # the PV analogue of loss_wh_by_hour_today / imbalance_wh_by_hour_today.
+        self.pv_wh_by_hour_today = {}
+        self.pv_est_wh_by_hour_today = {}
+        self.pv_estimated_wh_by_day = {}
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
@@ -312,7 +414,10 @@ class PowerConsumptionBase:
         self.number_of_grid_phases = 3  # Default number of phases, adjust if needed
         self.current_power = 0
         self.current_grid_power = 0
-        self.consumption_diff = 0
+        # Last-seen instantaneous values for new daily accumulators.
+        # update() multiplies these by dt to integrate Wh.
+        self.last_pv_value = 0
+        self.last_battery_value = 0
         self.soc = None
 
         self.data_file = "consumption_data.json"
@@ -346,45 +451,295 @@ class PowerConsumptionBase:
         self.ws_server = ws
 
     def set_current_price(self, current_price):
-        self.current_price = current_price
+        # Keep the last known price when the market has no item covering
+        # "now" (get_current_price() returns None). Storing None here used
+        # to crash update() via float(None).
+        if current_price is not None:
+            self.current_price = current_price
+
+    @staticmethod
+    def _today_iso():
+        """Today's local date as ISO string (YYYY-MM-DD)."""
+        return date.today().isoformat()
+
+    @staticmethod
+    def _migrate_yday_to_iso(d, year=None):
+        """
+        Bring a `*_by_day` dict to the current ISO-date scheme.
+
+        Older builds keyed these dicts by `tm_yday` (e.g. "117" for
+        April 27 in a non-leap year). We now key them by ISO date
+        ("2026-04-27"). On load we walk the dict and:
+
+          * pass ISO-date keys through unchanged (10 chars, 2 dashes)
+          * convert numeric / numeric-string keys 1..366 to an ISO
+            date in the given year (defaults to today's year, which
+            is the assumption that fits the user's situation -- legacy
+            yday data was accumulated within the current calendar year)
+          * drop garbage keys
+
+        This is intentionally a one-way migration: once an entry is
+        rewritten with an ISO key, save_data() persists it that way
+        and subsequent loads see only ISO keys. There's no harm
+        running the migrator on already-migrated data; it just becomes
+        a no-op pass-through.
+        """
+        if not isinstance(d, dict):
+            return {}
+        if year is None:
+            year = date.today().year
+        days_in_year = 366 if calendar.isleap(year) else 365
+
+        out = {}
+        for k, v in d.items():
+            sk = str(k)
+            # Already ISO -> passthrough
+            if len(sk) == 10 and sk.count("-") == 2:
+                out[sk] = v
+                continue
+            # yday key -> convert
+            try:
+                yday = int(sk)
+            except (TypeError, ValueError):
+                # garbage key, drop
+                continue
+            if not (1 <= yday <= 366):
+                continue
+            yday = min(yday, days_in_year)
+            iso = (date(year, 1, 1) + timedelta(days=yday - 1)).isoformat()
+            # If both an ISO and a yday entry existed for the same day,
+            # the ISO one wins (it's the newer scheme; treat it as
+            # authoritative).
+            if iso not in out:
+                out[iso] = v
+        return out
 
     def load_data(self):
         self.daily_wh = self.statsmanager.get_data("powerconsumption", "daily_wh") or 0.0
+        self.daily_grid_wh = self.statsmanager.get_data("powerconsumption", "daily_grid_wh") or 0.0
+        self.daily_grid_export_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_grid_export_wh") or 0.0
+        self.daily_pv_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_wh") or 0.0
+        self.daily_pv_estimated_wh = self.statsmanager.get_data("powerconsumption", "daily_pv_estimated_wh") or 0.0
+
+        # Battery split. New keys; if missing on first run after upgrade
+        # we just start at zero. (Earlier code split a legacy
+        # `daily_battery_throughput_wh` 50/50 into the two new daily
+        # counters, but that's a daily total -- inheriting yesterday's
+        # leftover throughput as today's starting balance is misleading.
+        # The history-dict migration in load_data() handles past days
+        # separately, which is the right place for it.)
+        self.daily_battery_charge_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_battery_charge_wh") or 0.0
+        self.daily_battery_discharge_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_battery_discharge_wh") or 0.0
+        self.daily_loss_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_loss_wh") or 0.0
+        self.daily_imbalance_wh = self.statsmanager.get_data(
+            "powerconsumption", "daily_imbalance_wh") or 0.0
+        self.loss_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "loss_wh_by_hour_today") or {}
+        self.imbalance_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "imbalance_wh_by_hour_today") or {}
+        self.pv_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "pv_wh_by_hour_today") or {}
+        self.pv_est_wh_by_hour_today = self.statsmanager.get_data(
+            "powerconsumption", "pv_est_wh_by_hour_today") or {}
+        _pv_est_days = self.statsmanager.get_data(
+            "powerconsumption", "pv_estimated_wh_by_day")
+        self.pv_estimated_wh_by_day = _pv_est_days if isinstance(_pv_est_days, dict) else {}
+
+        # JSON serialisation collapses Python tuples to lists, so on
+        # reload `isinstance(x, tuple)` is always False -- the previous
+        # check defaulted everything back to zero on every restart and
+        # silently lost daily_wh, hourly averages, last_value, and the
+        # hour start time. Accept both tuple and list as the persisted
+        # shape.
+        def _as_pair(v, fallback):
+            if isinstance(v, (tuple, list)) and len(v) == 2:
+                return tuple(v)
+            return fallback
 
         hourly_wh_list = self.statsmanager.get_data("powerconsumption", "hourly_wh")
-        self.hourly_wh, self.hourly_start_time = hourly_wh_list if isinstance(hourly_wh_list, tuple) and len(hourly_wh_list) == 2 else (0, time.time())
+        self.hourly_wh, self.hourly_start_time = _as_pair(hourly_wh_list, (0, time.time()))
 
         average_list = self.statsmanager.get_data("powerconsumption", "average")
-        self.average = average_list if isinstance(average_list, tuple) and len(average_list) == 2 else (0, 0)
+        self.average = _as_pair(average_list, (0, 0))
 
         last_value_list = self.statsmanager.get_data("powerconsumption", "last_power_value")
         last_grid_value_list = self.statsmanager.get_data("powerconsumption", "last_grid_power_value")
+        # Persist last_pv_value and last_battery_value too (they were
+        # only loaded as 0 on init before, which made the very first
+        # post-restart tick of the energy-balance accumulator compute
+        # `input = 0 + grid_import + 0` while `usable` already had the
+        # real AC + grid_export -- producing a several-hundred-Wh
+        # phantom imbalance on every restart. With these persisted,
+        # the first tick has consistent inputs OR is short-circuited
+        # by the pause-clamp above.
+        last_pv_value_list = self.statsmanager.get_data("powerconsumption", "last_pv_power_value")
+        last_battery_value_list = self.statsmanager.get_data("powerconsumption", "last_battery_power_value")
 
-        self.last_value, self.last_time = last_value_list if isinstance(last_value_list, tuple) and len(last_value_list) == 2 else (0, time.time())
-        self.last_grid_value, _ = last_grid_value_list if isinstance(last_grid_value_list, tuple) and len(last_grid_value_list) == 2 else (0, time.time())
+        self.last_value, self.last_time = _as_pair(last_value_list, (0, time.time()))
+        self.last_grid_value, _ = _as_pair(last_grid_value_list, (0, time.time()))
+        self.last_pv_value, _ = _as_pair(last_pv_value_list, (0, time.time()))
+        self.last_battery_value, _ = _as_pair(last_battery_value_list, (0, time.time()))
 
-        energy_costs_by_hour = self.statsmanager.get_data("powerconsumption","energy_costs_by_hour")
-        energy_costs_by_day = self.statsmanager.get_data("powerconsumption","energy_costs_by_day")
+        # Restore battery session state across restarts so the running
+        # session's wh accumulator and the 7-day history survive.
+        sess_current = self.statsmanager.get_data("powerconsumption", "battery_session_current")
+        if isinstance(sess_current, dict) and sess_current.get("type"):
+            self.current_session = sess_current
+        else:
+            self.current_session = None
+        sess_hist = self.statsmanager.get_data("powerconsumption", "battery_session_history")
+        if isinstance(sess_hist, dict) and isinstance(sess_hist.get("items"), list):
+            self.session_history = sess_hist["items"]
+        else:
+            self.session_history = []
+        self._session_pending_flip_until = None
+
+        energy_costs_by_hour = self.statsmanager.get_data("powerconsumption", "energy_costs_by_hour")
+
+        # All `*_by_day` dicts are now keyed by ISO-date. Earlier builds
+        # used tm_yday integers, which silently overwrote across years.
+        # The migrator converts legacy yday keys into ISO dates assuming
+        # the current calendar year -- per discussion with the user,
+        # legacy data from previous years is acceptable to lose, but
+        # current-year data should be preserved. Already-ISO keys pass
+        # through unchanged so it's safe to run unconditionally.
+        raw_costs = self.statsmanager.get_data("powerconsumption", "energy_costs_by_day") or {}
+        raw_consumption = self.statsmanager.get_data("powerconsumption", "consumption_wh_by_day") or {}
+        raw_grid = self.statsmanager.get_data("powerconsumption", "grid_wh_by_day") or {}
+        raw_grid_export = self.statsmanager.get_data("powerconsumption", "grid_export_wh_by_day") or {}
+        raw_pv = self.statsmanager.get_data("powerconsumption", "pv_wh_by_day") or {}
+        raw_battery_charge = self.statsmanager.get_data("powerconsumption", "battery_charge_wh_by_day") or {}
+        raw_battery_discharge = self.statsmanager.get_data("powerconsumption", "battery_discharge_wh_by_day") or {}
+        raw_loss = self.statsmanager.get_data("powerconsumption", "loss_wh_by_day") or {}
+        raw_imbalance = self.statsmanager.get_data("powerconsumption", "imbalance_wh_by_day") or {}
+        # Legacy throughput dict, used as fallback if the new split
+        # dicts haven't been populated yet (first load after upgrade).
+        raw_battery_throughput = self.statsmanager.get_data("powerconsumption", "battery_throughput_wh_by_day") or {}
+
+        self.energy_costs_by_day = self._migrate_yday_to_iso(raw_costs)
+        self.consumption_wh_by_day = self._migrate_yday_to_iso(raw_consumption)
+        self.grid_wh_by_day = self._migrate_yday_to_iso(raw_grid)
+        self.grid_export_wh_by_day = self._migrate_yday_to_iso(raw_grid_export)
+        self.pv_wh_by_day = self._migrate_yday_to_iso(raw_pv)
+        self.battery_charge_wh_by_day = self._migrate_yday_to_iso(raw_battery_charge)
+        self.battery_discharge_wh_by_day = self._migrate_yday_to_iso(raw_battery_discharge)
+        # Loss/imbalance are new fields -- they never had yday-keyed
+        # data, so just filter to ISO-keyed entries.
+        self.loss_wh_by_day = {
+            k: v for k, v in raw_loss.items()
+            if isinstance(k, str) and len(k) == 10 and k.count("-") == 2
+        }
+        self.imbalance_wh_by_day = {
+            k: v for k, v in raw_imbalance.items()
+            if isinstance(k, str) and len(k) == 10 and k.count("-") == 2
+        }
+        # If neither split dict has data but the legacy throughput dict
+        # does, split each day's value 50/50 as a one-time migration.
+        # This is rough but lets the stats page show a sensible
+        # historical comparison instead of zeros.
+        if not self.battery_charge_wh_by_day and not self.battery_discharge_wh_by_day and raw_battery_throughput:
+            legacy = self._migrate_yday_to_iso(raw_battery_throughput)
+            for k, v in legacy.items():
+                half = round(v / 2.0, 2)
+                self.battery_charge_wh_by_day[k] = half
+                self.battery_discharge_wh_by_day[k] = half
+            self.logger.log.info(
+                f"Migrated {len(legacy)} day(s) of legacy battery_throughput "
+                "to charge/discharge split (50/50 estimate)."
+            )
+
+        # Log a migration summary if any keys were converted (i.e. the
+        # raw counts differ from the migrated dict's keys, or any raw
+        # key was numeric).
+        def _had_yday(raw):
+            for k in (raw or {}).keys():
+                sk = str(k)
+                if not (len(sk) == 10 and sk.count("-") == 2):
+                    return True
+            return False
+
+        if any(_had_yday(r) for r in [raw_costs, raw_consumption, raw_grid, raw_grid_export, raw_pv, raw_battery_charge, raw_battery_discharge, raw_battery_throughput]):
+            self.logger.log.info(
+                "Migrated legacy yday-keyed entries in powerconsumption history "
+                f"to ISO dates (assumed year {date.today().year})."
+            )
+
+        # Per-day hourly arrays. Keys are ISO date strings, values
+        # are 24-element lists of Wh per hour. Populated in save_hour().
+        # No yday migration here -- yday never had hourly arrays.
+        raw_hourly = self.statsmanager.get_data(
+            "powerconsumption", "hourly_wh_by_day") or {}
+        self.hourly_wh_by_day = {
+            k: v for k, v in raw_hourly.items()
+            if isinstance(k, str) and len(k) == 10 and k.count("-") == 2
+            and isinstance(v, list) and len(v) == 24
+        }
 
         self.logger.log.debug(f"Loaded energy costs by hour: {energy_costs_by_hour}")
-        self.logger.log.debug(f"Loaded energy costs by day: {energy_costs_by_day}")
+        self.logger.log.debug(f"Loaded energy_costs_by_day (post-migration): {self.energy_costs_by_day}")
+        self.logger.log.debug(f"Loaded consumption_wh_by_day: {self.consumption_wh_by_day}")
+        self.logger.log.debug(f"Loaded grid_wh_by_day: {self.grid_wh_by_day}")
+        self.logger.log.debug(f"Loaded pv_wh_by_day: {self.pv_wh_by_day}")
+        self.logger.log.debug(
+            f"Loaded battery_charge_wh_by_day: {self.battery_charge_wh_by_day}")
+        self.logger.log.debug(
+            f"Loaded battery_discharge_wh_by_day: {self.battery_discharge_wh_by_day}")
 
         self.energy_costs_by_hour = energy_costs_by_hour if energy_costs_by_hour else {}
-        self.energy_costs_by_day = energy_costs_by_day if energy_costs_by_day else {}
-        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption","current_hour_grid_wh")
+        current_hour_grid_wh = self.statsmanager.get_data("powerconsumption", "current_hour_grid_wh")
         if current_hour_grid_wh and current_hour_grid_wh[1] == self.current_hour:
             self.hour_grid_wh = current_hour_grid_wh[0]
         else:
-            self.statsmanager.remove_data("powerconsumption", "current_hourly_grid_wh")
+            self.statsmanager.remove_data("powerconsumption", "current_hour_grid_wh")
 
     def save_data(self, logging=False):
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_hour", self.energy_costs_by_hour, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        # New per-day history dicts.
+        self.statsmanager.set_status_data("powerconsumption","consumption_wh_by_day", self.consumption_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","grid_wh_by_day", self.grid_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","grid_export_wh_by_day", self.grid_export_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_wh_by_day", self.pv_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","battery_charge_wh_by_day", self.battery_charge_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","battery_discharge_wh_by_day", self.battery_discharge_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","loss_wh_by_day", self.loss_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","imbalance_wh_by_day", self.imbalance_wh_by_day, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","hourly_wh", (self.hourly_wh, self.hourly_start_time), save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption","average", self.average, save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_power_value", (self.last_value, self.last_time), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","last_grid_power_value", (self.last_grid_value, self.last_time))
+        self.statsmanager.set_status_data("powerconsumption","last_pv_power_value", (self.last_pv_value, self.last_time), save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","last_battery_power_value", (self.last_battery_value, self.last_time), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","current_hour_grid_wh", (self.hour_grid_wh, self.current_hour))
+        # New running daily totals -- persisted alongside daily_wh so a
+        # restart mid-day doesn't lose the day's accumulated values.
+        self.statsmanager.set_status_data("powerconsumption","daily_grid_wh", self.daily_grid_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_grid_export_wh", self.daily_grid_export_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_pv_wh", self.daily_pv_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_pv_estimated_wh", self.daily_pv_estimated_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_estimated_wh_by_day", self.pv_estimated_wh_by_day, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_battery_charge_wh", self.daily_battery_charge_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_battery_discharge_wh", self.daily_battery_discharge_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_loss_wh", self.daily_loss_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","daily_imbalance_wh", self.daily_imbalance_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","loss_wh_by_hour_today", self.loss_wh_by_hour_today, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","imbalance_wh_by_hour_today", self.imbalance_wh_by_hour_today, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_wh_by_hour_today", self.pv_wh_by_hour_today, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","pv_est_wh_by_hour_today", self.pv_est_wh_by_hour_today, save_data=False)
+        # Battery sessions: persisted as dicts so the stats handler
+        # can read them without instantiating PowerConsumption.
+        self.statsmanager.set_status_data(
+            "powerconsumption", "battery_session_current",
+            self.current_session if self.current_session else {},
+        )
+        self.statsmanager.set_status_data(
+            "powerconsumption", "battery_session_history",
+            {"items": self.session_history},
+        )
 
         if logging:
             self.logger.log.debug("data saved.")
@@ -401,31 +756,209 @@ class PowerConsumptionBase:
             value /= count
             self.average = (value, count)
 
+        # Persist the just-finished hour's Wh value into a per-day
+        # 24-slot array. Used by the stats page charts later.
+        # Structure: hourly_wh_by_day[ISO_date] = [h0, h1, ..., h23].
+        # Called from update() BEFORE current_hour is rotated, so
+        # self.current_hour is still the hour we're closing out.
+        try:
+            today_iso = self._today_iso()
+            day_arr = self.hourly_wh_by_day.get(today_iso)
+            if not isinstance(day_arr, list) or len(day_arr) != 24:
+                day_arr = [0] * 24
+            hour_idx = max(0, min(23, int(self.current_hour)))
+            day_arr[hour_idx] = round(self.hourly_wh, 2)
+            self.hourly_wh_by_day[today_iso] = day_arr
+        except Exception as e:
+            self.logger.log.debug(f"hourly_wh_by_day update failed: {e}")
+
         self.statsmanager.update_percent_status_data("powerconsumption", "average", self.average, save_data=False)
         self.logger.log.debug(f"save ... update average: {self.average}")
         self.statsmanager.update_percent_status_data("powerconsumption", "hourly_watt_average", value, save_data=False)
         self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
         self.statsmanager.set_status_data("powerconsumption","daily_wh", self.daily_wh, save_data=False)
+        self.statsmanager.set_status_data("powerconsumption","hourly_wh_by_day", self.hourly_wh_by_day, save_data=False)
 
         # Speichert die Daten
         self.save_data()
 
     def save_day(self):
-        self.statsmanager.update_percent_status_data("powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
-        self.statsmanager.set_status_data("powerconsumption","energy_costs_by_day", self.energy_costs_by_day, save_data=False)
+        """
+        Called from update() when the calendar day rolls over. The
+        day-rotation in update() happens AFTER this returns, so when
+        we're called the running totals (daily_wh, daily_grid_wh,
+        daily_grid_export_wh, daily_pv_wh, daily_battery_charge_wh,
+        daily_battery_discharge_wh) still hold the
+        just-finished day's values. We close them out here:
+
+          1. Update the daily_watt_average EWMA.
+          2. Compute the just-finished day's ISO date (yesterday from
+             the system clock's perspective at the moment of crossover).
+          3. Roll the four running daily totals plus total cost into
+             their respective `*_by_day` history dicts under that key.
+          4. Persist via save_data().
+
+        Reset of the running totals (daily_wh, daily_grid_wh, ...) is
+        done by update() right after we return -- we keep that
+        responsibility split because the existing code already structured
+        it that way.
+        """
+        self.statsmanager.update_percent_status_data(
+            "powerconsumption", "daily_watt_average", self.get_daily_average(), save_data=False)
+
+        # The day boundary was just crossed by update(); subtract one
+        # day from "now" to get the date we're closing out. (Using
+        # date.today() at exactly midnight could land on either side
+        # depending on scheduling; subtracting one day is unambiguous
+        # because update() only enters this branch AFTER tm_yday changed.)
+        yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+
         total_cost = sum(self.energy_costs_by_hour.values())
-        self.energy_costs_by_day[str(self.current_day)] = total_cost
+        self.energy_costs_by_day[yesterday_iso] = round(total_cost, 4)
+        self.consumption_wh_by_day[yesterday_iso] = round(self.daily_wh, 2)
+        self.grid_wh_by_day[yesterday_iso] = round(self.daily_grid_wh, 2)
+        self.grid_export_wh_by_day[yesterday_iso] = round(self.daily_grid_export_wh, 2)
+        self.pv_wh_by_day[yesterday_iso] = round(self.daily_pv_wh, 2)
+        if self.daily_pv_estimated_wh > 0:
+            self.pv_estimated_wh_by_day[yesterday_iso] = round(self.daily_pv_estimated_wh, 2)
+        self.battery_charge_wh_by_day[yesterday_iso] = round(self.daily_battery_charge_wh, 2)
+        self.battery_discharge_wh_by_day[yesterday_iso] = round(self.daily_battery_discharge_wh, 2)
+        self.loss_wh_by_day[yesterday_iso] = round(self.daily_loss_wh, 2)
+        self.imbalance_wh_by_day[yesterday_iso] = round(self.daily_imbalance_wh, 2)
+
+        # Reset the per-hour cost bucket for the new day.
         self.energy_costs_by_hour = {}
 
-        # Speichert die Daten
+        # Trim history dicts to the configured retention window. We do
+        # this once per day right after the rotation so old entries
+        # fall off gradually rather than all at once on a config change.
+        self._prune_history()
+
+        # Persist all of the above (save_data writes the history dicts
+        # plus the running totals; daily_wh/daily_grid_wh/etc are reset
+        # to 0 by update() right after we return).
         self.save_data()
 
-    def update(self, power, grid_power, battery_power, timestamp):
-        """Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit."""
+    def _prune_history(self):
+        """
+        Drop ISO-date entries from all per-day history dicts that are
+        older than `stats_history_retention_days`. Retention=0 disables
+        pruning entirely.
+        """
+        try:
+            from core.config import Config
+            cfg = Config()
+            retention = int(getattr(cfg, "stats_history_retention_days", 400) or 0)
+        except Exception:
+            retention = 400
+
+        if retention <= 0:
+            return
+
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(days=retention)).isoformat()
+
+        history_dicts = [
+            self.energy_costs_by_day,
+            self.consumption_wh_by_day,
+            self.grid_wh_by_day,
+            self.grid_export_wh_by_day,
+            self.pv_wh_by_day,
+            self.battery_charge_wh_by_day,
+            self.battery_discharge_wh_by_day,
+            self.pv_estimated_wh_by_day,
+            self.hourly_wh_by_day,
+            self.loss_wh_by_day,
+            self.imbalance_wh_by_day,
+        ]
+        dropped = 0
+        for d in history_dicts:
+            old_keys = [k for k in d.keys() if isinstance(k, str) and k < cutoff]
+            for k in old_keys:
+                del d[k]
+                dropped += 1
+
+        # Solar forecast history lives in the stats manager (under
+        # ('solar', 'forecast_pv_wh_by_day')) rather than as a member
+        # of this class -- it's written by openmeteo and only read by
+        # the stats page. Prune it here too so it shares the same
+        # retention window as the actual pv_wh_by_day it gets
+        # plotted against.
+        try:
+            forecast_by_day = self.statsmanager.get_data(
+                'solar', 'forecast_pv_wh_by_day'
+            ) or {}
+            if isinstance(forecast_by_day, dict):
+                old_keys = [
+                    k for k in forecast_by_day.keys()
+                    if isinstance(k, str) and k < cutoff
+                ]
+                if old_keys:
+                    for k in old_keys:
+                        del forecast_by_day[k]
+                        dropped += 1
+                    self.statsmanager.set_status_data(
+                        'solar', 'forecast_pv_wh_by_day', forecast_by_day
+                    )
+            # Same retention treatment for the per-hour forecast
+            # array; only used by the today-solar chart but should
+            # not grow unbounded either.
+            forecast_hourly = self.statsmanager.get_data(
+                'solar', 'forecast_hourly_wh_by_day'
+            ) or {}
+            if isinstance(forecast_hourly, dict):
+                old_keys = [
+                    k for k in forecast_hourly.keys()
+                    if isinstance(k, str) and k < cutoff
+                ]
+                if old_keys:
+                    for k in old_keys:
+                        del forecast_hourly[k]
+                        dropped += 1
+                    self.statsmanager.set_status_data(
+                        'solar', 'forecast_hourly_wh_by_day', forecast_hourly
+                    )
+        except Exception as e:
+            self.logger.log.debug(
+                f"Pruning solar forecast history failed: {e}"
+            )
+
+        if dropped:
+            self.logger.log.info(
+                f"Pruned {dropped} history entries older than {cutoff} "
+                f"(retention={retention} days)."
+            )
+
+    def update(self, power, grid_power, battery_power, timestamp,
+               pv_power=0):
+        """
+        Aktualisiert den Verbrauch basierend auf neuer Leistung und Zeit.
+
+        Parameters
+        ----------
+        power : W
+            Aggregated AC house consumption.
+        grid_power : W
+            Grid power; positive = import, negative = export.
+        battery_power : W
+            DC battery power. Victron convention: positive = charging
+            (energy into the pack), negative = discharging. The split
+            accumulators rely on this; the live UI also uses the signed
+            value as-is. If your hardware shows the opposite signs,
+            check the shunt wiring (Victron's manual covers the fix).
+        timestamp : float
+            Seconds since epoch (time.time()).
+        pv_power : W, optional
+            Solar production. Defaults to 0 so callers that don't yet
+            wire it through (or whose MQTT setup has no PV topic) keep
+            working without breaking.
+        """
         # Setze den Startwert, wenn es die erste Messung ist
         if self.last_time is None:
             self.last_value = power
             self.last_grid_value = grid_power
+            self.last_pv_value = pv_power or 0
+            self.last_battery_value = battery_power or 0
             self.last_time = timestamp
             self.current_hour = time.localtime(timestamp).tm_hour
             self.current_day = time.localtime(timestamp).tm_yday
@@ -435,7 +968,32 @@ class PowerConsumptionBase:
         # Berechne das Zeitintervall in Stunden
         time_diff = (timestamp - self.last_time) / 3600  # Zeitdifferenz in Stunden
 
-        # Berechne den kWh-Verbrauch für diesen Zeitraum
+        # Guard against restart / pause artefacts. `last_time` is
+        # persisted across SEUSS restarts, so the first tick after a
+        # multi-hour pause computes time_diff = (now - hours_ago).
+        # Multiplying that against the *current* power readings would
+        # invent thousands of Wh of fake energy in a single tick --
+        # most visibly in `daily_imbalance_wh`, where `last_pv_value`
+        # and `last_battery_value` are NOT persisted (they default to
+        # 0 on init), while `last_value` and `last_grid_value` ARE,
+        # so the balance equation is fundamentally inconsistent for
+        # the first tick. Real intervals here are seconds, so anything
+        # over 60 seconds is a startup or a connection hiccup, not a
+        # real measurement gap. Refresh the baseline and skip
+        # integration for this tick.
+        if time_diff > (60.0 / 3600.0):
+            self.logger.log.info(
+                f"Skipping integration for first tick after pause "
+                f"(gap={time_diff*3600:.0f}s); resetting baseline."
+            )
+            self.last_value = power
+            self.last_grid_value = grid_power
+            self.last_pv_value = pv_power or 0
+            self.last_battery_value = battery_power or 0
+            self.last_time = timestamp
+            return
+
+        # Berechne den Wh-Verbrauch für diesen Zeitraum
         wh = (self.last_value * time_diff)
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
         self.daily_wh += wh   # Update des täglichen Verbrauchs
@@ -444,8 +1002,194 @@ class PowerConsumptionBase:
         if grid_wh > 0.0:
             self.hour_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
             self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
+        elif grid_wh < 0.0:
+            # Negative grid power = export to grid. Track as positive Wh
+            # (it's nicer to read "1234 Wh exported" than "-1234").
+            self.daily_grid_export_wh += -grid_wh
 
-        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price)
+        # PV: positive only -- a negative reading would be a sensor
+        # glitch, not real reverse flow.
+        pv_wh = max(self.last_pv_value, 0) * time_diff
+        self.daily_pv_wh += pv_wh
+        # Per-hour PV breakdown for the today-solar chart. Same hour
+        # key convention as loss_wh_by_hour_today below.
+        pv_hkey = str(self.current_hour)
+        self.pv_wh_by_hour_today[pv_hkey] = (
+            self.pv_wh_by_hour_today.get(pv_hkey, 0) + pv_wh
+        )
+
+        # --- Reconstructed PV during feed dropout ---
+        # While the DTU/WLAN path is down the GX reads PV as ~0, but
+        # house, grid and battery are still measured correctly. Energy
+        # conservation then pins down the invisible PV exactly:
+        #   pv_missing = house + battery_charge + grid_export
+        #                - grid_import - battery_discharge
+        # (whatever the measured inputs can't explain MUST have come
+        # from the panels). This is a reconstruction from real
+        # measurements, not a weather forecast. It is accumulated
+        # SEPARATELY (daily_pv_estimated_wh / pv_estimated_wh_by_day)
+        # and shown in the stats in its own colour -- never mixed into
+        # the measured pv_wh_by_day series.
+        try:
+            # Trigger on the BALANCE HOLE, not on message staleness:
+            # when the DTU is unreachable, the GX keeps publishing PV
+            # topics -- just with value 0 -- so "no fresh messages"
+            # never happens and a timestamp check stays blind forever
+            # (observed 2026-08-18: PV 0 W reported while house 2955 W
+            # + battery 97 W - grid 2552 W left ~500 W unexplained).
+            # Energy conservation is the reliable detector: if reported
+            # PV is ~zero but the measured flows can't balance, the
+            # missing input IS the panels.
+            _house_w = self.last_value or 0
+            _grid_w = self.last_grid_value or 0
+            _batt_w = self.last_battery_value or 0
+            _pv_w = self.last_pv_value or 0
+            pv_missing_w = (
+                _house_w
+                + max(_batt_w, 0)      # battery charging
+                + max(-_grid_w, 0)     # grid export
+                - max(_grid_w, 0)      # grid import
+                - max(-_batt_w, 0)     # battery discharging
+                - max(_pv_w, 0)        # PV that IS reported
+            )
+            # 200 W floor: below that, the hole is indistinguishable
+            # from inverter/wiring losses and metering noise. The
+            # reported-PV guard keeps this OFF whenever the feed is
+            # healthy (then reported PV explains the balance and the
+            # hole collapses to ~losses).
+            trigger_now = _pv_w < 50 and pv_missing_w > 200
+            if trigger_now:
+                est_wh = pv_missing_w * time_diff
+                self.daily_pv_estimated_wh += est_wh
+                self.pv_est_wh_by_hour_today[pv_hkey] = (
+                    self.pv_est_wh_by_hour_today.get(pv_hkey, 0) + est_wh
+                )
+
+            # Day-balance trueing: the per-tick path above misses every
+            # tick whose hole stays under the 200 W floor (e.g. battery
+            # covering most of the house -> hole 150 W for hours) and
+            # anything missed before a (re)start or the midnight
+            # rollover. The day totals pin down the full gap:
+            #   consumption + batt_charge + export
+            #   - import - batt_discharge - measured_pv - est_so_far
+            # Subtracting est_so_far makes this idempotent, so it can
+            # simply run continuously. Gate: reported PV must be ~0 AND
+            # the dropout must be evidenced (trigger active now, or
+            # already >50 Wh reconstructed today) -- this keeps a
+            # healthy day's ordinary conversion losses from being
+            # booked as phantom PV at night.
+            if _pv_w < 50 and (trigger_now or self.daily_pv_estimated_wh > 50):
+                day_hole = (
+                    (self.daily_wh or 0)
+                    + (self.daily_battery_charge_wh or 0)
+                    + (self.daily_grid_export_wh or 0)
+                    - (self.daily_grid_wh or 0)
+                    - (self.daily_battery_discharge_wh or 0)
+                    - (self.daily_pv_wh or 0)
+                    - (self.daily_pv_estimated_wh or 0)
+                )
+                if day_hole > 25:
+                    self.daily_pv_estimated_wh += day_hole
+                    self.pv_est_wh_by_hour_today[pv_hkey] = (
+                        self.pv_est_wh_by_hour_today.get(pv_hkey, 0)
+                        + day_hole
+                    )
+                    if day_hole > 100:
+                        self.logger.log.info(
+                            f"PV reconstruction trueing: booked "
+                            f"{day_hole:.0f} Wh from the day energy "
+                            f"balance (missed by per-tick threshold "
+                            f"or before start)."
+                        )
+        except Exception:
+            pass
+
+        # Battery split. Victron convention: positive battery_power =
+        # charging (energy into the pack), negative = discharging. Both
+        # daily totals stored as positive Wh.
+        battery_dt_wh = self.last_battery_value * time_diff
+        if battery_dt_wh > 0:
+            self.daily_battery_charge_wh += battery_dt_wh
+            # Grid-charging power is now calibrated from whole charge
+            # sessions (see _update_battery_session finalisation), which
+            # averages over hours and is far more stable than any single
+            # tick. No per-tick tracking here anymore.
+        elif battery_dt_wh < 0:
+            self.daily_battery_discharge_wh += -battery_dt_wh
+
+        # Session tracking: aggregate energy across the natural
+        # charge/discharge cycle, ignoring the midnight rollover.
+        # A "session" starts when the battery flips direction and
+        # stays that way; brief reversals (e.g. PV blip while mostly
+        # discharging) don't end the session. The user sees how much
+        # was actually drained/filled in the current cycle, regardless
+        # of how many calendar days it spans.
+        try:
+            self._update_battery_session(
+                battery_dt_wh, timestamp,
+            )
+        except Exception as exc:
+            self.logger.log.debug(
+                f"battery session tracker hiccup: {exc}"
+            )
+
+        # Diagnostic energy-balance integration (sanity-check fields).
+        # Same definition of input/usable as process_data() uses, but
+        # integrated over the timestep:
+        #   energy_input  = battery discharge (positive) + grid import
+        #                   + PV
+        #   usable_energy = AC consumption + grid export + battery charge
+        # If sensors and convention are correct, input ≈ usable + losses,
+        # so (input - usable) is non-negative and equals the inverter /
+        # wiring losses. A negative value means we record more
+        # consumption than known sources can supply, which points at a
+        # missing source or a sign-convention bug rather than at real
+        # losses.
+        grid_p = self.last_grid_value or 0
+        battery_p = self.last_battery_value or 0
+        pv_p = self.last_pv_value or 0
+        ac_p = self.last_value or 0
+        input_p = (-min(battery_p, 0)) + max(grid_p, 0) + pv_p
+        usable_p = ac_p + (-min(grid_p, 0)) + max(battery_p, 0)
+        delta_wh = (input_p - usable_p) * time_diff
+        self.daily_loss_wh += max(delta_wh, 0)
+        self.daily_imbalance_wh += delta_wh
+        # Per-hour breakdown so we can spot WHEN the balance goes
+        # negative -- the daily total alone hides night-vs-day patterns.
+        # Keys are hour strings "0".."23"; values are running Wh for the
+        # current day. They reset together with the daily totals at
+        # day-rollover. Stored separately from daily_*_wh so the stats
+        # UI can render a 24-hour breakdown table.
+        hkey = str(self.current_hour)
+        self.loss_wh_by_hour_today[hkey] = self.loss_wh_by_hour_today.get(hkey, 0) + max(delta_wh, 0)
+        self.imbalance_wh_by_hour_today[hkey] = self.imbalance_wh_by_hour_today.get(hkey, 0) + delta_wh
+        self.logger.log.debug(
+            f"Power balance tick: AC={ac_p:.0f}W grid={grid_p:.0f}W "
+            f"battery={battery_p:.0f}W PV={pv_p:.0f}W -> input={input_p:.0f}W "
+            f"usable={usable_p:.0f}W delta={input_p-usable_p:+.0f}W "
+            f"({delta_wh:+.2f}Wh in {time_diff*3600:.0f}s); "
+            f"daily_loss={self.daily_loss_wh:.0f}Wh "
+            f"imbalance={self.daily_imbalance_wh:+.0f}Wh "
+            f"hour_imbalance={self.imbalance_wh_by_hour_today.get(hkey, 0):+.1f}Wh"
+        )
+
+        self.energy_costs_by_hour[str(self.current_hour)] = (self.hour_grid_wh / 1000) * float(self.current_price or 0)
+
+        # Mirror today's running totals into the per-day history dicts
+        # so the stats page can render "today" without waiting for the
+        # day boundary. These keys overwrite each tick which is fine --
+        # the values just walk up over the day, then save_day() seals
+        # them with the final values.
+        today_iso = self._today_iso()
+        self.consumption_wh_by_day[today_iso] = round(self.daily_wh, 2)
+        self.grid_wh_by_day[today_iso] = round(self.daily_grid_wh, 2)
+        self.grid_export_wh_by_day[today_iso] = round(self.daily_grid_export_wh, 2)
+        self.pv_wh_by_day[today_iso] = round(self.daily_pv_wh, 2)
+        self.battery_charge_wh_by_day[today_iso] = round(self.daily_battery_charge_wh, 2)
+        self.battery_discharge_wh_by_day[today_iso] = round(self.daily_battery_discharge_wh, 2)
+        self.loss_wh_by_day[today_iso] = round(self.daily_loss_wh, 2)
+        self.imbalance_wh_by_day[today_iso] = round(self.daily_imbalance_wh, 2)
+        self.energy_costs_by_day[today_iso] = round(sum(self.energy_costs_by_hour.values()), 4)
 
         # Bestimme aktuelle Stunde und Tag
         current_hour = time.localtime(timestamp).tm_hour
@@ -455,7 +1199,48 @@ class PowerConsumptionBase:
         if current_day != self.current_day:
             self.save_day()  # Speichere den täglichen Verbrauch
             self.current_day = current_day
-            self.daily_wh = 0  # Setze den täglichen Verbrauch zurück
+            # Reset all four daily running totals. Note that
+            # daily_grid_wh used to NOT be reset here -- a bug that
+            # caused it to grow unbounded across days. Fixed now.
+            self.daily_wh = 0
+            self.daily_grid_wh = 0
+            self.daily_grid_export_wh = 0
+            self.daily_pv_wh = 0
+            self.daily_pv_estimated_wh = 0
+            self.daily_battery_charge_wh = 0
+            self.daily_battery_discharge_wh = 0
+            self.daily_loss_wh = 0
+            self.daily_imbalance_wh = 0
+            self.loss_wh_by_hour_today = {}
+            self.imbalance_wh_by_hour_today = {}
+            self.pv_wh_by_hour_today = {}
+            self.pv_est_wh_by_hour_today = {}
+
+            # Seed the new day's slot in the history dicts to 0
+            # immediately. Otherwise the running update() block above
+            # only refreshes the today-slot when MQTT data arrives,
+            # which can be several minutes -- during that window the
+            # stats page would show yesterday's final value as today.
+            today_iso_new = self._today_iso()
+            self.consumption_wh_by_day[today_iso_new] = 0
+            self.grid_wh_by_day[today_iso_new] = 0
+            self.grid_export_wh_by_day[today_iso_new] = 0
+            self.pv_wh_by_day[today_iso_new] = 0
+            self.battery_charge_wh_by_day[today_iso_new] = 0
+            self.battery_discharge_wh_by_day[today_iso_new] = 0
+            self.energy_costs_by_day[today_iso_new] = 0
+            # The 24-slot hourly array also needs a fresh slate,
+            # otherwise save_hour() only ever overwrites the SLOT for
+            # the hour that just finished, leaving the other 23 slots
+            # holding YESTERDAY's values. The intraday chart on the
+            # stats page would then show e.g. a "today 23:00" bar at
+            # 14:00 because yesterday's 23:00 bar is still sitting in
+            # today_arr[23]. Seed all 24 slots to 0 so only hours we
+            # actually saw today contribute to the chart.
+            self.hourly_wh_by_day[today_iso_new] = [0] * 24
+            # And persist immediately so a restart in the first few
+            # minutes of the new day doesn't restore yesterday's slot.
+            self.save_data()
 
         # Überprüfe, ob eine neue Stunde begonnen hat
         if current_hour != self.current_hour:
@@ -474,8 +1259,242 @@ class PowerConsumptionBase:
         # Aktualisieren der letzten Werte
         self.last_value = power
         self.last_grid_value = grid_power
+        self.last_pv_value = pv_power or 0
+        self.last_battery_value = battery_power or 0
         self.last_dc_value = self.P_DC_consumption_Battery
         self.last_time = timestamp
+
+    def _update_battery_session(self, battery_dt_wh, timestamp):
+        """
+        Maintain the battery session tracker.
+
+        A session is a continuous charge or discharge phase. We tolerate
+        brief reversals (PV blip during discharge, momentary draw during
+        charge) up to `session_pause_max_s` -- if the battery returns to
+        the original direction within that window, the session keeps
+        accumulating. If not, the running session is finalised into
+        `session_history` and a new one starts.
+
+        SOC is read off the live ESS unit if available; otherwise it's
+        recorded as None and the UI shows "--".
+        """
+        from datetime import datetime, timezone
+
+        battery_p = self.last_battery_value or 0
+        # SOC is set on the same instance by the MQTT receiver. Use
+        # getattr to avoid AttributeError if no SOC has been seen yet
+        # (e.g. early in startup before the first SOC topic).
+        soc_now = getattr(self, "soc", None)
+        try:
+            soc_now = float(soc_now) if soc_now is not None else None
+        except (TypeError, ValueError):
+            soc_now = None
+
+        # Direction classification with hysteresis on power magnitude.
+        # Below threshold = "idle" -- doesn't open a session, doesn't
+        # close one either.
+        if battery_p > self.session_threshold_w:
+            current_dir = "charge"
+        elif battery_p < -self.session_threshold_w:
+            current_dir = "discharge"
+        else:
+            current_dir = None  # idle, neither
+
+        ts_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
+        ts_epoch = timestamp if isinstance(timestamp, (int, float)) else None
+
+        # Case 1: no running session yet
+        if self.current_session is None:
+            if current_dir is not None:
+                self.current_session = {
+                    "type": current_dir,
+                    "start": ts_iso,
+                    "wh": 0.0,
+                    # Grid-sourced portion of a charge session's energy.
+                    # Only meaningful for charge sessions; stays 0 for
+                    # discharge. At finalisation, grid_wh / duration_h
+                    # gives the true average grid-charging power, which
+                    # is far more stable than any single instantaneous
+                    # tick (grid charging runs for hours).
+                    "grid_wh": 0.0,
+                    "soc_start_pct": soc_now,
+                    "soc_now_pct": soc_now,
+                }
+                self._session_pending_flip_until = None
+            return
+
+        sess_type = self.current_session["type"]
+
+        # Case 2: same direction (or idle) -> just integrate energy
+        if current_dir is None or current_dir == sess_type:
+            if sess_type == "charge" and battery_dt_wh > 0:
+                self.current_session["wh"] += battery_dt_wh
+                # Grid-sourced portion of THIS tick's charge energy.
+                # The grid can only be charging the pack to the extent
+                # its import exceeds the house load. We scale the tick's
+                # battery energy by (grid_surplus / battery_power),
+                # clamped to [0, 1]. PV-only charging => grid_surplus<=0
+                # => 0 grid_wh, which is exactly what we want.
+                try:
+                    batt_p = self.last_battery_value or 0
+                    grid_surplus_w = max(
+                        0.0, (self.last_grid_value or 0) - (self.last_value or 0)
+                    )
+                    if batt_p > 0 and grid_surplus_w > 0:
+                        frac = min(1.0, grid_surplus_w / batt_p)
+                        self.current_session["grid_wh"] = (
+                            self.current_session.get("grid_wh", 0.0)
+                            + battery_dt_wh * frac
+                        )
+                        # Live calibration from the RUNNING session, so
+                        # an ongoing multi-hour grid charge updates the
+                        # estimate without waiting for the session to
+                        # end. Only once it has accumulated enough grid
+                        # energy and run long enough to be meaningful.
+                        try:
+                            from datetime import datetime as _dt, timezone as _tz
+                            t0 = _dt.fromisoformat(self.current_session["start"])
+                            run_h = (
+                                _dt.now(_tz.utc).astimezone() - t0
+                            ).total_seconds() / 3600.0
+                            gwh = self.current_session.get("grid_wh", 0.0)
+                            if run_h >= 0.25 and gwh >= 200:
+                                avg_w = gwh / run_h
+                                prev = self.statsmanager.get_data(
+                                    "powerconsumption", "last_grid_charge_power_w"
+                                )
+                                prev_peak = 0.0
+                                prev_ts = 0.0
+                                if isinstance(prev, dict):
+                                    prev_peak = float(prev.get("w", 0) or 0)
+                                    prev_ts = float(prev.get("ts", 0) or 0)
+                                elif isinstance(prev, (int, float)):
+                                    prev_peak = float(prev)
+                                now_ts = _dt.now(_tz.utc).timestamp()
+                                if prev_ts and (now_ts - prev_ts) > 7 * 86400:
+                                    prev_peak = 0.0
+                                new_peak = max(prev_peak, avg_w)
+                                new_ts = now_ts if new_peak >= prev_peak else prev_ts
+                                self.statsmanager.set_status_data(
+                                    "powerconsumption",
+                                    "last_grid_charge_power_w",
+                                    {"w": round(new_peak, 1), "ts": new_ts},
+                                    save_data=False,
+                                )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            elif sess_type == "discharge" and battery_dt_wh < 0:
+                self.current_session["wh"] += -battery_dt_wh
+            # Always update soc_now if we have a fresh reading. Also
+            # backfill soc_start_pct when it's still a placeholder
+            # (None or 0 -- the latter happens when self.soc was 0
+            # because no MQTT SOC topic had arrived yet at session
+            # start). Using the first valid reading is closer to the
+            # truth than leaving it at the placeholder.
+            if soc_now is not None:
+                self.current_session["soc_now_pct"] = soc_now
+                start_soc = self.current_session.get("soc_start_pct")
+                if start_soc is None or start_soc == 0:
+                    self.current_session["soc_start_pct"] = soc_now
+            # Reset any pending flip -- direction came back.
+            self._session_pending_flip_until = None
+            return
+
+        # Case 3: opposite direction. Tolerate up to pause_max_s before
+        # actually flipping the session.
+        if self._session_pending_flip_until is None and ts_epoch is not None:
+            self._session_pending_flip_until = ts_epoch + self.session_pause_max_s
+            return  # one tick of grace, don't decide yet
+
+        if ts_epoch is not None and ts_epoch < self._session_pending_flip_until:
+            # Still inside the grace window. Don't finalize yet, but
+            # don't accumulate to the (wrong-direction) session either.
+            return
+
+        # Grace expired (or no epoch info -> commit immediately).
+        # Finalise old session, start new one.
+        old = self.current_session
+        old["end"] = ts_iso
+        old["soc_end_pct"] = soc_now
+        # Compute duration from start->end if both parseable.
+        try:
+            t0 = datetime.fromisoformat(old["start"])
+            t1 = datetime.fromisoformat(old["end"])
+            old["duration_h"] = round((t1 - t0).total_seconds() / 3600.0, 2)
+        except Exception:
+            old["duration_h"] = None
+
+        # If this was a charge session that pulled a meaningful amount
+        # of energy from the grid over a meaningful duration, derive the
+        # average grid-charging power (grid_wh / duration_h) and store it
+        # as the calibration value for the cheaper-cluster / expensive-
+        # phase simulations. Averaging over the whole session (hours)
+        # instead of a single tick gives a stable ~real charger power
+        # and ignores near-full trickle tails. Kept as a rolling 7-day
+        # max so a brief throttled session doesn't lower a good value.
+        try:
+            if (
+                old.get("type") == "charge"
+                and old.get("duration_h")
+                and old["duration_h"] >= 0.25          # >=15 min
+                and old.get("grid_wh", 0) >= 200        # >=200 Wh from grid
+            ):
+                avg_grid_w = old["grid_wh"] / old["duration_h"]
+                if avg_grid_w > 0:
+                    now_ts = datetime.now(timezone.utc).timestamp()
+                    prev = self.statsmanager.get_data(
+                        "powerconsumption", "last_grid_charge_power_w"
+                    )
+                    prev_peak = 0.0
+                    prev_ts = 0.0
+                    if isinstance(prev, dict):
+                        prev_peak = float(prev.get("w", 0) or 0)
+                        prev_ts = float(prev.get("ts", 0) or 0)
+                    elif isinstance(prev, (int, float)):
+                        prev_peak = float(prev)
+                    if prev_ts and (now_ts - prev_ts) > 7 * 86400:
+                        prev_peak = 0.0
+                    new_peak = max(prev_peak, avg_grid_w)
+                    new_ts = now_ts if new_peak >= prev_peak else prev_ts
+                    self.statsmanager.set_status_data(
+                        "powerconsumption",
+                        "last_grid_charge_power_w",
+                        {"w": round(new_peak, 1), "ts": new_ts},
+                    )
+                    self.logger.log.info(
+                        f"Grid-charge power calibrated from session: "
+                        f"{old['grid_wh']:.0f}Wh over {old['duration_h']:.2f}h "
+                        f"= {avg_grid_w:.0f}W (rolling peak "
+                        f"{new_peak:.0f}W)."
+                    )
+        except Exception as e:
+            self.logger.log.debug(f"Grid-charge calibration skipped: {e}")
+
+        # Prune to last 7 days.
+        self.session_history.append(old)
+        cutoff = datetime.now(timezone.utc).timestamp() - 7 * 86400
+        kept = []
+        for s in self.session_history:
+            try:
+                t0 = datetime.fromisoformat(s["start"]).timestamp()
+                if t0 >= cutoff:
+                    kept.append(s)
+            except Exception:
+                kept.append(s)
+        self.session_history = kept[-50:]  # hard cap
+
+        # Start a new session in the new direction.
+        self.current_session = {
+            "type": current_dir,
+            "start": ts_iso,
+            "wh": 0.0,
+            "grid_wh": 0.0,
+            "soc_start_pct": soc_now,
+            "soc_now_pct": soc_now,
+        }
+        self._session_pending_flip_until = None
 
     def get_hourly_average(self):
         """Calculates the projected hourly average."""
@@ -499,6 +1518,80 @@ class PowerConsumptionBase:
         """Returns the current daily consumption in Wh."""
         return self.daily_wh
 
+    def get_daily_grid_wh(self):
+        """Returns the current daily grid import in Wh (positive flow only)."""
+        return self.daily_grid_wh
+
+    def get_daily_grid_export_wh(self):
+        """Returns the current daily grid export in Wh (positive value, accumulated from negative flow)."""
+        return self.daily_grid_export_wh
+
+    def get_daily_pv_wh(self):
+        """Returns the current daily PV production in Wh."""
+        return self.daily_pv_wh
+
+    def set_daily_pv_wh(self, value):
+        """
+        Override the integrated daily PV value with an authoritative
+        reading (e.g. the inverter forward-counter sum). Used by
+        seusscore.collect_meters_and_inverter_sum to fill in gaps left
+        by SEUSS downtime: the integrator only sees ticks while running,
+        the forward-counter is monotonic and survives restarts.
+
+        Also bumps pv_wh_by_day[today] AND the current-hour bucket in
+        pv_wh_by_hour_today so the hourly-resolution chart stays
+        consistent with the daily total. The gap is dropped into
+        whatever hour the override happens in -- not perfect attribution,
+        but better than letting the chart silently understate yield.
+
+        Only accepts non-negative numeric input; silently ignores
+        other types.
+        """
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        if v < 0:
+            return
+        gap = v - self.daily_pv_wh
+        self.daily_pv_wh = v
+        try:
+            from datetime import date, datetime
+            today_iso = date.today().isoformat()
+            self.pv_wh_by_day[today_iso] = round(v, 2)
+            # Distribute the gap into the current hour bucket so the
+            # cumulative hourly chart matches the daily total.
+            if gap > 0 and hasattr(self, "pv_wh_by_hour_today"):
+                cur_hour = str(datetime.now().hour)
+                cur_val = self.pv_wh_by_hour_today.get(cur_hour, 0) or 0
+                try:
+                    cur_val = float(cur_val)
+                except (TypeError, ValueError):
+                    cur_val = 0.0
+                self.pv_wh_by_hour_today[cur_hour] = round(cur_val + gap, 2)
+        except Exception:
+            pass
+
+    def get_daily_battery_charge_wh(self):
+        """Returns Wh that went INTO the battery today (sum of positive battery_power × dt)."""
+        return self.daily_battery_charge_wh
+
+    def get_daily_battery_discharge_wh(self):
+        """Returns Wh that came OUT of the battery today (sum of |negative battery_power| × dt)."""
+        return self.daily_battery_discharge_wh
+
+    def get_daily_loss_wh(self):
+        """Returns the integrated daily energy loss in Wh (input - usable, clamped >= 0)."""
+        return self.daily_loss_wh
+
+    def get_daily_imbalance_wh(self):
+        """Returns the integrated daily signed imbalance in Wh (input - usable, signed)."""
+        return self.daily_imbalance_wh
+
+    def get_hour_grid_wh(self):
+        """Returns the current hour's grid import in Wh."""
+        return self.hour_grid_wh
+
     def get_minutes_since_until__midnight(self):
         """Berechnet die vergangenen Minuten seit Mitternacht."""
         now = TimeUtilities.get_now()  # Lokale Zeit holen
@@ -509,19 +1602,39 @@ class PowerConsumptionBase:
     def reset_data(self):
         """Reset all tracked data to default values."""
         self.hourly_wh = 0
+        self.hour_grid_wh = 0
         self.daily_wh = 0
+        self.daily_grid_wh = 0
+        self.daily_grid_export_wh = 0
+        self.daily_pv_wh = 0
+        self.daily_battery_charge_wh = 0
+        self.daily_battery_discharge_wh = 0
+        self.daily_loss_wh = 0
+        self.daily_imbalance_wh = 0
+        self.loss_wh_by_hour_today = {}
+        self.imbalance_wh_by_hour_today = {}
+        self.pv_wh_by_hour_today = {}
+        self.pv_est_wh_by_hour_today = {}
+        self.daily_pv_estimated_wh = 0
         self.hourly_start_time = time.time()
         self.last_value = 0
         self.last_grid_value = 0
+        self.last_pv_value = 0
+        self.last_battery_value = 0
         self.last_time = time.time()
         self.current_hour = time.localtime(time.time()).tm_hour
         self.current_day = time.localtime(time.time()).tm_yday
         self.curent_year = time.localtime(time.time()).tm_year
 
     def get_monthly_cost(self, year, month):
-        """Berechnet die Gesamtkosten für einen bestimmten Monat anhand von yday."""
-        start_day = sum(calendar.monthrange(year, m)[1] for m in range(1, month)) + 1
-        end_day = start_day + calendar.monthrange(year, month)[1] - 1
-
-        # Summe der Kosten für alle yday im Bereich
-        return sum(self.energy_costs_by_day.get(day, 0) for day in range(start_day, end_day + 1))
+        """
+        Sum of grid energy costs for the given calendar month, taken
+        from `energy_costs_by_day` which is keyed by ISO-date strings
+        ("YYYY-MM-DD").
+        """
+        days_in_month = calendar.monthrange(year, month)[1]
+        total = 0.0
+        for day in range(1, days_in_month + 1):
+            iso_key = date(year, month, day).isoformat()
+            total += self.energy_costs_by_day.get(iso_key, 0)
+        return total

@@ -25,58 +25,71 @@
 #  Project: [SEUSS -> Smart Ess Unit Spotmarket Switcher
 #
 
-from datetime import datetime
 
 class Solardata:
     """
-    Solar data container.
-    Stores PV forecast, current yield, sunrise/sunset info, battery state, etc.
-    All methods are in English and compatible with OpenMeteo class.
+    Solar data container -- holds the OpenMeteo forecast outputs and
+    the day-so-far measured yield, used by:
+
+      * solar/openmeteo.py        -- writes forecast / sun-time fields,
+                                     reads pv_measured_today_wh for the
+                                     adjustment-factor learning logic
+      * core/conditions.py        -- reads sunrise_tomorrow_day,
+                                     forecast_today_wh, forecast_tomorrow_wh
+                                     for the solar abort condition
+      * core/seusscore.py         -- writes pv_measured_today_wh from
+                                     the authoritative PowerConsumption
+                                     daily_pv_wh value (GX-bus integrated)
+
+    Naming history: the field now called `pv_measured_today_wh` was
+    previously `current_hour_solar_yield`, fed from the sum of inverter
+    forward-counters. That sum drifted ~25% from the actual PV yield
+    (e.g. 26500 Wh vs ~21000 Wh real), which both poisoned the stats
+    page and biased the openmeteo learning loop. The authoritative
+    source is now `PowerConsumption.daily_pv_wh`, which integrates
+    live PV power on the GX bus and matches both the Victron VRM total
+    and the home-page "PV today" tile.
+
+    Similarly `forecast_today_wh` / `forecast_tomorrow_wh` were
+    previously `total_current_day` / `total_tomorrow_day` -- the new
+    names match the statsmanager keys that have always been correct.
+
+    Earlier revisions of this class had a `Battery / SOC` block plus a
+    `need_soc` value pushed through SolarBatteryCalculator. Both were
+    removed when the calculator was deleted -- the abort logic in
+    conditions.py now does the SOC math itself against the live
+    essunit, which avoids the calculator's brittle "required SOC"
+    formula.
     """
 
     def __init__(self):
-        # Sunrise / Sunset
+        # Sunrise / sunset (ISO strings "YYYY-MM-DDTHH:MM" in local tz,
+        # as returned by OpenMeteo when called with timezone=...).
+        # Only sunrise_tomorrow_day is currently consumed (by the solar
+        # abort condition in conditions.py); the other three are kept
+        # as a symmetric pair so future code can grab "today's
+        # sunset" etc. without re-plumbing the OpenMeteo loop.
         self.sunrise_current_day = None
         self.sunset_current_day = None
         self.sunrise_tomorrow_day = None
         self.sunset_tomorrow_day = None
-        self.sun_time_today_minutes = None
-        self.sun_time_tomorrow_minutes = None
 
-        # PV yields
-        self.total_current_hour = 0.0
-        self.total_current_day = 0.0
-        self.total_tomorrow_day = 0.0
-        self.current_hour_forecast = 0.0
-        self.current_hour_solar_yield = 0.0
-
-        # Panel / system info
-        self.power_peak = 0.0
-
-        # Battery / SOC info
-        self.need_soc = 0
-        self.soc = 0
-        self.battery_capacity = 0
-        self.battery_minimum_soc_limit = 5
-        self.battery_current_voltage = 0.0
+        # PV yields (Wh).
+        #
+        # forecast_today_wh is a hybrid: pv_measured_today_wh (actual,
+        # so far) plus the adjusted forecast for the rest of the day.
+        # forecast_tomorrow_wh is a pure forecast.
+        # pv_measured_today_wh is the authoritative measured yield
+        # since 00:00, sourced from PowerConsumption.daily_pv_wh.
+        self.forecast_today_wh = 0.0
+        self.forecast_tomorrow_wh = 0.0
+        self.pv_measured_today_wh = 0.0
+        self.inverter_sum_today_wh = 0.0
+        self.pv_feed_stale = False
 
     # --------------------------------------------------
     # Time-related updates
     # --------------------------------------------------
-    def outside_sun_hours(self):
-        current_datetime = datetime.now()
-        current_time = current_datetime.time()
-        try:
-            sunrise_time = datetime.strptime(self.sunrise_current_day, "%Y-%m-%dT%H:%M").time()
-            sunset_time = datetime.strptime(self.sunset_tomorrow_day, "%Y-%m-%dT%H:%M").time()
-        except Exception:
-            return True  # assume outside if no data
-
-        if sunrise_time < sunset_time:
-            return current_time < sunrise_time or current_time > sunset_time
-        else:
-            return not (sunrise_time < current_time < sunset_time)
-
     def update_sunrise_current_day(self, sunrise):
         self.sunrise_current_day = sunrise
 
@@ -89,47 +102,29 @@ class Solardata:
     def update_sunset_tomorrow_day(self, sunset):
         self.sunset_tomorrow_day = sunset
 
-    def update_sun_time_today(self, minutes):
-        self.sun_time_today_minutes = minutes
-
-    def update_sun_time_tomorrow(self, minutes):
-        self.sun_time_tomorrow_minutes = minutes
-
     # --------------------------------------------------
     # PV yield updates
     # --------------------------------------------------
-    def update_total_current_hour(self, value):
-        self.total_current_hour = value
+    def update_forecast_today_wh(self, value):
+        self.forecast_today_wh = value
 
-    def update_total_current_day(self, value):
-        self.total_current_day = value
+    def update_forecast_tomorrow_wh(self, value):
+        self.forecast_tomorrow_wh = value
 
-    def update_total_tomorrow_day(self, value):
-        self.total_tomorrow_day = value
+    def update_pv_measured_today_wh(self, value):
+        self.pv_measured_today_wh = value
 
-    def update_current_hour_forecast(self, value):
-        self.current_hour_forecast = value
+    def update_inverter_sum_today_wh(self, value):
+        """Inverter forward-counter sum for today (Wh). Used by the
+        forecast learning loop as a plausibility cross-check against
+        the GX-bus integration: when the two disagree strongly, at
+        least one measurement chain is broken (WLAN outage, DTU
+        restart, counter re-base) and learning must be skipped."""
+        self.inverter_sum_today_wh = value
 
-    def update_current_hour_solar_yield(self, value):
-        self.current_hour_solar_yield = value
-
-    def update_power_peak(self, value):
-        self.power_peak = value
-
-    # --------------------------------------------------
-    # Battery / SOC updates
-    # --------------------------------------------------
-    def update_need_soc(self, percentage):
-        self.need_soc = round(percentage / 5) * 5
-
-    def update_soc(self, percentage):
-        self.soc = percentage
-
-    def update_battery_capacity(self, capacity):
-        self.battery_capacity = capacity
-
-    def update_battery_minimum_soc_limit(self, limit):
-        self.battery_minimum_soc_limit = limit
-
-    def update_battery_current_voltage(self, voltage):
-        self.battery_current_voltage = voltage
+    def update_pv_feed_stale(self, value):
+        """True while no complete PV aggregate has arrived for several
+        minutes (DTU/WLAN dropout). During multi-day outages BOTH
+        measurement chains read ~0, so the counter-vs-integration
+        cross-check alone cannot veto learning -- this flag can."""
+        self.pv_feed_stale = bool(value)

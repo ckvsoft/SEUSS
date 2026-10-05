@@ -31,10 +31,16 @@ from datetime import datetime, timezone
 
 import socket
 import requests
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError, RequestException
 
 from spotmarket.abstract_classes.item import Item
 from spotmarket.abstract_classes.marketdata import MarketData
+
+
+# Quarter length in milliseconds (15 minutes * 60s * 1000ms).
+# Awattar timestamps are in milliseconds, so we work in the same unit
+# to keep the integer arithmetic obvious.
+_QUARTER_MS = 15 * 60 * 1000
 
 
 class AwattarItem(Item):
@@ -53,7 +59,11 @@ class Awattar(MarketData):
         try:
             self._calculate_dates(use_second_day, True)
             url = self._make_url()
-            response = requests.get(url)
+            # 15s timeout: see entsoe.py for rationale -- without a
+            # timeout, a DNS or TCP stall here hangs the main eval
+            # loop indefinitely (observed: 23h freeze after the DNS
+            # outage on 2026-06-11).
+            response = requests.get(url, timeout=15)
 
             if response.status_code == 200:
                 return self._load_data_from_json(response.text)
@@ -70,15 +80,65 @@ class Awattar(MarketData):
                 self.logger.log.error("Please check your network connection and server configuration.")
 
             return []
+        except RequestException as e:
+            # Covers ReadTimeout/ConnectTimeout/SSLError/etc. -- see entsoe.py
+            # for full rationale. Without this, a 15s server stall throws
+            # ReadTimeout which ConnectionError doesn't catch, and the eval
+            # thread dies.
+            self.logger.log.warning(
+                f"Awattar request failed: {type(e).__name__}: {e}. "
+                f"Skipping this cycle, will retry on next eval."
+            )
+            return []
+        except Exception as e:
+            # Safety net for unexpected errors (bad JSON, attribute errors,
+            # etc.) -- never let one bad cycle kill the worker thread.
+            self.logger.log.exception(
+                f"Unexpected error in Awattar load_data: {e}"
+            )
+            return []
 
     def _load_data_from_json(self, json_data):
+        """
+        Parse Awattar JSON and emit 15-minute items.
+
+        Awattar provides hourly prices. To keep the rest of the system
+        on a uniform 15-minute resolution (matching ENTSO-E and Tibber),
+        we split each hourly entry into 4 identical quarter items.
+        The price is the same for all 4 quarters of an Awattar hour,
+        because Awattar genuinely has no sub-hour resolution -- so
+        splitting carries no information loss.
+        """
         try:
             data = json.loads(json_data)
             items = []
             for entry in data.get('data', []):
                 current_price = float(entry.get('marketprice'))
-                awattar_item = AwattarItem(entry.get('start_timestamp'), entry.get('end_timestamp'), current_price, self.fee)
-                items.append(awattar_item)
+                hour_start = int(entry.get('start_timestamp'))
+                hour_end = int(entry.get('end_timestamp'))
+
+                # Sanity check: an Awattar entry should be exactly one hour.
+                # If a future API change ever delivers something else, we
+                # honour the actual span instead of assuming 60 minutes.
+                span_ms = hour_end - hour_start
+                if span_ms <= 0:
+                    self.logger.log.warning(
+                        f"Awattar entry with non-positive span skipped: {entry}"
+                    )
+                    continue
+
+                quarter_count = max(1, span_ms // _QUARTER_MS)
+                for q in range(quarter_count):
+                    q_start = hour_start + q * _QUARTER_MS
+                    q_end = q_start + _QUARTER_MS
+                    # Clamp the last quarter to the original entry's end,
+                    # in case the entry isn't a clean multiple of 15min.
+                    if q == quarter_count - 1:
+                        q_end = hour_end
+                    items.append(
+                        AwattarItem(q_start, q_end, current_price, self.fee)
+                    )
+
             return items
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.logger.log.warning(f"Error loading Awattar prices: {e}")

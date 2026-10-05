@@ -28,7 +28,6 @@
 import base64
 import binascii
 from typing import Dict, List
-import json
 import random
 import re
 import operator
@@ -51,12 +50,12 @@ class Utils:
     @staticmethod
     def decode_from_base64(encoded_string: str) -> str:
         try:
-            # Füge das Padding wieder hinzu, wenn es fehlt
-            missing_padding = len(encoded_string) % 4
+            # Add the padding back if it missing
+            padded = encoded_string
+            missing_padding = len(padded) % 4
             if missing_padding:
-                encoded_string += '=' * (4 - missing_padding)
-
-            decoded_bytes = base64.urlsafe_b64decode(encoded_string)
+                padded += '=' * (4 - missing_padding)
+            decoded_bytes = base64.urlsafe_b64decode(padded)
             decoded_string = decoded_bytes.decode('utf-8')
             return decoded_string
         except (binascii.Error, UnicodeDecodeError):
@@ -91,14 +90,6 @@ class Utils:
         return config
 
     @staticmethod
-    def is_json_string(s):
-        try:
-            json_object = json.loads(s.strip())
-            return isinstance(json_object, dict)
-        except json.JSONDecodeError:
-            return False
-
-    @staticmethod
     def generate_random_hex(length):
         random_hex = ''.join(random.choices('0123456789abcdef', k=length))
         return random_hex
@@ -125,7 +116,18 @@ class Utils:
 
     @staticmethod
     def calculate_fee(base_value, fee_str):
-        if fee_str == "":
+        # Fees arrive as ct/kWh and have to land at potency 14 to add
+        # correctly to a price stored at potency 13 (the unit chain
+        # absorbs the /1000 between EUR/MWh and ct/kWh). See the
+        # operator-path comment below for the full reasoning.
+        if isinstance(fee_str, (int, float)):
+            return float(Utils.convert_to_millicents(float(fee_str), 14))
+        if fee_str is None or fee_str == "":
+            return 0.0
+        if not isinstance(fee_str, str):
+            CustomLogger().log.warning(
+                f"Unexpected fee type {type(fee_str).__name__}: {fee_str!r}; treating as 0."
+            )
             return 0.0
 
         expr = fee_str.strip()
@@ -144,9 +146,14 @@ class Utils:
         }
 
         try:
-            # Wenn die Fee nur eine Zahl ist (z. B. "2.5" oder "-2.5"), direkt zurückgeben
+            # Bare number string (e.g. "2.5", "-2.5", "+ 13.5"). The
+            # regex tolerates a sign followed by optional whitespace,
+            # but float() does NOT — "+ 13.5" would throw. Strip the
+            # interior whitespace so all sign+number variants parse.
             if re.match(r"^[+\-]?\s*\d+(\.\d+)?$", expr):
-                return float(expr)
+                return float(
+                    Utils.convert_to_millicents(float(expr.replace(" ", "")), 14)
+                )
 
             # Prozentwert berechnen, falls vorhanden (z. B. "3% + 2.5")
             percentage_fee = 0.0
@@ -158,11 +165,24 @@ class Utils:
                     percentage_fee = base_value * (float(percentage_match.group(1)) / 100)
                     expr = expr.replace(percentage_match.group(0), "")  # Prozent-Anteil entfernen
 
-            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5")
-            matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr)
+            # Verbleibende Fixwerte berechnen (z. B. "+ 2.5"). Implicit
+            # leading "+" if the first non-whitespace character is a
+            # digit -- otherwise "1.5 + 13.5" would only match the
+            # second term and silently drop the first.
+            expr_for_match = expr.lstrip()
+            if expr_for_match[:1].isdigit():
+                expr_for_match = "+ " + expr_for_match
+            matches = re.findall(r"([+\-])\s*(\d+\.?\d*)", expr_for_match)
 
             for op, num in matches:
-                num = Utils.convert_to_millicents(float(num))
+                # Note: potency 14 here, not 13. Prices arrive as
+                # EUR/MWh (Awattar) or EUR/MWh-equivalent (Entsoe)
+                # and are stored at potency 13; millicent_to_cent
+                # divides by 10^14 to get back to ct/kWh. So a fee
+                # given in ct/kWh has to land at potency 14 to add
+                # correctly. Don't "fix" this without understanding
+                # the unit chain.
+                num = Utils.convert_to_millicents(float(num), 14)
                 fixed_fee = OPS[op](fixed_fee, num)
 
             return percentage_fee + fixed_fee
@@ -198,11 +218,3 @@ class Utils:
         except (TypeError, ValueError):
             CustomLogger().log.error(f"Error converting price: {price}")
             return None
-
-    @staticmethod
-    def commercial_round(value, digits=2):
-        """
-        Perform commercial rounding (0.5 rounds up).
-        """
-        multiplier = 10 ** digits
-        return float(int(value * multiplier + 0.5000001) / multiplier)

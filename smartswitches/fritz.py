@@ -33,11 +33,11 @@ class Fritz(SmartSwitch):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # Aufteilen der IPs und AIN-Gruppen
-        self.ips = self.ips.split("|") if "|" in self.ips else [self.ips]
+        # self.ips is already a list (parsed by SmartSwitch base).
+        # Parse the AIN groups parallel to the ips list.
         self.ain_groups = [group.split(",") for group in kwargs.get("ains", "").split("|")]
 
-        # Filtert deaktivierte IPs und deren zugehörige AIN-Gruppen
+        # Filter disabled IPs and their corresponding AIN groups
         self.ips, self.ain_groups = self._filter_ips_and_ains(self.ips, self.ain_groups)
 
     def _filter_ips_and_ains(self, ips, ain_groups):

@@ -14,27 +14,71 @@
             <form id="meinFormular" autocomplete="off">
     <div class="container">
         <div class="left">
+                <%
+                # Top-level keys that get their own grouped fieldset
+                # below; the generic loop should skip them.
+                solar_keys = [
+                    "use_solar_forecast_to_abort",
+                    "solar_adj_ewma_alpha",
+                    "solar_adj_min_theoretical_wh",
+                    "solar_adj_min_sun_hours",
+                    "solar_adj_max_daily_change",
+                ]
+                battery_keys = [
+                    "skip_charge_when_battery_covers_expensive_phase",
+                    "skip_charge_when_cheaper_cluster_coming",
+                    "cheaper_cluster_min_reserve_hours",
+                    "skip_charge_for_upcoming_negative_prices",
+                    "smart_discharge_priority_to_expensive_hours",
+                    "delay_grid_charging_below_active_soc_limit",
+                    "discharge_fallthrough_on_charge_veto",
+                ]
+                economics_keys = [
+                    "economic_price_ceiling",
+                    "round_trip_efficiency",
+                ]
+                # Cap-strategy-only switches: dormant under the economic
+                # strategy (the marginal rule decides; the flags are
+                # simply not registered there). Hidden while economic
+                # is active; they re-appear when flipping back to cap.
+                cap_only_keys = {
+                    "skip_charge_when_battery_covers_expensive_phase",
+                    "skip_charge_when_cheaper_cluster_coming",
+                    "cheaper_cluster_min_reserve_hours",
+                    "charging_price_hard_cap",
+                }
+                # Hidden from the editor: deprecated flags. They stay
+                # functional for backward compatibility (existing
+                # configs keep working) but must not be configured
+                # anymore -- see the DEPRECATED rows in the README.
+                deprecated_keys = [
+                    "skip_charge_when_battery_sufficient",
+                    "skip_charge_when_battery_covers_overnext",
+                    # Auto-detected since 0.8.58: measured grid-charge
+                    # power wins, else GX/BMS capability. Manual value
+                    # ignored (goes stale after hardware changes).
+                    "charge_power_watts",
+                ]
+                grouped_keys = set(solar_keys + battery_keys + economics_keys + deprecated_keys)
+                section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]
+                %>
                 % for key, value in config.items():
-                    <%
-                    if tooltips and key in tooltips:
-                        title=tooltips.get(key)
-                        additional=' ℹ️'
-                    else:
-                        title = ''
-                        additional= ''
-                    end
-                    formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
-                    %>
-                    % if key not in ["ess_unit", "markets", "prices", "pv_panels", "smart_switches"]:
+                    % if key not in section_keys and key not in grouped_keys and key not in deprecated_keys:
+                        <%
+                        if tooltips and key in tooltips:
+                            title = tooltips.get(key)
+                            additional = ' \u2139\ufe0f'
+                        else:
+                            title = ''
+                            additional = ''
+                        end
+                        formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                        %>
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
                             <br/>
-                            <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                             <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
-                        % elif key == "password":
-                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
-                            <input type="password" id="{{ key }}" name="{{ key }} autofill="new-password">
-                            <span id="password-toggle" onclick="togglePasswordVisibility()">👁️</span><br>
+                            <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
                         % elif key == "log_level":
                             <select id="{{ key }}" name="{{ key }}">
                                 <option value="DEBUG" {{ 'selected' if value == 'DEBUG' else '' }}>DEBUG</option>
@@ -42,17 +86,132 @@
                                 <option value="WARNING" {{ 'selected' if value == 'WARNING' else '' }}>WARNING</option>
                                 <option value="INFO" {{ 'selected' if value == 'INFO' else '' }}>INFO</option>
                             </select><br>
+                        % elif key == "tariff_resolution":
+                            <select id="{{ key }}" name="{{ key }}">
+                                <option value="hourly" {{ 'selected' if value == 'hourly' else '' }}>Hourly</option>
+                                <option value="quarterly" {{ 'selected' if value == 'quarterly' else '' }}>Quarterly (15 min)</option>
+                            </select><br>
+                        % elif key == "control_backend":
+                            <select id="{{ key }}" name="{{ key }}">
+                                <option value="auto" {{ 'selected' if value == 'auto' else '' }}>Auto (classic registers)</option>
+                                <option value="classic" {{ 'selected' if value == 'classic' else '' }}>Classic (Day/MaxDischargePower toggles)</option>
+                            </select><br>
                         % else:
                             <input type="text" id="{{ key }}" name="{{ key }} " value="{{ value }}"><br>
                         % end
                     % end
                 % end
 
+                <fieldset>
+                    <legend>Solar Forecast</legend>
+                    % for key in solar_keys:
+                        % if key in config:
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
+
+                <fieldset>
+                    <legend>Battery / Charging</legend>
+                    % if economic_mode:
+                        <p class="economic-note">Economic mode active: the cap-only rules (covering-block, cheaper-cluster) are hidden while dormant &mdash; the marginal-price rule decides. They re-appear when the strategy is switched back to Cap.</p>
+                    % end
+                    % if isinstance(config.get("prices"), list) and config["prices"] and "charging_strategy" in config["prices"][0]:
+                        <%
+                        strategy_value = config["prices"][0]["charging_strategy"]
+                        if tooltips and "charging_strategy" in tooltips:
+                            title = tooltips.get("charging_strategy")
+                            additional = ' \u2139\ufe0f'
+                        else:
+                            title = ''
+                            additional = ''
+                        end
+                        %>
+                        <label class="tooltip" for="prices:charging_strategy" title="{{ title }}">{{ " ".join(word.capitalize() for word in "charging_strategy".split("_")) }}{{ additional }}</label><br>
+                        <select id="prices:charging_strategy" name="prices:charging_strategy">
+                            <option value="cap" {{ 'selected' if strategy_value == 'cap' else '' }}>Cap (hard cap blocks charging)</option>
+                            <option value="economic" {{ 'selected' if strategy_value == 'economic' else '' }}>Economic (marginal displaced price)</option>
+                        </select><br>
+                        <br>
+                    % end
+                    % for key in battery_keys:
+                        % if key in config and not (economic_mode and key in cap_only_keys):
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
+
+                <fieldset>
+                    <legend>Economic strategy</legend>
+                    % for key in economics_keys:
+                        % if key in config:
+                            <%
+                            value = config[key]
+                            if tooltips and key in tooltips:
+                                title = tooltips.get(key)
+                                additional = ' \u2139\ufe0f'
+                            else:
+                                title = ''
+                                additional = ''
+                            end
+                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            %>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            % if isinstance(value, bool):
+                                <br/>
+                                <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                            % else:
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                            % end
+                        % end
+                    % end
+                </fieldset>
+
                 % if isinstance(config["prices"], list):
                     <fieldset>
                         <legend>Prices</legend>
                         % for price_data in config["prices"]:
                             % for field_key, field_value in price_data.items():
+                                % if field_key == "charging_strategy" or (economic_mode and field_key in cap_only_keys):
+                                    % continue
+                                % end
                                 <%
                                 if tooltips and field_key in tooltips:
                                     title=tooltips.get(field_key)
@@ -65,8 +224,13 @@
                                 %>
                                 <label class="tooltip" for="prices:{{ field_key }}" title="{{ title }}">{{ formatted_text }}</label><br/>
                                 % if isinstance(field_value, bool):
-                                    <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
                                     <input type="hidden" id="prices:{{ field_key }}_hidden" name="prices:{{ field_key }}" value="off">
+                                    <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
+                                % elif field_key == "charging_strategy":
+                                    <select id="prices:{{ field_key }}" name="prices:{{ field_key }}">
+                                        <option value="cap" {{ 'selected' if field_value == 'cap' else '' }}>Cap (hard cap blocks charging)</option>
+                                        <option value="economic" {{ 'selected' if field_value == 'economic' else '' }}>Economic (marginal displaced price)</option>
+                                    </select><br>
                                 % else:
                                     <input type="text" id="prices:{{ field_key }}" name="prices:{{ field_key }}" value="{{ field_value }}"><br>
                                 % end
@@ -85,6 +249,7 @@
                     <option value="markets">Markets</option>
                     <option value="pv_panels">Pv Panels</option>
                     <option value="smart_switches">Smart Switches</option>
+                    <option value="solar_forecast_providers">Solar Forecast Providers</option>
                     <!-- Weitere Optionen nach Bedarf hinzufügen -->
                 </select>
 
@@ -103,6 +268,10 @@
 
                 <div id="sectionFields_smart_switches" style="display: none;">
                     <!-- Felder für die Sektion "smart_switches" -->
+                </div>
+
+                <div id="sectionFields_solar_forecast_providers" style="display: none;">
+                    <!-- Felder für die Sektion "solar_forecast_providers" -->
                 </div>
 
                 <input type="submit" value="Save Configuration">

@@ -38,9 +38,9 @@ from datetime import datetime, timedelta
 import core.version as version
 from core.statsmanager import StatsManager
 from core.websocketserver import WebSocketServer
-from solar.openmeteo import OpenMeteo
+from solar.openmeteo import OpenMeteo  # noqa: F401  (kept for backward compat)
+from solar.solarforecastmanager import SolarForecastManager
 from solar.solardata import Solardata
-from solar.solarbatterycalculator import SolarBatteryCalculator
 from core.conditions import Conditions, ConditionResult
 from core.config import Config
 from core.log import CustomLogger
@@ -86,9 +86,36 @@ class SEUSS:
     def run_essunit(self):
         essunit = self.initialize_essunit()
         if essunit is not None:
+            # Resolve the control backend (classic register toggles)
+            # against the actual firmware. Logged once per change.
+            self._resolve_control_backend(essunit)
+
             unit_config = essunit.get_config()
             active_soc_limit = essunit.get_active_soc_limit()
             soc = essunit.get_soc()
+
+            # Persist battery capacity in Wh into the StatsManager so
+            # the web layer (stats page in particular) can read it
+            # without holding a reference to the essunit. Victron
+            # reports capacity in Ah; get_battery_full_wh() converts
+            # using the configured pack voltage. Best-effort -- if the
+            # essunit can't deliver values right now (D-Bus timeout
+            # etc.) we just skip this update.
+            try:
+                full_wh = essunit.get_battery_full_wh() or 0
+                if full_wh > 0:
+                    # Persist to disk (save_data=True): the stats handler
+                    # creates a fresh StatsManager() on every page load,
+                    # which calls load_data() and overwrites the class-
+                    # level dict with whatever's on disk. RAM-only writes
+                    # with save_data=False would be wiped out before the
+                    # web layer ever sees them, leaving cycles=0 forever.
+                    self.statsmanager.set_status_data(
+                        "ess_unit", "battery_full_wh", round(float(full_wh), 1),
+                    )
+            except Exception as e:
+                self.logger.log.debug(f"battery_full_wh persist skipped: {e}")
+
             delay_active_soc_limit = self.config.config_data.get("delay_grid_charging_below_active_soc_limit", False)
             self.logger.log.debug(f"Active Soc Limit: {active_soc_limit} Soc: {soc}")
 
@@ -101,7 +128,7 @@ class SEUSS:
                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 1)
                 t_soc = soc #(soc // 5) * 5
                 if t_soc < active_soc_limit:
-                    essunit.set_active_soc_limit(t_soc)
+                    self._apply_active_soc_limit(essunit, t_soc)
 
             else:
                 check_limit = self.statsmanager.get_data("ess_unit", "soc_limit")
@@ -111,7 +138,7 @@ class SEUSS:
                         if soc > active_soc_limit:
                             t_soc = soc # (soc // 5) * 5
                             if t_soc < check_limit:
-                                essunit.set_active_soc_limit(t_soc)
+                                self._apply_active_soc_limit(essunit, t_soc)
 
                         if active_soc_limit > check_limit:
                             self.statsmanager.set_status_data("ess_unit", "soc_limit", active_soc_limit)
@@ -119,7 +146,7 @@ class SEUSS:
 
                         if abs(soc - check_limit) <= 1:
                                 # Auf gespeicherten Wert zurücksetzen und Delay beenden
-                                essunit.set_active_soc_limit(check_limit)
+                                self._apply_active_soc_limit(essunit, check_limit)
                                 self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
                                 self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
                                 self.statsmanager.set_status_data("ess_unit", "soc_delay", 0)
@@ -133,8 +160,8 @@ class SEUSS:
 
             # if essunit is not None:
             #    essunit.get_data()
-            total_solar = self.process_solar_data(essunit)
-            self.process_solar_forecast(total_solar)
+            inverter_sum_today_wh = self.process_solar_data(essunit)
+            self.process_solar_forecast(inverter_sum_today_wh)
             if self.items.get_item_count() > 0:
                 self.evaluate_conditions_and_control_charging_discharging(essunit)
             else:
@@ -160,37 +187,53 @@ class SEUSS:
 
         try:
             while True:
-                self.current_time = datetime.now()
+                # Per-iteration safety net: any unhandled exception inside
+                # run_markets/run_essunit/perform_test_run (e.g. a network
+                # timeout that wasn't caught at the provider level) must
+                # NOT kill this thread. The thread IS the main eval loop;
+                # if it dies, SEUSS goes silent until the next process
+                # restart. Observed 2026-06-12: ENTSO-E ReadTimeout
+                # escaped entsoe.load_data, killed run_svs, no prices
+                # updated for hours until kill -9 + auto-restart.
+                try:
+                    self.current_time = datetime.now()
 
-                if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
-                    self.run_markets()
-                    if self.items:
-                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log.info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
-                        )
-
-                if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
-                    lasttime_minute = self.current_time.minute
-
-                    count = self.items.get_item_count()
-                    self.logger.log.debug(f"Item count: {count}")
-                    self.logger.log.debug(f"Current hour: {self.current_time.hour}")
-                    if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
+                    if (self.current_time.minute == 0 and self.current_time.second == 5) or self.items.get_item_count() == 0:
                         self.run_markets()
-                    else:
-                        self.run_essunit()
+                        if self.items:
+                            next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                            self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                            self.logger.log.info(
+                                f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                            )
 
-                    if self.items:
-                        next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                        self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
-                        self.logger.log.info(
-                            f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
-                        )
+                    if self.current_time.minute % self.interval_minutes == 0 and self.current_time.minute != 0 and self.current_time.minute != lasttime_minute:
+                        lasttime_minute = self.current_time.minute
 
-                self.perform_test_run()
-                self.handle_no_data_sleep()
+                        count = self.items.get_item_count()
+                        self.logger.log.debug(f"Item count: {count}")
+                        self.logger.log.debug(f"Current hour: {self.current_time.hour}")
+                        if (self.config.use_second_day and count < 25) and 13 <= self.current_time.hour < 15:
+                            self.run_markets()
+                        else:
+                            self.run_essunit()
+
+                        if self.items:
+                            next_hour = self.current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                            self.logger.log.info(f"Next price check at {next_hour.strftime('%H:%M')}")
+                            self.logger.log.info(
+                                f"Current Spotmarket: {self.items.current_market_name}, failback: {self.items.failback_market_name}"
+                            )
+
+                    self.perform_test_run()
+                    self.handle_no_data_sleep()
+                except KeyboardInterrupt:
+                    raise  # Let the outer handler do graceful_exit
+                except Exception as iter_exc:
+                    self.logger.log.exception(
+                        f"Unhandled error in run_svs iteration: {iter_exc}. "
+                        f"Continuing -- next iteration will retry."
+                    )
 
                 self.current_time = datetime.now()
                 sleep_time = 1 - (self.current_time.microsecond / 1_000_000)
@@ -217,21 +260,39 @@ class SEUSS:
         return GenericLoaderFactory.create_loader("essunit", self.config.essunit)
 
     def process_solar_data(self, essunit):
-        total_solar = 0.0
+        inverter_sum_today_wh = 0.0
         if essunit is not None:
-            total_solar = self.get_total_solar_yield(essunit)
+            inverter_sum_today_wh = self.collect_meters_and_inverter_sum(essunit)
 
-        return total_solar
+        return inverter_sum_today_wh
 
-    def get_total_solar_yield(self, essunit):
-        self.solardata.update_soc(essunit.get_soc())
-        self.solardata.update_battery_capacity(essunit.get_battery_capacity())
-        self.solardata.update_battery_minimum_soc_limit(essunit.get_battery_minimum_soc_limit())
-        self.solardata.update_battery_current_voltage(essunit.get_battery_current_voltage())
+    def collect_meters_and_inverter_sum(self, essunit):
+        """
+        Walks the configured grid meters (for logging + the
+        forward_hourly stats update) and the configured PV inverters
+        (to sum their forward-counter Wh for today).
 
+        Two outputs are produced:
+
+        * `inverter_sum_today_wh` -- the sum of inverter forward
+          counters since 00:00, returned to the caller. Used downstream
+          ONLY for the "solar hour performance" log line in
+          process_solar_forecast (observed-vs-forecast ratio for ops
+          visibility). NOT pushed to solardata anymore -- it has been
+          observed to drift ~25% from reality (e.g. 26500 Wh inverter
+          sum vs ~21000 Wh actual yield), so feeding it into the
+          adjustment-factor learning loop poisoned that loop.
+
+        * `pv_measured_today_wh` -- the authoritative measured yield,
+          read from PowerConsumption.daily_pv_wh (GX-bus integrated
+          PV power, matches Victron VRM and the home-page "PV today"
+          tile). This is what gets pushed to solardata for downstream
+          consumers (openmeteo learning loop, conditions abort logic,
+          stats page).
+        """
         gridmeters = essunit.get_grid_meters()
         inverters = essunit.get_solar_energy()
-        total_solar = 0.0
+        inverter_sum_today_wh = 0.0
 
         for key_outer, value_outer in gridmeters.gridmeters.items():
             customname = gridmeters.get_value(key_outer, 'CustomName')
@@ -248,9 +309,11 @@ class SEUSS:
         total_forward_hourly_list = self.statsmanager.get_data("powerconsumption","hourly_watt_average")
         total_forward_hourly = total_forward_hourly_list[0] if total_forward_hourly_list else 0.0
         manager_instance = self.power_consumption_manager.get_instance()
+        pv_measured_today_wh = 0.0
         if manager_instance:
             value = manager_instance.get_hourly_average()
             consumption = manager_instance.get_daily_wh()
+            pv_measured_today_wh = float(manager_instance.get_daily_pv_wh() or 0.0)
             if value > 0.0:
                 total_forward_hourly = (total_forward_hourly + value) / 2
             self.logger.log.info(
@@ -262,86 +325,249 @@ class SEUSS:
             customname = inverters.get_value(key_outer, 'CustomName')
             productname = inverters.get_value(key_outer, 'ProductName')
             forward = inverters.get_forward_kwh(key_outer)
-            total_solar += float(forward)
+            inverter_sum_today_wh += float(forward)
             self.logger.log.debug(f"Found PV Inverter:  {productname} {customname}.")
             self.logger.log.info(f"{productname} {customname} yield today:  {round(forward, 2)} Wh.")
 
             for key_inner, value_inner in value_outer.items():
                 self.logger.log.debug(f"  {key_inner}: {json.loads(value_inner)['value']}")
 
-        self.logger.log.info(f"All Inverters yield today:  {round(total_solar, 2)} Wh.")
-        self.solardata.update_current_hour_solar_yield(round(total_solar, 2))
-        return total_solar
+        self.logger.log.info(
+            f"All Inverters yield today (forward-counter sum):  {round(inverter_sum_today_wh, 2)} Wh, "
+            f"authoritative PV measured today (GX-bus): {round(pv_measured_today_wh, 2)} Wh.")
 
-    def process_solar_forecast(self, total_solar):
-        forecast = OpenMeteo()
-        # This now updates the adjustment_factor internally
-        total_forecast = forecast.forecast(self.solardata)
+        # Authoritative override: the inverter forward-counter is
+        # robust against SEUSS being offline (the inverter keeps
+        # counting on its own). The GX-bus integration we run in
+        # PowerConsumption can only count PV power it actually saw
+        # tick-by-tick, so any restart, network hiccup, or process
+        # downtime leaves a gap. If the forward-counter sum is higher
+        # than the integrated value, the gap exists -- adopt the
+        # counter value as the authoritative "PV today" so the stats
+        # page, pv_wh_by_day, and the openmeteo learning loop see
+        # the real yield. We only adjust UPWARD; if the counter is
+        # somehow lower (forward_start race condition, counter reset)
+        # we keep the integrated value to avoid going backwards.
+        if (inverter_sum_today_wh > 0
+                and inverter_sum_today_wh > pv_measured_today_wh):
+            gap = inverter_sum_today_wh - pv_measured_today_wh
+            self.logger.log.info(
+                f"PV gap detected: integrator {pv_measured_today_wh:.0f} Wh "
+                f"vs forward-counter {inverter_sum_today_wh:.0f} Wh "
+                f"(+{gap:.0f} Wh). Adopting counter value."
+            )
+            try:
+                if manager_instance and hasattr(manager_instance, "set_daily_pv_wh"):
+                    manager_instance.set_daily_pv_wh(inverter_sum_today_wh)
+                pv_measured_today_wh = inverter_sum_today_wh
+            except Exception as e:
+                self.logger.log.warning(
+                    f"Couldn't apply forward-counter override: {e}"
+                )
 
-        calculator = SolarBatteryCalculator(self.solardata)
-        self.solardata.update_need_soc(calculator.calculate_battery_percentage())
-        self.logger.log.info(f"Needed Charging SOC: {self.solardata.need_soc}%.")
+        # Push the authoritative value to solardata, NOT the inverter
+        # forward-counter sum -- see method docstring for why.
+        self.solardata.update_pv_measured_today_wh(round(pv_measured_today_wh, 2))
+        # Also hand the counter sum over so the forecast learning loop
+        # can cross-check both chains and skip learning while they
+        # disagree (broken measurement basis, e.g. WLAN outage).
+        self.solardata.update_inverter_sum_today_wh(round(inverter_sum_today_wh, 2))
+        # PV-feed health for the learning veto: timestamps are USELESS
+        # here -- with the DTU down the GX keeps publishing PV topics
+        # with value 0, so messages never go stale. The reliable signal
+        # is the balance reconstruction itself: once it has accumulated
+        # a meaningful amount today, the feed is demonstrably blind and
+        # the adjustment-factor learning must stay paused (measured PV
+        # is structurally too low).
+        try:
+            est_today = float(getattr(manager_instance, "daily_pv_estimated_wh", 0) or 0)
+            self.solardata.update_pv_feed_stale(est_today > 100)
+        except Exception:
+            pass
+        return inverter_sum_today_wh
 
-        # Get the freshly calculated values
-        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or 1.0
-        efficiency_display = round(adj[0] * 100, 2)
+    def process_solar_forecast(self, inverter_sum_today_wh):
+        forecast_provider = SolarForecastManager()
+        # Now returns a dictionary
+        forecast_results = forecast_provider.forecast(self.solardata)
 
-        if total_forecast is not None and total_forecast > 0.0:
-            # 'total_forecast' is the prediction for the CURRENT HOUR.
-            # We compare it to 'total_solar' (what actually came in this hour so far)
-            hour_performance = round((total_solar / total_forecast) * 100, 2)
+        adj = self.statsmanager.get_data('solar', 'adjustment_factor') or [1.0]
+        adj_factor = adj[0]
+        efficiency_display = round(adj_factor * 100, 2)
 
-            self.logger.log.info(f"Solar hour performance: {hour_performance}% of adjusted forecast.")
+        # Calculate expected yield from 00:00 until the end of the current hour
+        # We apply the adjustment_factor to the raw forecast
+        expected_until_now = (forecast_results["past_today"] + forecast_results["current_hour"]) * adj_factor
+
+        if expected_until_now > 0.0:
+            # Ops-visibility log: how does the inverter forward-counter
+            # sum compare to the adjusted forecast for the same window?
+            # We deliberately use the inverter sum here (not the
+            # authoritative pv_measured_today_wh) because this metric
+            # is meant to surface inverter-vs-model drift -- the same
+            # drift that motivated switching the learning loop OFF the
+            # inverter sum.
+            solar_performance = round((inverter_sum_today_wh / expected_until_now) * 100, 2)
+
+            self.logger.log.info(f"Solar hour performance (inverter sum vs adjusted forecast): {solar_performance}%.")
             self.logger.log.info(f"Current System Efficiency (Adj-Factor): {efficiency_display}%")
         else:
-            self.logger.log.info(f"Solar forecast is zero. Current Adj-Factor: {efficiency_display}%")
+            self.logger.log.info(f"Solar forecast until now is zero. Current Adj-Factor: {efficiency_display}%")
 
     def evaluate_conditions_and_control_charging_discharging(self, essunit):
-        only_observation = False
-        if essunit:
-            info = self.config.get_essunit_info(essunit.get_name())
-            only_observation = info.get("only_observation", False)
+        # Previously this method was completely skipped when an essunit
+        # was in observation mode -- which meant no condition evaluation
+        # at all, and the user couldn't see WHAT SEUSS would do. We now
+        # always run the evaluation, and let the _apply_* wrappers (in
+        # control_charging / control_discharging / control_switching)
+        # decide whether to actually touch the hardware. Lines prefixed
+        # with [OBSERVATION] mark the points where a real run would
+        # have changed state.
+        condition_charging_result = ConditionResult()
+        condition_discharging_result = ConditionResult()
+        condition_switching_result = ConditionResult()
+        conditions_instance = Conditions(self.items, essunit, self.solardata)
+        conditions_instance.info()
+        conditions_instance.evaluate_conditions(condition_charging_result, "charging")
+        conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
+        conditions_instance.evaluate_conditions(condition_switching_result, "switching")
 
-        if not only_observation:
-            condition_charging_result = ConditionResult()
-            condition_discharging_result = ConditionResult()
-            condition_switching_result = ConditionResult()
-            conditions_instance = Conditions(self.items, essunit)
-            conditions_instance.info()
-            conditions_instance.evaluate_conditions(condition_charging_result, "charging")
-            conditions_instance.evaluate_conditions(condition_discharging_result, "discharging")
-            conditions_instance.evaluate_conditions(condition_switching_result, "switching")
+        self.control_charging(essunit, condition_charging_result)
+        self.control_discharging(essunit, condition_discharging_result)
+        self.control_switching(condition_switching_result, essunit=essunit)
 
-            self.control_charging(essunit, condition_charging_result)
-            self.control_discharging(essunit, condition_discharging_result)
-            self.control_switching(condition_switching_result)
+        # Expose the current decision + battery state to the web layer
+        # (/api/battery for external consumers like the thermostat).
+        self._publish_ess_state(
+            essunit, condition_charging_result, condition_discharging_result,
+            conditions_instance,
+        )
 
         self.items.log_items()
         self.no_data[0] = 0
 
-    def control_switching(self, condition_switching_result):
+    def _resolve_control_backend(self, essunit):
+        """
+        Resolve + log the Victron control backend. Cheap enough to run
+        every cycle; only backend CHANGES are logged.
+        """
+        if not hasattr(essunit, "resolve_control_backend"):
+            return
+        try:
+            backend = essunit.resolve_control_backend(self.config)
+            previous = getattr(essunit, "get_control_backend", lambda: None)()
+            essunit.set_control_backend(backend)
+            if backend != previous:
+                self.logger.log.info(
+                    f"Control backend: {backend}"
+                    + (f" (was {previous})" if previous is not None else "")
+                )
+        except Exception as e:
+            self.logger.log.warning(
+                f"Control backend resolution failed, keeping classic: {e}"
+            )
+
+    def _publish_ess_state(self, essunit, charge_result, discharge_result,
+                           conditions_instance=None):
+        """
+        RAM-only state for the web layer -- deliberately NOT persisted
+        via the StatsManager, so the thermostat endpoint costs zero
+        disk writes (same SD-wear reasoning as the register topic).
+        """
+        state = "idle"
+        if charge_result.execute:
+            state = "charging"
+        elif discharge_result.execute:
+            state = "discharging"
+
+        economic = None
+        if conditions_instance is not None and \
+                hasattr(conditions_instance, "get_economic_info"):
+            try:
+                economic = conditions_instance.get_economic_info()
+            except Exception:
+                economic = None
+
+        payload = {
+            "state": state,
+            "charge_condition": charge_result.condition,
+            "discharge_condition": discharge_result.condition,
+            "soc_percent": essunit.get_soc() if essunit is not None else None,
+            "soc_wh": (essunit.get_battery_current_wh()
+                       if essunit is not None else None),
+            "capacity_wh": (essunit.get_battery_full_wh()
+                            if essunit is not None else None),
+            "min_soc_percent": (essunit.get_battery_minimum_soc_limit()
+                                if essunit is not None else None),
+            "control_backend": (essunit.get_control_backend()
+                                if essunit is not None and
+                                hasattr(essunit, "get_control_backend")
+                                else "classic"),
+            "charging_strategy": getattr(self.config, "charging_strategy", "cap"),
+            "current_price": self.items.get_current_price(True),
+            "economic": economic,
+            "timestamp": TimeUtilities.get_now().isoformat(),
+        }
+        try:
+            if self.seuss_web is not None and \
+                    hasattr(self.seuss_web, "set_ess_state"):
+                self.seuss_web.set_ess_state(payload)
+        except Exception as e:
+            self.logger.log.warning(f"Publishing ESS state to web failed: {e}")
+
+    def control_switching(self, condition_switching_result, essunit=None):
+        # Per-IP switching: when at least one configured smart switch
+        # has per-IP overrides (lowest_prices_per_ip / block_minutes_per_ip),
+        # we delegate the on/off decision to the manager's per-IP
+        # evaluator instead of toggling all switches in lockstep.
+        # The legacy bulk path (turn_on_all / turn_off_all) is kept for
+        # configurations without any per-IP overrides, so existing setups
+        # behave exactly as before.
+        if self._smart_switches_have_per_ip_overrides():
+            if self._is_observation_mode(essunit):
+                self.logger.log.info(
+                    "[OBSERVATION] Would evaluate per-IP smartswitch logic"
+                )
+                return
+            charging_count = getattr(
+                self.config, "number_of_lowest_prices_for_charging", 0
+            ) or 0
+            self.smartswitches.evaluate_per_ip(self.items, charging_count)
+            return
+
         if condition_switching_result.execute:
             self.logger.log.info(
                 f"Condition {condition_switching_result.condition} result: {condition_switching_result.execute}, switching mode is turned on."
             )
-            self.smartswitches.turn_on_all()
+            self._apply_smartswitches(turn_on=True, essunit=essunit)
 
         elif condition_switching_result.condition:
             self.logger.log.info(
                 f"{condition_switching_result.condition}, switching mode is turned off."
             )
-            self.smartswitches.turn_off_all()
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
 
         else:
             self.logger.log.info("Since none of the switching conditions are true, switching mode is turned off.")
-            self.smartswitches.turn_off_all()
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
+
+    def _smart_switches_have_per_ip_overrides(self):
+        """Return True iff any configured smart switch has a non-empty
+        lowest_prices_per_ip or block_minutes_per_ip setting."""
+        for entry in self.config.config_data.get("smart_switches", []):
+            if not entry.get("enabled", True):
+                continue
+            if (str(entry.get("lowest_prices_per_ip") or "").strip()
+                    or str(entry.get("block_minutes_per_ip") or "").strip()):
+                return True
+        return False
 
     def control_charging(self, essunit, condition_charging_result):
         if condition_charging_result.execute and essunit is not None:
             self.logger.log.info(
                 f"Condition {condition_charging_result.condition} result: {condition_charging_result.execute}, charging is turned on.")
-            essunit.set_charge("on")
-            self.smartswitches.turn_on_all()
+            self._apply_charge(essunit, "on")
+            self._apply_smartswitches(turn_on=True, essunit=essunit)
 
             initial_data = self.statsmanager.get_data('energy', "initial_charge_state_wh")
             if not initial_data:
@@ -351,27 +577,27 @@ class SEUSS:
 
         elif condition_charging_result.condition and essunit is not None:
             self.logger.log.info(f"{condition_charging_result.condition}, charging is turned off.")
-            essunit.set_charge("off")
-            self.smartswitches.turn_off_all()
+            self._apply_charge(essunit, "off")
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
             self.statsmanager.remove_data('energy', "initial_charge_state_wh")
 
         elif essunit is not None:
             self.logger.log.info("Since none of the charging conditions are true, charging is turned off.")
-            essunit.set_charge("off")
-            self.smartswitches.turn_off_all()
+            self._apply_charge(essunit, "off")
+            self._apply_smartswitches(turn_on=False, essunit=essunit)
             self.statsmanager.remove_data('energy', "initial_charge_state_wh")
 
     def control_discharging(self, essunit, condition_discharging_result):
         if condition_discharging_result.execute and essunit is not None:
             self.logger.log.info(
                 f"Condition {condition_discharging_result.condition} result: {condition_discharging_result.execute}, discharging is turned on.")
-            essunit.set_discharge("on")
+            self._apply_discharge(essunit, "on")
         elif condition_discharging_result.condition and essunit is not None:
             self.logger.log.info(f"{condition_discharging_result.condition}, discharging is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
         elif essunit is not None:
             self.logger.log.info("Since none of the discharging conditions are true, discharging is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
 
     def update_charging_statistics(self, essunit):
         current_wh = essunit.get_battery_current_wh()
@@ -401,14 +627,90 @@ class SEUSS:
         self.no_data[0] += 1
         if essunit is not None:
             self.logger.log.info("There are currently no prices, so the charging mode is turned off.")
-            essunit.set_discharge("off")
+            self._apply_discharge(essunit, "off")
             self.logger.log.info("There are currently no prices, so the discharging mode is turned on.")
-            essunit.set_discharge("on")
+            self._apply_discharge(essunit, "on")
 
     def perform_test_run(self):
         test_run = os.environ.get('TESTRUN')
         if test_run is not None:
             self.graceful_exit(signal.SIGINT, None)
+
+    # ------------------------------------------------------------------
+    # Hardware-write wrappers that respect `only_observation`.
+    #
+    # When an essunit is in observation mode, we still let SEUSS run
+    # the full conditions/abort evaluation (so the user can see in the
+    # log what would happen), but we do NOT actually flip charge state,
+    # discharge state, the active SOC limit, or the smartswitch relays.
+    # Each wrapper logs an [OBSERVATION] line describing what would
+    # have happened.
+    #
+    # IMPORTANT: every direct call to `essunit.set_charge(...)`,
+    # `essunit.set_discharge(...)`, `essunit.set_active_soc_limit(...)`
+    # and `self.smartswitches.turn_on_all()/turn_off_all()` in the
+    # control flow goes through one of these wrappers instead. New
+    # places that need to write hardware must use these wrappers --
+    # bypassing them would silently break observation mode.
+    # ------------------------------------------------------------------
+
+    def _is_observation_mode(self, essunit):
+        """True if the given essunit is configured `only_observation: true`."""
+        if essunit is None:
+            return False
+        try:
+            info = self.config.get_essunit_info(essunit.get_name())
+            return bool(info.get("only_observation", False))
+        except Exception:
+            return False
+
+    def _apply_charge(self, essunit, state):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set charge -> {state} on {essunit.get_name()}"
+            )
+            return
+        essunit.set_charge(state)
+
+    def _apply_discharge(self, essunit, state):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set discharge -> {state} on {essunit.get_name()}"
+            )
+            return
+        essunit.set_discharge(state)
+
+    def _apply_active_soc_limit(self, essunit, value):
+        if essunit is None:
+            return
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set active SOC limit -> {value}% on {essunit.get_name()}"
+            )
+            return
+        essunit.set_active_soc_limit(value)
+
+    def _apply_smartswitches(self, turn_on, essunit=None):
+        """
+        Smartswitches don't belong to a single essunit, but they're part
+        of the same control decision. We treat them as observation-bound
+        when ANY essunit currently in scope is in observation mode --
+        the typical setup has one essunit, so this is a clean rule.
+        """
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would turn smartswitches "
+                f"{'on' if turn_on else 'off'}"
+            )
+            return
+        if turn_on:
+            self.smartswitches.turn_on_all()
+        else:
+            self.smartswitches.turn_off_all()
 
     def handle_no_data_sleep(self):
         if 0 < self.no_data[0] < 4:
@@ -434,7 +736,7 @@ class SEUSS:
         self.logger.log.info(f"Program will be terminated... signal: {signum}")
 
         self.power_consumption_manager.stop_instance()
-        self.statsmanager.save_data()
+        self.statsmanager.save_data(force=True)
         self.ws_server.stop()
         self.seuss_web.stop()
         self.svs_thread_stop_flag.set()

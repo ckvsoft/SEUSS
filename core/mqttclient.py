@@ -97,11 +97,53 @@ class PvInverterResults(MqttResult):
 
         custom_name = self.get_value(device_id, 'CustomName')
         if not isinstance(custom_name, str) or not custom_name.strip():
-            return 0.0
+            custom_name = f"device_{device_id}"
 
         stats_manager_instance = StatsManager()
+
+        # Race-condition guard: when SEUSS starts late in the day
+        # (e.g. 10:55 after a maintenance window) and MQTT still
+        # publishes the last value from before the restart -- which
+        # is also the value persisted as forward_start from the
+        # previous evening -- the daily-reset logic would commit
+        # that stale value as TODAY'S forward_start. Result: today's
+        # yield reads 0 Wh until OpenDTU sends a fresh tick, and
+        # any production from before SEUSS started is lost
+        # entirely.
+        #
+        # If the incoming MQTT value is identical to the persisted
+        # forward_start, that's a strong signal we have a stale
+        # cache value. Skip the daily-reset and return 0.0 for
+        # this tick; the next tick will see a real updated value
+        # and commit it correctly.
+        prior_start = stats_manager_instance.get_data(
+            "pvinverters", f"{custom_name}_forward_start"
+        )
+        if prior_start is not None and forward == prior_start:
+            self.logger.log.debug(
+                f"PV inverter {custom_name}: MQTT forward value "
+                f"({forward}) matches persisted forward_start exactly "
+                f"-- treating as stale tick, deferring daily reset."
+            )
+            return 0.0
+
         stats_manager_instance.insert_new_daily_status_data("pvinverters", f"{custom_name}_forward_start", forward)
         forward_start = stats_manager_instance.get_data("pvinverters", f"{custom_name}_forward_start")
+        # Defensive: if insert_new_daily_status_data failed to commit
+        # (e.g. value was invalid, or the pvinverters group got mangled),
+        # forward_start can still be None. Without this guard the next
+        # subtraction throws TypeError and the whole eval cycle aborts.
+        # Fall back to the incoming value -> today's yield reads as 0
+        # for this tick, which is the safest "lost the start marker"
+        # behaviour.
+        if forward_start is None:
+            self.logger.log.warning(
+                f"PV inverter {custom_name}: forward_start unavailable "
+                f"after insert_new_daily_status_data -- falling back "
+                f"to current MQTT value, today's yield will start "
+                f"counting from now."
+            )
+            forward_start = forward
         forward = forward - forward_start
         return float(forward * pi)
 
@@ -158,21 +200,23 @@ class GridMetersResults(MqttResult):
 
     def get_forward_kwh(self, device_id):
         pi = 1000
-        forward = self.get_value(device_id, 'Ac/Energy/Forward')
-        if forward is None:
+        # raw = current meter reading
+        forward_raw = self.get_value(device_id, 'Ac/Energy/Forward')
+        if forward_raw is None:
             return 0.0
 
         stats_manager_instance = StatsManager()
-        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+        stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward_raw)
         forward_start = stats_manager_instance.get_data("gridmeters", "forward_start")
         if forward_start is None:
             return 0.0
 
-        forward = forward - forward_start
+        forward = forward_raw - forward_start
         if forward < 0.0:
+            # Meter counter was reset -- re-baseline with the raw reading.
             stats_manager_instance.remove_data("gridmeters", "date_forward_start")
             stats_manager_instance.remove_data("gridmeters", "forward_start")
-            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward)
+            stats_manager_instance.insert_new_daily_status_data("gridmeters", "forward_start", forward_raw)
             return self.get_forward_kwh(device_id)
 
         return float(forward * pi)
@@ -468,7 +512,7 @@ class MqttClient:
 
         return result
 
-    def publish(self, query_topic, query_message):
+    def publish(self, query_topic, query_message, retain=False):
         self.logger.log.debug(f"query_topic: {query_topic} {query_message}")
         try:
             if self.user:
@@ -491,7 +535,7 @@ class MqttClient:
                     raise TimeoutError
 
             self.logger.log.debug(f"publish: {query_topic} message: {query_message}")
-            result = self.client.publish(query_topic, query_message)
+            result = self.client.publish(query_topic, query_message, retain=retain)
             self.logger.log.debug(f"result rc: {result.rc}")
             result = result.rc
 

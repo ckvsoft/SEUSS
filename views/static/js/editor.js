@@ -195,7 +195,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             input.setAttribute('id', selectedSection + ':' + currentItem.name + ':' + fieldKey);
                             input.setAttribute('name', selectedSection + ':' + currentItem.name + ':' + fieldKey);
                             input.value = currentItem[fieldKey];
-                            if (fieldKey.toLowerCase() === 'password') {
+                            if (fieldKey.toLowerCase() === 'password' || fieldKey.toLowerCase() === 'api_key') {
                                 input.setAttribute('type', 'password');
                                 input.setAttribute('autocomplete', 'new-password');
 

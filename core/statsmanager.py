@@ -28,6 +28,8 @@
 from datetime import datetime
 import json
 import os, sys
+import threading
+import time
 
 from design_patterns.singleton import Singleton
 
@@ -39,6 +41,13 @@ class StatsManager(Singleton):
     main_script_path = os.path.abspath(sys.argv[0])
     main_script_directory = os.path.dirname(main_script_path)
     file_path = os.path.join(main_script_directory, 'status.json')
+    # SD-friendly flush debounce: updates land in the RAM cache
+    # immediately; the file is rewritten at most every 6 h and once on
+    # graceful shutdown. A power cut / restart costs the last minutes of
+    # STATS only -- the Victron keeps the system running regardless.
+    min_save_interval = 21600  # seconds
+    _last_save = 0.0
+    _lock = threading.Lock()
 
     data = {}
 
@@ -47,20 +56,51 @@ class StatsManager(Singleton):
 
     def __init__(self):
         super().__init__()
-        self.load_data()
+        # Load only on the first instantiation -- later ones must NOT
+        # reload from disk, or they would wipe RAM updates that the
+        # flush debounce has not written yet.
+        if not StatsManager.data:
+            self.load_data()
 
     @classmethod
     def load_data(cls):
+        if cls.data:
+            return  # RAM cache wins over the lagging disk copy
+        from core.log import CustomLogger
         try:
             with open(cls.file_path, 'r') as file:
-                cls.data = json.load(file)
-        except (FileNotFoundError, json.decoder.JSONDecodeError):
+                loaded = json.load(file)
+            if not isinstance(loaded, dict):
+                raise ValueError("status.json content is not a JSON object")
+            cls.data = loaded
+        except FileNotFoundError:
+            cls.data = {}
+        except (json.JSONDecodeError, ValueError) as e:
+            backup_path = f"{cls.file_path}.{int(time.time())}.corrupt"
+            try:
+                with open(cls.file_path, 'rb') as src, open(backup_path, 'wb') as dst:
+                    dst.write(src.read())
+                CustomLogger().log.error(
+                    f"status.json is corrupt ({e}). Backed up to {backup_path}.")
+            except OSError:
+                CustomLogger().log.error(f"status.json is corrupt ({e}).")
             cls.data = {}
 
     @classmethod
-    def save_data(cls):
-        with open(cls.file_path, 'w') as file:
-            json.dump(cls.data, file, indent=2, sort_keys=True)
+    def save_data(cls, force=False):
+        now = time.time()
+        if not force and (now - cls._last_save) < cls.min_save_interval:
+            return
+        cls._last_save = now
+        from core.log import CustomLogger
+        try:
+            with cls._lock:
+                payload = json.dumps(cls.data, indent=2, sort_keys=True)
+            with open(f"{cls.file_path}.tmp", 'w') as file:
+                file.write(payload)
+            os.replace(f"{cls.file_path}.tmp", cls.file_path)
+        except (OSError, TypeError, ValueError) as e:
+            CustomLogger().log.error(f"Failed to persist status.json: {e}")
 
     @classmethod
     def insert_new_daily_status_data(cls, group, key, value, save_data=True):

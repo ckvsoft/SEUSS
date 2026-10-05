@@ -47,16 +47,137 @@ class Info:
 
 class Config(Singleton):
     DEFAULT_CONFIG_TEMPLATE = {
+        # ------------------------------------------------------------------
+        # Web / Logging
+        # ------------------------------------------------------------------
         "time_zone": "Europe/Vienna",
         "log_file_path": "/tmp/seuss.log",
         "log_level": "INFO",
-        "use_solar_forecast_to_abort": False,
+        # ------------------------------------------------------------------
+        # Tariff / price-feed resolution
+        # ------------------------------------------------------------------
+        "tariff_resolution": "hourly",
+        # ------------------------------------------------------------------
+        # Charging-strategy constants (both modes). The strategy switch
+        # and the cap/limit knobs live in the prices block below; these
+        # two tune the economic rule globally.
+        # ------------------------------------------------------------------
+        # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
+        # Pure data-error protection (bogus feed prices); NOT an
+        # economic decision. Ignored in "cap" mode (hard cap rules there).
+        "economic_price_ceiling": 60,
+        # Round-trip efficiency (charge+discharge+inverter). The economic
+        # strategy divides the charge price by this before comparing it
+        # against the displaced price. Victron's SystemEfficiency default
+        # is 0.90.
+        "round_trip_efficiency": 0.90,
+        # ------------------------------------------------------------------
+        # Charging skips -- cap-strategy helper group. In the economic
+        # strategy several of these are subsumed by the marginal-price
+        # rule and dormant; the editor hides cap-only flags there.
+        # ------------------------------------------------------------------
+        # DEPRECATED: replaced by skip_charge_when_battery_covers_expensive_phase
+        "skip_charge_when_battery_sufficient": False,
+        # DEPRECATED: never useful in practice, replaced
+        "skip_charge_when_battery_covers_overnext": False,
+        # New: abort charge when the battery covers the entire upcoming
+        # expensive phase until the next charge cluster (any price).
+        "skip_charge_when_battery_covers_expensive_phase": False,
+        # New: skip the current charge attempt when a STRICTLY cheaper
+        # future charge cluster exists AND the pack can bridge the gap
+        # to it AND the pack + that cheaper cluster's recharge can
+        # cover the following expensive phase without emptying.
+        # Meant for the case: SEUSS is inside a cheap cluster (e.g.
+        # 23 ct) but a much cheaper cluster is coming in a few hours
+        # (e.g. 19 ct), with plenty of PV/SOC available right now.
+        # Runs a full forward simulation across the shelter chain so
+        # it only skips when the horizon plan is actually safe.
+        "skip_charge_when_cheaper_cluster_coming": False,
+        "cheaper_cluster_min_reserve_hours": 2.0,
+        # Resume gap for the SOC-target abort hysteresis: once the
+        # abort trips at (target - 1%), charging only resumes when the
+        # SOC fell below (target - 1% - gap). Kills the one-cycle
+        # resume/trip oscillation at the boundary (5-min grid-charge
+        # bursts). 0 restores the old zero-width band.
+        "soc_target_resume_gap_percent": 2.0,
+        # New: skip charging the current quarter when at least one
+        # upcoming quarter is priced below zero AND the battery will
+        # have enough headroom to absorb it (current free Wh +
+        # consumption until then >= chargeable Wh during the negative
+        # window). Lets you avoid paying for charge now when you can
+        # be paid for it shortly.
+        "skip_charge_for_upcoming_negative_prices": False,
+        # ------------------------------------------------------------------
+        # Gates / control
+        # ------------------------------------------------------------------
+        # Victron control backend:
+        #   "auto"        -- classic (default; kept for old config.json
+        #                    files, resolves to classic).
+        #   "classic"     -- toggles Schedule/Charge Day + MaxDischargePower
+        #                    (localsettings, SD-backed writes).
+        # The former "dynamic_ess" backend was removed 2026-10: its
+        # leftover /Settings/DynamicEss/Mode=4 disabled the classic
+        # scheduled charging on VenusOS 3.7x. Legacy values resolve to
+        # classic.
+        "control_backend": "auto",
         "delay_grid_charging_below_active_soc_limit": False,
+        # Discharge fall-through for vetoed charge windows ("olive
+        # hours"): when a charge window matches (block rule true) but a
+        # charging abort vetoes it (economic marginal rule, SOC target,
+        # outlier leash), the discharge gate normally idles the battery
+        # for that window ("Abort discharge while charging is allowed").
+        # With this flag ON, such vetoed windows fall through to the
+        # DEFAULT discharge rules instead (surplus/phase-required planner
+        # math unchanged). SOC protection stays fully active -- this only
+        # removes the blind pause, it never adds discharge entitlement.
+        # Default OFF = the historical behaviour.
+        "discharge_fallthrough_on_charge_veto": False,
+        # New: when battery is too small to cover the full expensive
+        # phase, prioritise discharge to the most expensive blocks only;
+        # cheaper expensive-phase hours fall back to grid.
+        "smart_discharge_priority_to_expensive_hours": False,
+        # Setpoint-Keeper refresh cadence (seconds). On hub4 firmware
+        # (Venus 3.5x+) charging is driven through the RAM grid-
+        # setpoint override (/hub4/0/Overrides/Setpoint): SEUSS
+        # re-publishes the target every N seconds while a charge
+        # window is active. The override decays ~180 s after the last
+        # write; 30 s refreshes it 6x inside that TTL. Clamped to
+        # [5, 120].
+        "setpoint_refresh_seconds": 30,
+        # ------------------------------------------------------------------
+        # Solar forecast adjustment
+        # ------------------------------------------------------------------
+        "use_solar_forecast_to_abort": False,
+        "solar_adj_ewma_alpha": 0.3,
+        "solar_adj_min_theoretical_wh": 1000.0,
+        "solar_adj_min_sun_hours": 4.0,
+        "solar_adj_max_daily_change": 0.20,
+        # ------------------------------------------------------------------
+        # Stats / history
+        # ------------------------------------------------------------------
+        "stats_history_retention_days": 400,
         "prices": [
             {
+                "charging_strategy": "cap",
+                # Charging strategy:
+                #   "cap"      -- classic behaviour: charge the N cheapest
+                #                 clusters unless the per-quarter price
+                #                 exceeds charging_price_hard_cap.
+                #   "economic" -- charge unless the quarter price divided
+                #                 by round_trip_efficiency exceeds the
+                #                 MARGINAL displaced price (merit-order
+                #                 stack of the upcoming expensive phase).
+                #                 The hard cap is NOT applied in this
+                #                 mode; economic_price_ceiling acts as
+                #                 the outlier leash instead.
                 "use_second_day": False,
                 "number_of_lowest_prices_for_charging": 0,
                 "number_of_highest_prices_for_discharging": 0,
+                "number_of_lowest_prices_for_switching": 0,
+                "charging_block_minutes": 60,
+                "discharging_block_minutes": 60,
+                "switching_block_minutes": 60,
+                "fill_gaps_with_short_clusters": True,
                 "charging_price_limit": -999,
                 "charging_price_hard_cap": 999
             }
@@ -73,6 +194,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             },
             {
@@ -86,6 +213,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             },
             {
@@ -99,6 +232,12 @@ class Config(Singleton):
                 "efficiency": 20,
                 "damping_morning": 0,
                 "damping_evening": 0,
+                # Horizon profile [[azimuth_deg, elevation_deg], ...] --
+                # obstructions (trees, hills) blocking low sun. Empty =
+                # open sky. Blocked hours keep 'horizon_residual' % of
+                # the forecast (diffuse light).
+                "horizon": [],
+                "horizon_residual": 15,
                 "enabled": False
             }
         ],
@@ -145,6 +284,8 @@ class Config(Singleton):
             {
                 "name": "Shelly",
                 "ips": "10.1.1.20 | 10.1.1.21",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "",
                 "password": "",
                 "enabled": False
@@ -152,6 +293,8 @@ class Config(Singleton):
             {
                 "name": "Tasmota",
                 "ips": "10.1.1.30",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "admin",
                 "password": "YWRtaW4",
                 "enabled": False
@@ -160,6 +303,8 @@ class Config(Singleton):
                 "name": "Fritz",
                 "ips": "192.168.178.1 | 10.1.1.23",
                 "ains": "1234,3443,2333 | 1234,4456,7866,3421",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "admin",
                 "password": "YWRtaW4",
                 "enabled": False
@@ -168,11 +313,28 @@ class Config(Singleton):
                 "name": "RemoteGPIO",
                 "ips": "192.168.1.10 | 192.168.1.11 | !192.168.1.12",
                 "pins": "17,18 | 21 | 20",
+                "lowest_prices_per_ip": "",
+                "block_minutes_per_ip": "",
                 "user": "",
                 "password": "",
                 "enabled": False
             }
 
+        ],
+        "solar_forecast_providers": [
+            {
+                "name": "OpenMeteo",
+                "primary": True,
+                "enabled": True
+            },
+            {
+                "name": "Solcast",
+                "primary": False,
+                "enabled": False,
+                "api_key": "",
+                "resource_ids": "",
+                "min_interval_minutes": 90
+            }
         ]
     }
 
@@ -189,15 +351,57 @@ class Config(Singleton):
             self.config_data = {}
             self.markets = []
             self.pv_panels = []
+            self.solar_forecast_providers = []
             self.ess_units = []
             self.essunit = None
             self.number_of_lowest_prices_for_charging = 0
             self.number_of_highest_prices_for_discharging = 0
+            self.number_of_lowest_prices_for_switching = 0
+            self.charging_block_minutes = 60
+            self.discharging_block_minutes = 60
+            self.switching_block_minutes = 60
+            self.fill_gaps_with_short_clusters = True
             self.charging_price_limit = -999
             self.charging_price_hard_cap = float('inf')
             self.converter_efficiency = 1.0
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
+            self.tariff_resolution = "hourly"
+            # Top-level boolean flags. Defaults are duplicated in
+            # DEFAULT_CONFIG_TEMPLATE; the load_config loop reads them
+            # from the actual config.json on startup.
+            self.use_solar_forecast_to_abort = False
+            self.skip_charge_when_battery_sufficient = False
+            self.skip_charge_when_battery_covers_overnext = False
+            self.skip_charge_when_battery_covers_expensive_phase = False
+            self.skip_charge_when_cheaper_cluster_coming = False
+            self.skip_charge_for_upcoming_negative_prices = False
+            self.smart_discharge_priority_to_expensive_hours = False
+            self.delay_grid_charging_below_active_soc_limit = False
+            self.discharge_fallthrough_on_charge_veto = False
+            # Charging strategy / economic-rule defaults (mirrored in
+            # DEFAULT_CONFIG_TEMPLATE; load_config reads the real values).
+            self.charging_strategy = "cap"
+            self.economic_price_ceiling = 60
+            self.control_backend = "auto"
+            self.round_trip_efficiency = 0.90
+            # Days of per-day history to retain (energy_costs_by_day,
+            # consumption_wh_by_day, etc.). 400 covers a full year-over-
+            # year comparison plus a month buffer. Set to 0 to disable
+            # cleanup entirely. The actual cleanup runs in save_day()
+            # right after the rotation, so old entries fall off one
+            # midnight at a time without a noticeable spike.
+            self.stats_history_retention_days = 400
+            # Solar forecast adjustment-factor tunables. See README and
+            # solar/openmeteo.py for what each does. These fields exist
+            # so getattr() in openmeteo gets a value even if config.json
+            # is older than this build (migration adds them on next save).
+            self.solar_adj_ewma_alpha = 0.3
+            self.cheaper_cluster_min_reserve_hours = 2.0
+            self.soc_target_resume_gap_percent = 2.0
+            self.solar_adj_min_theoretical_wh = 1000.0
+            self.solar_adj_min_sun_hours = 4.0
+            self.solar_adj_max_daily_change = 0.20
             self.load_config()
             self.update_config_with_template()
 
@@ -226,6 +430,22 @@ class Config(Singleton):
         self.config_data = config_data
         self.log_file_path = config_data.get("log_file_path", "")
         self.log_level = config_data.get("log_level", "INFO")
+        try:
+            import pytz
+            pytz.timezone(config_data.get("time_zone", ""))
+            self.time_zone = config_data["time_zone"]
+        except Exception:
+            pass
+
+        # tariff_resolution lives at top level (it's a market-level
+        # property, not a price-strategy one). Read it directly. For
+        # backward compatibility with fix13/13b configs that wrote it
+        # into the `prices` block, the per-price loop below will pick
+        # it up too -- the last value wins, which means a top-level
+        # value gets overridden by a stale prices-block value if both
+        # exist. To avoid that, we re-apply the top-level value AFTER
+        # the prices loop further down.
+        top_level_tariff_resolution = config_data.get("tariff_resolution")
 
         if not os.path.exists(self.log_file_path):
             # touch
@@ -236,16 +456,191 @@ class Config(Singleton):
             for key, value in item.items():
                 setattr(self, key, value)
 
+        # Top-level tariff_resolution wins over any stale value still
+        # sitting inside the prices block (from older configs).
+        if top_level_tariff_resolution is not None:
+            self.tariff_resolution = top_level_tariff_resolution
+
+        # Top-level boolean flags -- read explicitly so getattr() in
+        # downstream code returns the real value, not just the default
+        # baked into _init. These are not part of the `prices` block.
+        for attr, default in (
+            ("use_solar_forecast_to_abort", False),
+            ("skip_charge_when_battery_sufficient", False),
+            ("skip_charge_when_battery_covers_overnext", False),
+            ("skip_charge_when_battery_covers_expensive_phase", False),
+            ("skip_charge_when_cheaper_cluster_coming", False),
+            ("skip_charge_for_upcoming_negative_prices", False),
+            ("smart_discharge_priority_to_expensive_hours", False),
+            ("delay_grid_charging_below_active_soc_limit", False),
+            ("discharge_fallthrough_on_charge_veto", False),
+        ):
+            raw = config_data.get(attr, default)
+            # Accept both real bools and the string "off"/"on" that the
+            # editor's hidden checkbox-pair scheme produces.
+            if isinstance(raw, str):
+                setattr(self, attr, raw.strip().lower() in ("on", "true", "1", "yes"))
+            else:
+                setattr(self, attr, bool(raw))
+
+        # Charging strategy: lives in the prices block (next to the
+        # other price rules); read explicitly for type/enum safety.
+        # Order: last prices entry wins > legacy top-level key > "cap".
+        strategy = None
+        for item in config_data.get("prices", []):
+            if isinstance(item, dict) and "charging_strategy" in item:
+                strategy = item.get("charging_strategy")
+        if strategy is None:
+            strategy = config_data.get("charging_strategy", "cap")
+        if isinstance(strategy, str):
+            strategy = strategy.strip().lower()
+        self.charging_strategy = strategy if strategy in ("cap", "economic") else "cap"
+
+        # Control backend selection (classic toggles vs Dynamic ESS
+        # schedules). "auto" is resolved at runtime against the actual
+        # firmware capabilities (see essunit.resolve_control_backend).
+        backend = config_data.get("control_backend", "auto")
+        if isinstance(backend, str):
+            backend = backend.strip().lower()
+        # Legacy values ("auto", "dynamic_ess") resolve to classic --
+        # the dynamic_ess backend was removed 2026-10.
+        self.control_backend = backend if backend in ("auto", "classic", "dynamic_ess") else "auto"
+
+        # Numeric strategy tunables -- type-safe like the solar_adj block.
+        for attr, default in (
+            ("economic_price_ceiling", 60),
+            ("round_trip_efficiency", 0.90),
+        ):
+            raw = config_data.get(attr, default)
+            try:
+                setattr(self, attr, float(raw))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
+        # Clamp the efficiency to a sane band. Below 0.5 no battery is
+        # that bad; above 1.0 would mean creating energy.
+        self.round_trip_efficiency = max(0.5, min(1.0, self.round_trip_efficiency))
+
+        # Solar adjustment-factor tunables -- top-level, with type-safe
+        # fallback to the in-memory default if the config value is bogus.
+        for attr, default in (
+            ("solar_adj_ewma_alpha", 0.3),
+            ("solar_adj_min_theoretical_wh", 1000.0),
+            ("solar_adj_min_sun_hours", 4.0),
+            ("solar_adj_max_daily_change", 0.20),
+            ("stats_history_retention_days", 400),
+            # Safety reserve for the cheaper-cluster-coming simulation:
+            # the simulated SOC must stay ABOVE this many hours of
+            # average consumption (on top of the min-SOC, which is
+            # already subtracted before the simulation starts) at
+            # every point of the chain -- otherwise skipping is
+            # considered unsafe and charging proceeds now.
+            ("cheaper_cluster_min_reserve_hours", 2.0),
+            # SOC-target hysteresis gap (see template comment). Kept
+            # float-typed like the other strategy tunables.
+            ("soc_target_resume_gap_percent", 2.0),
+            # Setpoint-Keeper refresh cadence (seconds), clamped to
+            # [5, 120] below.
+            ("setpoint_refresh_seconds", 30),
+        ):
+            raw = config_data.get(attr, default)
+            try:
+                setattr(self, attr, float(raw))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
+        # Clamp alpha to [0, 1] -- alpha=1 reproduces old behaviour,
+        # alpha=0 freezes the factor entirely. Negative or >1 would
+        # destabilise the EWMA so we silently snap them.
+        self.solar_adj_ewma_alpha = max(0.0, min(1.0, self.solar_adj_ewma_alpha))
+
+        # Setpoint-Keeper cadence: clamp to [5, 120] seconds. Below 5
+        # would hammer the broker; above 120 risks outliving the
+        # ~180 s decay of the RAM override.
+        try:
+            self.setpoint_refresh_seconds = float(
+                self.setpoint_refresh_seconds)
+        except (AttributeError, TypeError, ValueError):
+            self.setpoint_refresh_seconds = 30.0
+        self.setpoint_refresh_seconds = max(
+            5.0, min(120.0, self.setpoint_refresh_seconds))
+
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")
 
         self.ess_units = config_data.get("ess_unit", [])
         self.pv_panels = config_data.get("pv_panels", [])
+        # New: list of forecast providers (OpenMeteo, Solcast, ...).
+        # Empty/missing -> SolarForecastManager falls back to OpenMeteo
+        # only (legacy behaviour).
+        self.solar_forecast_providers = config_data.get("solar_forecast_providers", [])
 
         self.essunit = self.find_ess_unit()
 
         if not self.failback_market:
             self.failback_market = self.find_failback_market()
+
+        # Normalize block-minute settings: snap to multiples of 15min,
+        # minimum 15. We allow arbitrarily long blocks (no upper cap) --
+        # if the user wants to charge for 10 hours straight, that's their
+        # call.
+        for attr in ("charging_block_minutes",
+                     "discharging_block_minutes",
+                     "switching_block_minutes"):
+            value = getattr(self, attr, 60)
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = 60
+            # Round to nearest 15min, minimum 15
+            if value < 15:
+                value = 15
+            else:
+                value = max(15, ((value + 7) // 15) * 15)
+            setattr(self, attr, value)
+
+        # Normalize tariff_resolution: only "hourly" or "quarterly" are
+        # valid. Anything else falls back to "hourly" -- which matches
+        # the typical Austrian retail contract (Awattar, Tibber default
+        # tariff) where billing is per-hour even when the spot data is
+        # quarter-hour. "quarterly" is for the rare 15-minute tariffs.
+        tr = getattr(self, "tariff_resolution", "hourly")
+        if isinstance(tr, str):
+            tr = tr.strip().lower()
+        if tr not in ("hourly", "quarterly"):
+            tr = "hourly"
+        self.tariff_resolution = tr
+
+        # Sanity warnings: if charge + discharge counts together leave
+        # a big chunk of the day unassigned, the price chart will show
+        # grey hours and there is a good chance the user just typo'd
+        # the config (e.g. 4 instead of 8 for charging). Log it once
+        # at startup so it's findable -- not an error, just a hint.
+        try:
+            from core.log import CustomLogger
+            log = CustomLogger().log
+            charge_count = int(getattr(self, "number_of_lowest_prices_for_charging", 0) or 0)
+            discharge_count = int(getattr(self, "number_of_highest_prices_for_discharging", 0) or 0)
+            assigned = charge_count + discharge_count
+            if assigned > 0 and assigned < 24:
+                log.warning(
+                    f"Config: number_of_lowest_prices_for_charging "
+                    f"({charge_count}) + number_of_highest_prices_for_discharging "
+                    f"({discharge_count}) = {assigned} hours. "
+                    f"{24 - assigned} hour(s) per day stay unassigned and will "
+                    f"appear grey in the price chart. If you wanted full "
+                    f"coverage, increase one of the two counts."
+                )
+            elif assigned > 24:
+                log.warning(
+                    f"Config: number_of_lowest_prices_for_charging "
+                    f"({charge_count}) + number_of_highest_prices_for_discharging "
+                    f"({discharge_count}) = {assigned} hours, exceeding the "
+                    f"24-hour day. Charging takes precedence over discharging "
+                    f"on overlap, but you may not see all expected discharge "
+                    f"hours."
+                )
+        except Exception:
+            # Defensive: never let validation break startup.
+            pass
 
         self._set_os_timezone()
 
@@ -272,7 +667,31 @@ class Config(Singleton):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
     def update_config_with_template(self):
-        # Überprüfen und Hinzufügen von fehlenden Schlüsseln und Abschnitten
+        # Migration: charging_strategy moved from top level into the
+        # prices block (it belongs next to charging_price_limit /
+        # charging_price_hard_cap, and the editor renders it there).
+        # Copy a legacy top-level value into every prices entry that
+        # lacks the key, then drop the top-level key. Mirrors the
+        # tariff_resolution migration below.
+        if "charging_strategy" in self.config_data:
+            legacy_strategy = self.config_data.pop("charging_strategy")
+            for price_item in self.config_data.get("prices", []):
+                if isinstance(price_item, dict) and \
+                        "charging_strategy" not in price_item:
+                    price_item["charging_strategy"] = legacy_strategy
+
+        # Migration: tariff_resolution moved from prices block to top
+        # level in fix14. If an old config has it inside prices, copy
+        # the value up (if top level is missing) and drop it from prices.
+        prices_block = self.config_data.get("prices", [])
+        if isinstance(prices_block, list):
+            for price_item in prices_block:
+                if isinstance(price_item, dict) and "tariff_resolution" in price_item:
+                    legacy_value = price_item.pop("tariff_resolution")
+                    if "tariff_resolution" not in self.config_data:
+                        self.config_data["tariff_resolution"] = legacy_value
+
+        # Check and add missing keys and sections from the template
         for key, value in self.DEFAULT_CONFIG_TEMPLATE.items():
             if key not in self.config_data:
                 self.config_data[key] = value
@@ -298,6 +717,36 @@ class Config(Singleton):
         self.move_key_to_end(self.config_data['pv_panels'], 'enabled')
         self.move_key_to_end(self.config_data['ess_unit'], 'enabled')
         self.move_key_to_end(self.config_data['markets'], 'enabled')
+
+        # Per-IP smart-switch overrides are pipe-separated strings per
+        # README. Older configs / a buggy web-save path could store a
+        # bare integer ("8" -> 8), which crashed every .strip() caller.
+        # Normalize such stray values back to their string form so they
+        # keep working (and get persisted the next time config is saved).
+        for sub_item in self.config_data.get("smart_switches", []):
+            if isinstance(sub_item, dict):
+                for field_name in ("lowest_prices_per_ip", "block_minutes_per_ip"):
+                    if field_name in sub_item and not isinstance(sub_item[field_name], str):
+                        sub_item[field_name] = str(sub_item[field_name])
+
+        # Migration: reorder the top-level keys into the template's
+        # domain-grouped order. Every earlier version appended its new
+        # keys at the END of the dict (missing-key merge is an insert),
+        # so long-lived configs interleaved domains (solar_adj between
+        # the skip flags, economic_price_ceiling at the very bottom).
+        # Rebuild the dict in template order; unknown/legacy keys
+        # (e.g. charge_power_watts, web_socket_url) are appended at the
+        # END unchanged so nothing is lost. Idempotent: runs every
+        # start and keeps the canonical order stable even when a web
+        # save appends something new.
+        reordered = {}
+        for template_key in self.DEFAULT_CONFIG_TEMPLATE:
+            if template_key in self.config_data:
+                reordered[template_key] = self.config_data[template_key]
+        for existing_key in list(self.config_data.keys()):
+            if existing_key not in reordered:
+                reordered[existing_key] = self.config_data[existing_key]
+        self.config_data = reordered
 
         self.save_config(self.config_data)
 

@@ -23,6 +23,7 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
         # MQTT client
         self.client = None
+        self._loop_running = False
 
         self.update_config(mqtt_config)
 
@@ -76,6 +77,10 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
 
             self.client.connect(self.broker, self.port, keepalive=60)
             self.logger.log.debug("Connected to MQTT broker.")
+            if self._loop_running:
+                for topic in (self.data_topics or {}).values():
+                    self.client.subscribe(topic)
+                threading.Thread(target=self.mqtt_loop, daemon=True).start()
         except socket.gaierror as e:
             self.logger.log.error(f"Network error: {e}. Broker hostname could not be resolved.")
         except ConnectionRefusedError as e:
@@ -100,8 +105,19 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 self.current_power = self.handler.get_power("AC_POWER")
                 self.current_grid_power = self.handler.get_power("AC_GRID_POWER")
                 self.P_DC_consumption_Battery = self.handler.get_power("BATTERY_POWER")
+                # PV is optional in the user's MQTT setup -- get_power
+                # returns 0 if the topic isn't mapped, which is fine.
+                pv = self.handler.get_power("PV_POWER") or 0
                 timestamp = time.time()
-                self.update(self.current_power, self.current_grid_power, self.P_DC_consumption_Battery, timestamp)
+                try:
+                    self.update(self.current_power, self.current_grid_power,
+                                self.P_DC_consumption_Battery, timestamp,
+                                pv_power=pv)
+                except Exception as e:
+                    # A single bad update (e.g. a None price or a broken
+                    # dispatcher read that escaped its own guards) must
+                    # never kill the MQTT loop thread. Log and continue.
+                    self.logger.log.error(f"Power update failed: {e}", exc_info=True)
 
     def on_disconnect(self, client, userdata, *args):
         """Universal disconnect callback compatible with all Paho versions"""
@@ -115,12 +131,56 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                 if self.client.is_connected():
                     cost = self.energy_costs_by_hour.get(str(self.current_hour), 0.0)
                     total_cost = sum(self.energy_costs_by_hour.values())
-                    self.energy_costs_by_day[str(self.current_day)] = total_cost
+                    # Use ISO-date keys (consistent with update() and
+                    # save_day()). Was str(tm_yday) -- a legacy bug
+                    # that silently overwrote last year's same-yday
+                    # entry every January.
+                    self.energy_costs_by_day[self._today_iso()] = total_cost
 
-                    value = self.handler.get_power("TOTAL_POWER") or 0
-                    loss = value
-                    pv = self.handler.get_power("PV_POWER")
-                    efficiency = self.handler.get_power("EFFICIENCY")
+                    pv = self.handler.get_power("PV_POWER") or 0
+
+                    # --- PV feed dropout fallback (display) ---
+                    # Detection via the ENERGY BALANCE, not message
+                    # staleness: with the DTU down the GX keeps
+                    # publishing PV topics with value 0, so timestamps
+                    # never age. If reported PV is ~0 but the measured
+                    # flows leave a hole > 200 W, that hole IS the
+                    # panels -- show it as the reconstructed PV value
+                    # and use it in the live loss/efficiency balance so
+                    # those don't degenerate to 0 W / 100 %.
+                    _house = self.current_power or 0
+                    _grid = self.current_grid_power or 0
+                    _batt = self.P_DC_consumption_Battery or 0
+                    pv_stale = False
+                    pv_estimate = 0.0
+                    try:
+                        _hole = (
+                            _house
+                            + max(_batt, 0)
+                            + max(-_grid, 0)
+                            - max(_grid, 0)
+                            - max(-_batt, 0)
+                            - max(pv, 0)
+                        )
+                        if (pv or 0) < 50 and _hole > 200:
+                            pv_stale = True
+                            pv_estimate = round(_hole, 1)
+                    except Exception:
+                        pass
+
+                    # Live loss & efficiency from the energy balance
+                    # over the consistent snapshot values. While the PV
+                    # feed is out, use the reconstructed PV as input --
+                    # otherwise the balance is structurally short.
+                    _pv_eff = pv if not pv_stale else pv_estimate
+                    energy_in = _pv_eff + max(_grid, 0) + max(-_batt, 0)
+                    energy_out = _house + max(-_grid, 0) + max(_batt, 0)
+                    if energy_in > 0:
+                        loss = max(energy_in - energy_out, 0)
+                        efficiency = min((energy_out / energy_in) * 100, 100)
+                    else:
+                        loss = 0
+                        efficiency = 100
 
                     self.soc = self.handler.get_power("SOC")
                     self.logger.log.debug(f"SOC received: {self.soc}")
@@ -143,9 +203,20 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                             'costs': cost,
                             'total_costs_today': total_cost,
                             'pv': pv,
+                            'pv_stale': pv_stale,
+                            'pv_estimate': pv_estimate,
                             'loss': loss,
                             'efficiency': efficiency,
                             'consumptionD': self.get_daily_wh(),
+                            'gridD': self.get_daily_grid_wh(),
+                            'gridExportD': self.get_daily_grid_export_wh(),
+                            'gridH': self.get_hour_grid_wh(),
+                            'pvD': self.get_daily_pv_wh(),
+                            'pvD_est': round(getattr(self, 'daily_pv_estimated_wh', 0) or 0, 1),
+                            'batteryChargeD': self.get_daily_battery_charge_wh(),
+                            'batteryDischargeD': self.get_daily_battery_discharge_wh(),
+                            'lossD': self.get_daily_loss_wh(),
+                            'imbalanceD': self.get_daily_imbalance_wh(),
                             'soc' : self.soc
                         })
 
@@ -154,9 +225,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                     except Exception as e:
                         self.logger.log.error(f"Error sending keep-alive: {e}")
                 else:
-                    self.logger.log.debug("MQTT connection lost. Reconnecting...")
-                    self.client = None
-                    self.update_config(self.mqtt_config)
+                    # loop_forever reconnects the existing client by
+                    # itself; no client rebuild (the old one was orphaned
+                    # with its stuck loop thread, and the rebuilt one had
+                    # no loop serving it).
+                    self.logger.log.debug("MQTT connection lost. Waiting for reconnect.")
 
     def stop(self):
         self.keep_alive_running = False
@@ -169,11 +242,11 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
             self.logger.log.debug(f"Subscribing to topic: {topic}")
             self.client.subscribe(topic)
 
-        # Start keep-alive thread
         self.keep_alive_running = True
         threading.Thread(target=self.send_keep_alive, daemon=True).start()
 
         # Start MQTT loop in a separate thread
+        self._loop_running = True
         threading.Thread(target=self.mqtt_loop, daemon=True).start()
 
         # Wait until stop_event is set
