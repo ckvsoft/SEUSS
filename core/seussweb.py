@@ -363,6 +363,7 @@ class SEUSSWeb:
         colors_today = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=False,
             hour_prices=data, veto=veto,
+            verdicts=self._projection_day(SEUSSWeb._target_date(False)),
         )
         colors_today = self._freeze_past_decisions(
             colors_today, self._target_date(False), veto, data)
@@ -374,6 +375,7 @@ class SEUSSWeb:
         colors_tomorrow = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=True,
             hour_prices=next_data, veto=veto,
+            verdicts=self._projection_day(SEUSSWeb._target_date(True)),
         )
 
         strategy = getattr(self.config, "charging_strategy", "cap")
@@ -446,9 +448,26 @@ class SEUSSWeb:
 
         return veto
 
+    def _projection_day(self, target_date):
+        """
+        Per-quarter buy verdicts of the latest evaluation cycle's
+        economic projection for the given LOCAL date:
+        {"hour:quarter": buy_bool}. None when the projection is
+        missing (fresh boot, non-economic strategy, no stats) --
+        callers fall back to the live marginal veto.
+        """
+        try:
+            proj = (self._ess_state or {}).get("economic_projection")
+            if not isinstance(proj, dict):
+                return None
+            day = proj.get(target_date.isoformat())
+            return day if isinstance(day, dict) else None
+        except Exception:
+            return None
+
     @staticmethod
     def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False,
-                     hour_prices=None, veto=None):
+                     hour_prices=None, veto=None, verdicts=None):
         """
         Build a 24-element list of per-hour colors for the chart/API:
         "green" when the hour is part of a cheap charging block and the
@@ -461,6 +480,12 @@ class SEUSSWeb:
 
         veto: callable price_cent -> True when the active strategy
         would NOT buy this window (economic marginal rule / hard cap).
+        verdicts: {"hour:quarter": buy_bool} from the latest
+        evaluation cycle's economic PROJECTION (a per-quarter
+        simulation of the same math). Preferred over veto for future
+        hours: the live marginal is only valid for the CURRENT
+        quarter -- painted day-wide it vetoes every hour when the
+        pack covers the horizon now ("all olive", 2026-10-05).
         """
         target = SEUSSWeb._target_date(tomorrow)
         charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
@@ -472,6 +497,16 @@ class SEUSSWeb:
             has_discharge = any((h, q) in discharge_quarters for q in range(4))
             if has_charge:
                 color = "green"
+                if verdicts is not None:
+                    known = [verdicts.get("%d:%d" % (h, q))
+                             for q in range(4)]
+                    known = [v for v in known if v is not None]
+                    if known:
+                        # Any buying quarter -> the hour charges
+                        # (possibly only partially).
+                        color = "green" if any(known) else "olive"
+                        hours[str(h)] = color
+                        continue
                 if veto is not None and hour_prices is not None:
                     hour_cent = hour_prices.get(h, hour_prices.get(str(h)))
                     if veto(hour_cent):
@@ -2056,6 +2091,11 @@ class SEUSSWeb:
         _charge_condition = str((self._ess_state or {}).get(
             "charge_condition") or "")
         soc_stop = "SOC target" in _charge_condition
+        # Hoisted per render (was rebuilt per quarter): the live
+        # veto callable AND the per-quarter projection of the latest
+        # evaluation cycle.
+        veto_fn = self._charge_veto()
+        proj_day = self._projection_day(target_date)
         for hour in range(24):
             price = data.get(hour)
             # If hourly aggregation lost this hour but per-quarter prices
@@ -2114,7 +2154,19 @@ class SEUSSWeb:
                     # "Abort charge". Past hours keep their frozen
                     # observed truth; future hours (both days) carry the
                     # live veto projection.
-                    base_veto = self._charge_veto()(q_price)
+                    base_veto = veto_fn(q_price)
+                    # FUTURE quarters: prefer the per-quarter
+                    # projection (a chronological simulation of the
+                    # same math). The live marginal is only valid for
+                    # the CURRENT quarter -- painted day-wide it
+                    # vetoes EVERY hour when the pack covers the
+                    # horizon now ("all olive", 2026-10-05: marginal
+                    # 0.00 over a 90% pack). Observed and frozen PAST
+                    # truth below still overrides for past hours.
+                    if proj_day is not None:
+                        proj_buy = proj_day.get("%d:%d" % (hour, q))
+                        if proj_buy is not None:
+                            base_veto = not proj_buy
                     observed_day = self._hour_state_observations.get(
                         target_date.isoformat(), {})
                     hour_obs = observed_day.get(hour) if not tomorrow else None

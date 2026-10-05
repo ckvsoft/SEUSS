@@ -821,6 +821,39 @@ class Conditions:
                 return float(price)
         return 0.0
 
+    def _item_charge_covered(self, it):
+        """
+        True when >= 50% of the item lies inside a charge block
+        (i.e. this quarter is charging time). Single membership
+        truth for the economic-context walk AND the chart
+        projection -- two implementations here would drift.
+        """
+        from datetime import timezone
+        qs = it.get_start_datetime()
+        qe = it.get_end_datetime()
+        if qs is None or qe is None:
+            return False
+        if qs.tzinfo is None:
+            qs = qs.replace(tzinfo=timezone.utc)
+        if qe.tzinfo is None:
+            qe = qe.replace(tzinfo=timezone.utc)
+        duration = (qe - qs).total_seconds() / 60.0
+        if duration <= 0:
+            return False
+        for blk in self._charge_blocks:
+            bs = blk.get_start_datetime()
+            be = blk.get_end_datetime()
+            if bs is None or be is None:
+                continue
+            if bs.tzinfo is None:
+                bs = bs.replace(tzinfo=timezone.utc)
+            if be.tzinfo is None:
+                be = be.replace(tzinfo=timezone.utc)
+            overlap = (min(be, qe) - max(bs, qs)).total_seconds() / 60.0
+            if overlap >= duration * 0.5:
+                return True
+        return False
+
     @staticmethod
     def _merit_cut(offers, need_wh, fallback):
         """
@@ -874,33 +907,7 @@ class Conditions:
                 and it.get_end_datetime() is not None
             ]
 
-            def _charge_covered(it):
-                """True when >=50% of the item lies inside a charge
-                block (i.e. this quarter is charging time)."""
-                qs = it.get_start_datetime()
-                qe = it.get_end_datetime()
-                if qs is None or qe is None:
-                    return False
-                if qs.tzinfo is None:
-                    qs = qs.replace(tzinfo=timezone.utc)
-                if qe.tzinfo is None:
-                    qe = qe.replace(tzinfo=timezone.utc)
-                duration = (qe - qs).total_seconds() / 60.0
-                if duration <= 0:
-                    return False
-                for blk in self._charge_blocks:
-                    bs = blk.get_start_datetime()
-                    be = blk.get_end_datetime()
-                    if bs is None or be is None:
-                        continue
-                    if bs.tzinfo is None:
-                        bs = bs.replace(tzinfo=timezone.utc)
-                    if be.tzinfo is None:
-                        be = be.replace(tzinfo=timezone.utc)
-                    overlap = (min(be, qe) - max(bs, qs)).total_seconds() / 60.0
-                    if overlap >= duration * 0.5:
-                        return True
-                return False
+            _charge_covered = self._item_charge_covered
 
             # Chronological order is essential for the chain/phase walk.
             items.sort(key=lambda it: it.get_start_datetime())
@@ -1350,6 +1357,220 @@ class Conditions:
         info["charge_power_source"] = self.charge_power_source
         return info
 
+    def get_economic_projection(self):
+        """
+        Per-quarter buy/skip verdicts for the FUTURE charge windows,
+        for the web chart/API (green/olive). NOT the live marginal:
+        that one is only valid for the CURRENT quarter -- marginal 0
+        means "the pack covers the horizon NOW", and painted
+        day-wide it vetoes EVERY charge hour ("all olive",
+        2026-10-05: 90% pack, 25 ct midday chain) even though the
+        cheapest windows DO charge once the pack drains through the
+        expensive phases.
+
+        Chronological simulation with the same math as the live
+        branches: the pack starts at the current SOC, drains at the
+        hourly average through non-charge (and vetoed charge)
+        quarters and refills by charge power * RTE per bought
+        quarter. Each charge quarter faces the live tests in order:
+        SOC-target latch (trip/resume), survival deficit vs the
+        phase after the chain (merit cut over the chain's own
+        remaining quarters), else the merit cut over the cheaper
+        FUTURE quarters for the gap to the scheduler target (the
+        running quarter is not its own alternative; the RTE cancels
+        on both comparison sides). The outlier ceiling always
+        applies.
+
+        Returns {local_date_iso: {"hour:quarter": buy_bool}} for
+        the charge-covered quarters from now to the data horizon,
+        or None when the projection cannot run (non-economic
+        strategy, no consumption history, no ESS reads): the web
+        layer then falls back to the live marginal veto.
+        """
+        if self.charging_strategy != "economic":
+            return None
+        try:
+            from datetime import datetime, timezone
+            from core.timeutilities import TimeUtilities
+
+            now_utc = datetime.now(timezone.utc)
+            items = [
+                it for it in self.items.get_current_list()
+                if it.get_start_datetime() is not None
+                and it.get_end_datetime() is not None
+            ]
+            items.sort(key=lambda it: it.get_start_datetime())
+            n = len(items)
+
+            hourly_avg_w = self._watt_average(self.statsmanager.get_data(
+                "powerconsumption", "hourly_watt_average"))
+            if hourly_avg_w <= 0.0 or self.essunit is None:
+                return None
+            current_soc_wh = float(
+                self.essunit.get_battery_current_wh() or 0)
+            min_wh = float(self.essunit.get_battery_min_wh() or 0)
+            full_wh = float(self.essunit.get_battery_full_wh() or 0)
+            if full_wh <= 0.0 or current_soc_wh <= 0.0:
+                return None
+            target_soc = self.essunit.get_scheduler_soc()
+            if target_soc is None:
+                return None
+            target_soc = float(target_soc)
+
+            rte = float(self.round_trip_efficiency or 0.0)
+            power_w = float(self.charge_power_w or 0.0)
+            if rte <= 0.0 or power_w <= 0.0:
+                return None
+
+            try:
+                gap_pct = max(0.0, float(getattr(
+                    self.config, "soc_target_resume_gap_percent", 2.0)))
+            except (TypeError, ValueError):
+                gap_pct = 2.0
+            target_abs = target_soc / 100.0 * full_wh
+            trip_abs = (target_soc - 1.0) / 100.0 * full_wh
+            resume_abs = trip_abs - gap_pct / 100.0 * full_wh
+            try:
+                ceiling = Utils.convert_to_millicents(float(
+                    getattr(self.config, "economic_price_ceiling", 60)))
+            except (TypeError, ValueError):
+                ceiling = Utils.convert_to_millicents(60)
+
+            def _qdt(it):
+                qs = it.get_start_datetime()
+                qe = it.get_end_datetime()
+                if qs.tzinfo is None:
+                    qs = qs.replace(tzinfo=timezone.utc)
+                if qe.tzinfo is None:
+                    qe = qe.replace(tzinfo=timezone.utc)
+                return qs, qe
+
+            def _price(it):
+                try:
+                    return float(it.get_price(convert=False))
+                except (TypeError, ValueError):
+                    return None
+
+            def _offer(idx):
+                pp = _price(items[idx])
+                if pp is None:
+                    return None
+                s2, e2 = _qdt(items[idx])
+                return (pp, power_w
+                        * (e2 - s2).total_seconds() / 3600.0
+                        * rte)
+
+            # Same anchor as the economic walk: the first
+            # non-expired quarter.
+            start = 0
+            while start < n:
+                if _qdt(items[start])[1] > now_utc:
+                    break
+                start += 1
+            if start >= n:
+                return None
+
+            # Chains of contiguous charge quarters, each with the
+            # far-phase consumption until the next chain (or the
+            # data end) -- same chain/phase model as the walk.
+            chains = []
+            i = start
+            while i < n:
+                if not self._item_charge_covered(items[i]):
+                    i += 1
+                    continue
+                j = i
+                while j < n and self._item_charge_covered(items[j]):
+                    j += 1
+                far_wh = 0.0
+                k = j
+                while k < n and not self._item_charge_covered(items[k]):
+                    s2, e2 = _qdt(items[k])
+                    far_wh += hourly_avg_w * (
+                        e2 - s2).total_seconds() / 3600.0
+                    k += 1
+                chains.append((i, j, far_wh))
+                i = j
+
+            def _chain_of(idx):
+                for a, b, fw in chains:
+                    if a <= idx < b:
+                        return a, b, fw
+                return None
+
+            pack = current_soc_wh
+            latched = bool(type(self)._soc_target_latched)
+            projection = {}
+            for i in range(start, n):
+                it = items[i]
+                qs, qe = _qdt(it)
+                dur_h = (qe - qs).total_seconds() / 3600.0
+                if dur_h <= 0.0:
+                    continue
+                if not self._item_charge_covered(it):
+                    pack = max(min_wh, pack - hourly_avg_w * dur_h)
+                    continue
+                price = _price(it)
+                if price is None:
+                    continue
+                local = TimeUtilities.convert_utc_to_local(qs, False)
+                if local is None:
+                    continue
+                day_map = projection.setdefault(
+                    local.date().isoformat(), {})
+                key = "%d:%d" % (local.hour, local.minute // 15)
+
+                buy = False
+                if latched and pack <= resume_abs:
+                    latched = False
+                if pack >= trip_abs:
+                    latched = True
+                if not latched:
+                    cut = None
+                    chain = _chain_of(i)
+                    if chain is not None:
+                        a, b, far_wh = chain
+                        deficit_wh = far_wh - max(0.0, pack - min_wh)
+                        if deficit_wh > 0.0:
+                            # Survival: this chain must refill for
+                            # the phase after it -- merit cut over
+                            # its own remaining quarters (the
+                            # running quarter included, like the
+                            # live serving offers).
+                            offers = []
+                            for k in range(i, b):
+                                offer = _offer(k)
+                                if offer is not None:
+                                    offers.append(offer)
+                            cut = self._merit_cut(
+                                offers, deficit_wh, None)
+                        else:
+                            # Buffer: cheaper future quarters fill
+                            # the gap to the scheduler target.
+                            gap_wh = max(0.0, target_abs - pack)
+                            if gap_wh > 0.0:
+                                offers = []
+                                for k in range(i + 1, n):
+                                    if not self._item_charge_covered(
+                                            items[k]):
+                                        continue
+                                    offer = _offer(k)
+                                    if offer is not None:
+                                        offers.append(offer)
+                                cut = self._merit_cut(
+                                    offers, gap_wh, None)
+                    if (cut is not None and price <= cut
+                            and price <= ceiling):
+                        buy = True
+                        pack = min(full_wh, pack + power_w * dur_h * rte)
+                if not buy:
+                    # Vetoed charge window: the battery serves the
+                    # loads (HOLD), the pack drains.
+                    pack = max(min_wh, pack - hourly_avg_w * dur_h)
+                day_map[key] = buy
+            return projection if projection else None
+        except Exception:
+            return None
 
     def _window_avg_price_milli(self, win_start, win_end):
         """

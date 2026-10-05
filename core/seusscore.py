@@ -488,6 +488,20 @@ class SEUSS:
             except Exception:
                 economic = None
 
+        # Per-quarter buy/skip projection for the chart's FUTURE
+        # hours. The live marginal above is only valid for the
+        # CURRENT quarter -- painted day-wide it vetoes every hour
+        # when the pack covers the horizon now ("all olive",
+        # 2026-10-05). RAM-only, same as the rest of the state.
+        economic_projection = None
+        if conditions_instance is not None and \
+                hasattr(conditions_instance, "get_economic_projection"):
+            try:
+                economic_projection = \
+                    conditions_instance.get_economic_projection()
+            except Exception:
+                economic_projection = None
+
         payload = {
             "state": state,
             "charge_condition": charge_result.condition,
@@ -506,6 +520,7 @@ class SEUSS:
             "charging_strategy": getattr(self.config, "charging_strategy", "cap"),
             "current_price": self.items.get_current_price(True),
             "economic": economic,
+            "economic_projection": economic_projection,
             "timestamp": TimeUtilities.get_now().isoformat(),
         }
         try:
