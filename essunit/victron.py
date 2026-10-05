@@ -34,6 +34,7 @@ from typing import Tuple
 from core.log import CustomLogger
 from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus
+from essunit.setpointkeeper import SetpointKeeper
 from core.config import Config
 
 
@@ -86,11 +87,15 @@ class Victron(ESSUnit):
         # its leftover /Settings/DynamicEss/Mode=4 disabled the classic
         # scheduled charging on VenusOS 3.7x. Only classic remains.
         self._control_backend = "classic"
-        # hub4 RAM overrides (com.victronenergy.hub4): the modern ESS
-        # control service exposes /Overrides/ForceCharge and
-        # /Overrides/MaxDischargePower as pure RAM registers -- using
-        # them keeps the SD-backed /Settings registers untouched.
+        # hub4 RAM overrides: live-verified on v3.80 (2026-10-05) --
+        # /Overrides/* are accepted but IGNORED by the ESS control
+        # (vestige, undocumented). The one register that acts is
+        # /Overrides/Setpoint (RAM grid-setpoint) -- see the
+        # SetpointKeeper used by set_charge().
         self._hub4_available = None      # None = not probed yet
+
+        self._keeper = None              # SetpointKeeper (lazy)
+
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -246,20 +251,93 @@ class Victron(ESSUnit):
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
 
+    # ------------------------------------------------------------------
+    # Setpoint-Keeper (hub4 Mode-2 grid-setpoint charging)
+    # ------------------------------------------------------------------
+
+    def _keeper_charge_start(self):
+        """Ladefenster AN: Legacy-Scheduler disarmen (einmalig) und
+        den Keeper mit der auto-detektierten Ladeleistung starten."""
+        if self._keeper is None:
+            self._keeper = SetpointKeeper(
+                self.mqtt_config, self.unit_id, logger=self.logger)
+        self._keeper_legacy_disarm_guard()
+        self._keeper.start(self._keeper_charge_power_w())
+
+    def _keeper_charge_stop(self):
+        """Ladefenster zu: Keeper stoppen (einmaliger 0-Write, danach
+        Verfall). No-op wenn nie aktiv."""
+        if self._keeper is not None:
+            self._keeper.stop()
+        # auch beim ersten Nicht-Lade-Zyklus: ein von der Vorversion
+        # hinterlassener armed Scheduler wuerde sonst weiterladen
+        self._keeper_legacy_disarm_guard()
+
+    def _keeper_charge_power_w(self):
+        """
+        Ziel-Ladeleistung (W) -- dieselbe Auto-Erkennung wie die
+        Economic-Strategie (measured-first): last_grid_charge_power_w
+        -> GX/BMS-Capability -> Default 2500 W.
+        """
+        measured = 0.0
+        try:
+            from core.statsmanager import StatsManager
+            val = StatsManager().get_data(
+                "powerconsumption", "last_grid_charge_power_w")
+            if isinstance(val, dict):
+                w = val.get("w", 0)
+                if isinstance(w, (int, float)) and w > 0:
+                    measured = float(w)
+            elif isinstance(val, (int, float)) and val > 0:
+                measured = float(val)
+        except Exception:
+            measured = 0.0
+        capability = 0.0
+        try:
+            cap = self.get_max_charge_capability_w()
+            if cap and cap > 0:
+                capability = float(cap)
+        except Exception:
+            capability = 0.0
+        if measured > 0:
+            return measured
+        if capability > 0:
+            return capability
+        return 2500.0
+
+    def _keeper_legacy_disarm_guard(self):
+        """
+        Einmalig pro Prozess: falls ein Legacy-Scheduler noch ARMED
+        ist (Day=7), einmalig disarmen -- sonst laedt er parallel zum
+        Keeper weiter. Der EINZIGE Day-Write auf hub4-Firmware.
+        """
+        if getattr(self, "_keeper_day_guard_done", False):
+            return
+        self._keeper_day_guard_done = True
+        try:
+            day = self._process_result(
+                self.subsribers.get('Schedule', 'Day'))
+            if day == 7:
+                self._publish(
+                    f"/{self.unit_id}/settings/0/Settings/CGwacs/"
+                    "BatteryLife/Schedule/Charge/0/Day", -7)
+                self.logger.log.info(
+                    f"{self._name} Legacy scheduled charge was armed "
+                    f"(Day=7) -- disarmed once (Setpoint-Keeper takes "
+                    f"over charging).")
+        except Exception as e:
+            self.logger.log.warning(
+                f"Legacy scheduler disarm guard failed: {e}")
+
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            # RUECKZUG auf die nativen Venus-Semantiken (User-Klaerung,
-            # 2026-10-04): Die Einstellung (SD-Register) ist der
-            # WATT-REGULATOR und die Flaeche der GX-GUI/VRM-Anzeige:
-            #   Sperre (OFF) -> 0    (Limiter AN, 0 W -- kein Trickle)
-            #   Freigabe (ON) -> Config verbatim:
-            #       -1  -> "AUS"-Anzeige = unbegrenzt  (jahrelang bewaehrt)
-            #       +X  -> "AN"-Anzeige = X W
-            # Keine 65000-Sicherung (gegen die User-Spez. gebaut), kein
-            # Overlay-Tanzen: schreiben nur bei Abweichung, IST aus dem
-            # frischen Zyklus-Feed, Soll verbatim aus der Config. Der
-            # 65000-Restbestand heilt sich im naechsten OFF-Zyklus.
+            # SD-Register = Watt-Regulator + GUI-Anzeige:
+            #   OFF (Sperre)  -> 0   (Limiter AN, 0 W)
+            #   ON (Freigabe) -> Config verbatim (-1 = "AUS"/unbegrenzt).
+            # Ist aus dem frischen Zyklus-Feed; schreiben nur bei
+            # Abweichung, die /Overrides/*-RAM-Register werden von
+            # v3.80 ignoriert (Vestige) und bleiben unberuehrt.
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
                 if value == self.max_discharge_power: return
@@ -274,18 +352,32 @@ class Victron(ESSUnit):
     def set_charge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            value = self._process_result(self.subsribers.get('Schedule', 'Day'))
             if status_enum == ESSStatus.ON:
-                if value == 7: return
-                self._set_scheduler()
-                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", 7)
                 if self.hub4_available():
-                    self._hub4_write("/Overrides/ForceCharge", 1)
+                    # hub4 (Venus 3.x): Laden ueber den Setpoint-Keeper
+                    # (RAM-Grid-Setpoint). Scheduler (Day/Duration/Soc)
+                    # und ForceCharge sind hier kein Steuerkanal mehr
+                    # (ForceCharge = ignorierter Vestige).
+                    self._keeper_charge_start()
+                else:
+                    # Alte Firmware ohne hub4: Scheduler-Arming-Pfad.
+                    value = self._process_result(
+                        self.subsribers.get('Schedule', 'Day'))
+                    if value == 7: return
+                    self._set_scheduler()
+                    self._publish(
+                        f"/{self.unit_id}/settings/0/Settings/CGwacs/"
+                        "BatteryLife/Schedule/Charge/0/Day", 7)
             elif status_enum == ESSStatus.OFF:
-                if value == -7: return
-                self._publish(f"/{self.unit_id}/settings/0/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day", -7)
                 if self.hub4_available():
-                    self._hub4_write("/Overrides/ForceCharge", 0)
+                    self._keeper_charge_stop()
+                else:
+                    value = self._process_result(
+                        self.subsribers.get('Schedule', 'Day'))
+                    if value == -7: return
+                    self._publish(
+                        f"/{self.unit_id}/settings/0/Settings/CGwacs/"
+                        "BatteryLife/Schedule/Charge/0/Day", -7)
 
         except (TypeError, ValueError) as e:
             self.logger.log.error(f"Error: {e}")
