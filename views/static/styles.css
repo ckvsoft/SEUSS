@@ -82,6 +82,12 @@ legend {
     color: #333;
 }
 
+.economic-note {
+    font-style: italic;
+    opacity: 0.85;
+    margin: 6px 0;
+}
+
 input[type="submit"] {
     background-color: #3fff33;
     color: black;

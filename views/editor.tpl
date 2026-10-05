@@ -37,6 +37,16 @@
                     "economic_price_ceiling",
                     "round_trip_efficiency",
                 ]
+                # Cap-strategy-only switches: dormant under the economic
+                # strategy (the marginal rule decides; the flags are
+                # simply not registered there). Hidden while economic
+                # is active; they re-appear when flipping back to cap.
+                cap_only_keys = {
+                    "skip_charge_when_battery_covers_expensive_phase",
+                    "skip_charge_when_cheaper_cluster_coming",
+                    "cheaper_cluster_min_reserve_hours",
+                    "charging_price_hard_cap",
+                }
                 # Hidden from the editor: deprecated flags. They stay
                 # functional for backward compatibility (existing
                 # configs keep working) but must not be configured
@@ -121,6 +131,9 @@
 
                 <fieldset>
                     <legend>Battery / Charging</legend>
+                    % if economic_mode:
+                        <p class="economic-note">Economic mode active: the cap-only rules (covering-block, cheaper-cluster) are hidden while dormant &mdash; the marginal-price rule decides. They re-appear when the strategy is switched back to Cap.</p>
+                    % end
                     % if isinstance(config.get("prices"), list) and config["prices"] and "charging_strategy" in config["prices"][0]:
                         <%
                         strategy_value = config["prices"][0]["charging_strategy"]
@@ -140,7 +153,7 @@
                         <br>
                     % end
                     % for key in battery_keys:
-                        % if key in config:
+                        % if key in config and not (economic_mode and key in cap_only_keys):
                             <%
                             value = config[key]
                             if tooltips and key in tooltips:
@@ -196,7 +209,7 @@
                         <legend>Prices</legend>
                         % for price_data in config["prices"]:
                             % for field_key, field_value in price_data.items():
-                                % if field_key == "charging_strategy":
+                                % if field_key == "charging_strategy" or (economic_mode and field_key in cap_only_keys):
                                     % continue
                                 % end
                                 <%

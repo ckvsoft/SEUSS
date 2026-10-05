@@ -1841,12 +1841,31 @@ class SEUSSWeb:
 
         config = self.config.config_data
 
+        # Active charging strategy, resolved exactly like Config
+        # (last prices entry wins, top-level fallback) -- freshly per
+        # request, so a strategy flip in the editor takes effect on the
+        # next page load. The template hides the cap-only switches
+        # when the economic strategy is active (they are dormant
+        # there: the marginal rule decides).
+        economic_mode = False
+        strategy = None
+        for price_item in config.get("prices", []):
+            if isinstance(price_item, dict) and \
+                    "charging_strategy" in price_item:
+                strategy = price_item.get("charging_strategy")
+        if strategy is None:
+            strategy = config.get("charging_strategy")
+        if isinstance(strategy, str):
+            strategy = strategy.strip().lower()
+        economic_mode = strategy == "economic"
+
         unit_id = Config.get_unit_id(config)
         if not self._is_hex(unit_id):
             config['ess_unit'][0]['unit_id'] = Config.find_venus_unique_id()
         config = Utils.decode_passwords_from_base64(config)
         json_object = json.dumps(config, indent=2)
         return template('editor', config=config, json_config=json_object, tooltips=tooltips, names=names,
+                        economic_mode=economic_mode,
                         root=self.view_path)
 
     def check_is_online(self):
