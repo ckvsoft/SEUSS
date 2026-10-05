@@ -82,6 +82,17 @@ class Config(Singleton):
         # cheaper expensive-phase hours fall back to grid.
         "smart_discharge_priority_to_expensive_hours": False,
         "delay_grid_charging_below_active_soc_limit": False,
+        # Discharge fall-through for vetoed charge windows ("olive
+        # hours"): when a charge window matches (block rule true) but a
+        # charging abort vetoes it (economic marginal rule, SOC target,
+        # outlier leash), the discharge gate normally idles the battery
+        # for that window ("Abort discharge while charging is allowed").
+        # With this flag ON, such vetoed windows fall through to the
+        # DEFAULT discharge rules instead (surplus/phase-required planner
+        # math unchanged). SOC protection stays fully active -- this only
+        # removes the blind pause, it never adds discharge entitlement.
+        # Default OFF = the historical behaviour.
+        "discharge_fallthrough_on_charge_veto": False,
         # Absolute price ceiling (Cent/kWh) for the "economic" strategy.
         # Pure data-error protection (bogus feed prices); NOT an
         # economic decision. Ignored in "cap" mode (hard cap rules there).
@@ -328,6 +339,7 @@ class Config(Singleton):
             self.skip_charge_for_upcoming_negative_prices = False
             self.smart_discharge_priority_to_expensive_hours = False
             self.delay_grid_charging_below_active_soc_limit = False
+            self.discharge_fallthrough_on_charge_veto = False
             # Charging strategy / economic-rule defaults (mirrored in
             # DEFAULT_CONFIG_TEMPLATE; load_config reads the real values).
             self.charging_strategy = "cap"
@@ -415,6 +427,7 @@ class Config(Singleton):
             ("skip_charge_for_upcoming_negative_prices", False),
             ("smart_discharge_priority_to_expensive_hours", False),
             ("delay_grid_charging_below_active_soc_limit", False),
+            ("discharge_fallthrough_on_charge_veto", False),
         ):
             raw = config_data.get(attr, default)
             # Accept both real bools and the string "off"/"on" that the

@@ -31,6 +31,7 @@
                     "skip_charge_for_upcoming_negative_prices",
                     "smart_discharge_priority_to_expensive_hours",
                     "delay_grid_charging_below_active_soc_limit",
+                    "discharge_fallthrough_on_charge_veto",
                 ]
                 # Hidden from the editor: deprecated flags. They stay
                 # functional for backward compatibility (existing

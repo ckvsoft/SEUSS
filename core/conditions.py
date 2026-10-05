@@ -85,6 +85,14 @@ class Conditions:
             self.config.charging_price_hard_cap
         )
         self.available_operation_modes = ["switching", "charging", "discharging"]
+        # Per-cycle flag: a charging allow-condition matched but the
+        # charging-abort chain vetoed the shot. Reset at the start of
+        # every charging evaluation, set in evaluate_conditions. Fresh
+        # when the discharging evaluation runs next (seusscore evaluates
+        # charging first, then discharging). Consumed by the
+        # "Abort discharge while charging is allowed" lambda when
+        # discharge_fallthrough_on_charge_veto is on.
+        self.charging_window_vetoed = False
         self.conditions_by_operation_mode = {
             mode: {} for mode in self.available_operation_modes
         }
@@ -621,13 +629,31 @@ class Conditions:
                 self._abort_switching_block_above_hard_cap
         })
 
-        self.abort_conditions_by_operation_mode["discharging_abort"].update({
-            "Abort discharge while charging is allowed":
-                lambda: any(
-                    c() for c in
-                    self.conditions_by_operation_mode.get("charging", {}).values()
-                )
-        })
+        # Discharge pause while a charge window matches. With
+        # discharge_fallthrough_on_charge_veto ON, a window whose charge
+        # shot was vetoed THIS cycle (charging_window_vetoed, set in
+        # evaluate_conditions -- charging runs before discharging) lets
+        # the battery fall through to the regular discharge rules
+        # (surplus / phase-required planner math untouched); a
+        # genuinely running charge (allow matched, no veto) still
+        # pauses discharge as before. Flag OFF = historical behaviour,
+        # byte-for-byte the same dict entry.
+        if getattr(self.config, "discharge_fallthrough_on_charge_veto", False):
+            self.abort_conditions_by_operation_mode["discharging_abort"].update({
+                "Abort discharge while charging is allowed":
+                    lambda: any(
+                        c() for c in
+                        self.conditions_by_operation_mode.get("charging", {}).values()
+                    ) and not self.charging_window_vetoed
+            })
+        else:
+            self.abort_conditions_by_operation_mode["discharging_abort"].update({
+                "Abort discharge while charging is allowed":
+                    lambda: any(
+                        c() for c in
+                        self.conditions_by_operation_mode.get("charging", {}).values()
+                    )
+            })
 
     def _abort_charging_block_above_hard_cap(self):
         """
@@ -2903,6 +2929,12 @@ class Conditions:
             self.logger.log.error(f"Invalid operation mode: {operation_mode}")
             return
 
+        # Reset the veto bookkeeping at every charging evaluation so the
+        # discharging evaluation (which runs right after, seusscore.py) 
+        # reads this cycle's truth, never a stale one.
+        if operation_mode == "charging":
+            self.charging_window_vetoed = False
+
         matched = False
         for key, func in self.conditions_by_operation_mode.get(
                 operation_mode, {}).items():
@@ -2932,6 +2964,24 @@ class Conditions:
                 if func():
                     condition_result.execute = False
                     condition_result.condition = key
+                    if operation_mode == "charging":
+                        # A charge shot in an active charge window was
+                        # vetoed this cycle (economic marginal rule,
+                        # SOC target, outlier leash, ...). With
+                        # discharge_fallthrough_on_charge_veto on, the
+                        # discharging-abort lambda lets the battery
+                        # fall through to the regular discharge rules
+                        # instead of idling the window away.
+                        self.charging_window_vetoed = True
+                        if getattr(
+                                self.config,
+                                "discharge_fallthrough_on_charge_veto",
+                                False):
+                            self.logger.log.info(
+                                "Charge window vetoed (%s) -- discharge "
+                                "fall-through active, surplus rules "
+                                "decide.", key
+                            )
                     break
             except Exception as e:
                 self.logger.log.error(
