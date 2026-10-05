@@ -824,9 +824,9 @@ class Conditions:
     @staticmethod
     def _merit_cut(offers, need_wh, fallback):
         """
-        Merit-Schnitt: die billigsten (Preis, Wh)-Angebote akkumulieren,
-        bis der Bedarf gedeckt ist -- der Preis des letzten dafuer
-        noetigen Angebots ist der Schnitt-Preis. Kein Angebot -> fallback.
+        Merit-order cut: accumulate the cheapest (price, Wh) offers
+        until the need is covered -- the price of the last offer needed
+        is the cut price. No offers -> fallback.
         """
         if not offers:
             return fallback
@@ -1107,7 +1107,7 @@ class Conditions:
             # far_stack`, deficit check), so the gate is removed.
             if stats_ok and (marginal is None or marginal <= 0.0):
                 serving_prices = []
-                serving_offers = []  # (raw price, delivered Wh) je Viertel
+                serving_offers = []  # (raw price, delivered Wh) per quarter
                 j = i
                 while j < n and _charge_covered(items[j]):
                     qe = items[j].get_end_datetime()
@@ -1130,14 +1130,14 @@ class Conditions:
                             pass
                     j += 1
                 if not serving_prices and chain_skip_start is not None:
-                    # Zirkel-Fix (2026-10-04): Der Phasen-Walk hat die
-                    # laufende/geplante Kette UEBERSPRUNGEN (i steht
-                    # dahinter) -- ihre Rest-Viertel SIND die Bezugs-
-                    # kette. Ohne sie blieb serving leer, der Grenzpreis
-                    # 0 und der Veto strich genau die Kette, auf die
-                    # sich die Rechnung berief (alles oliv bei 35 % SOC,
-                    # Billigfenster ungenutzt; nach Neustart korrekt,
-                    # weil dann der Anker passte).
+                    # Chain-fallback (2026-10-04): the phase walk
+                    # SKIPPED the running/planned chain (i sits behind
+                    # it) -- its remaining quarters ARE the serving
+                    # chain. Without them serving stayed empty, the
+                    # marginal collapsed to 0 and the veto killed
+                    # exactly the chain the math relied on ("all
+                    # olive" at 35% SOC; correct again after a
+                    # restart because the anchor then fit).
                     j = chain_skip_start
                     while j < n and _charge_covered(items[j]):
                         qe = items[j].get_end_datetime()
@@ -1196,8 +1196,8 @@ class Conditions:
                             sum(serving_prices) / len(serving_prices))
                         cut_price = self._merit_cut(
                             serving_offers, deficit_wh, serving_avg)
-                        # Grenzpreis input-seitig (RTE-geteilt), damit der
-                        # Veto den rohen Viertelpreis direkt pruefen kann.
+                        # Marginal on the input side (RTE-divided) so the
+                        # veto can compare the raw quarter price directly.
                         eff_marginal = (
                             cut_price / self.round_trip_efficiency)
                         if eff_marginal > (marginal or 0.0):
@@ -1206,16 +1206,15 @@ class Conditions:
                             info["preload_deficit_wh"] = deficit_wh
                             info["serving_chain_price"] = serving_avg
                 if deficit_wh <= 0.0:
-                    # Pak ist unter dem Scheduler-Ziel: jetzt nur
-                    # kaufen, wenn kein BILLIGERES zukuenftiges
-                    # Ladeviertel die Ziel-Luecke fuellen kann.
-                    # Merit-korrekt (2026-10-05): Referenz sind ALLE
-                    # zukuenftigen Ladeviertel (spaetere der laufenden
-                    # Kette + alle Folge-Ketten), nicht mehr nur die
-                    # naechste Kette -- ein Fenster bestand sonst
-                    # seinen eigenen Test (02:00 @ 35.5 vs sich selbst,
-                    # Nacht 05./06.10.) und die Nacht-Blöcke wurden
-                    # gegen 25-31-ct-Mittagsketten nicht vetoiert.
+                    # Pack sits below the scheduler target: buy now
+                    # only if no CHEAPER future charging quarter can
+                    # fill the target gap. Merit-correct (2026-10-05):
+                    # the reference is a cut over ALL future charging
+                    # quarters (later ones of the running chain + all
+                    # following chains), not just the nearest chain --
+                    # a window used to pass its own test (02:00 @ 35.5
+                    # vs itself) and the night blocks never vetoed
+                    # against a 25-31 ct midday chain.
                     target_soc = (self.essunit.get_scheduler_soc()
                                   if self.essunit else None)
                     current_soc = (self.essunit.get_soc()
@@ -1240,7 +1239,7 @@ class Conditions:
                             if qe.tzinfo is None:
                                 qe = qe.replace(tzinfo=timezone.utc)
                             if qs <= now_utc:
-                                continue  # laufendes Viertel: keine Alternative
+                                continue  # running quarter: not an alternative
                             try:
                                 price = float(it.get_price(convert=False))
                             except (TypeError, ValueError):

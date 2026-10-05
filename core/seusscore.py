@@ -145,7 +145,7 @@ class SEUSS:
                             self.logger.log.info(f"Update Active Soc Limit Status: {active_soc_limit}")
 
                         if abs(soc - check_limit) <= 1:
-                                # Auf gespeicherten Wert zurücksetzen und Delay beenden
+                                # Reset to the stored value and end the delay
                                 self._apply_active_soc_limit(essunit, check_limit)
                                 self.statsmanager.remove_data("ess_unit", "date_soc_limit", save_data=False)
                                 self.statsmanager.remove_data("ess_unit", "soc_limit", save_data=False)
@@ -183,7 +183,7 @@ class SEUSS:
         self.load_configuration()
         self.initialize_logging()
         self.config.observer.add_observer("seuss", self)
-        lasttime_minute = None  # Startwert bleibt None, damit die erste Ausführung sofort möglich ist
+        lasttime_minute = None  # stays None so the first run fires immediately
 
         try:
             while True:

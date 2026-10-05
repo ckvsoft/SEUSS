@@ -67,11 +67,11 @@ class PvInverterResults(MqttResult):
     def add_pvinverter(self, topic, value):
         pattern = r'N/[^/]+/pvinverter/(\d+)/([^/]+)'
 
-        # Verwenden Sie re.match, um den regulären Ausdruck auf die Zeichenkette anzuwenden
+        # Use re.match to apply the regular expression to the string
         match = re.match(pattern, topic)
 
         if match:
-            device_id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            device_id = int(match.group(1))  # cast to int where applicable
             keyword = match.group(2)
 
             if device_id not in self.inverters:
@@ -182,11 +182,11 @@ class GridMetersResults(MqttResult):
     def add_gridmeters(self, topic, value):
         pattern = r'N/[^/]+/grid/(\d+)/([^/]+)'
 
-        # Verwenden Sie re.match, um den regulären Ausdruck auf die Zeichenkette anzuwenden
+        # Use re.match to apply the regular expression to the string
         match = re.match(pattern, topic)
 
         if match:
-            id = int(match.group(1))  # Sie können den Wert als Integer konvertieren, wenn erforderlich
+            id = int(match.group(1))  # cast to int where applicable
             keyword = match.group(2)
 
             if id not in self.gridmeters:
@@ -268,7 +268,7 @@ class Subscribers(MqttResult):
 
     def remove_topic(self, group, key):
         """
-        Löscht ein Thema mit allen Werten aus dem Dictionary.
+        Deletes a topic with all its values from the dictionary.
         """
         if group in self.subscribesValues and key in self.subscribesValues[group]:
             del self.subscribesValues[group][key]
@@ -282,7 +282,7 @@ class Subscribers(MqttResult):
         # Entferne vorhandenes Thema mit allen Werten
         self.remove_topic(group, key)
 
-        # Füge das Thema zu Subscribers hinzu
+        # Add the topic to the subscribers
         if group not in self.subscribesValues:
             self.subscribesValues[group] = {}
 
@@ -412,7 +412,7 @@ class MqttClient:
 
             # self.client.loop_start()
 
-            # Abonnements für die angegebenen Themen einrichten
+            # Set up subscriptions for the given topics
             for query_topic in query_topics:
                 group, actual_topic = subscribers_instance.update_extract_group_topic(query_topic)
                 self.logger.log.debug(f"Subscribing to: {actual_topic}")
@@ -430,7 +430,7 @@ class MqttClient:
                     for subtopic, subtopic_data in subtopics.items()
             ):
                 if time.time() - start_time > self.timeout:
-                    # Timeout erreicht, fehlende oder ungültige Werte protokollieren
+                    # Timeout reached, log missing or invalid values
                     missing_topics = [
                         f"{topic}/{subtopic}" for topic, subtopics in subscribers_instance.subscribesValues.items()
                         for subtopic, subtopic_data in subtopics.items()

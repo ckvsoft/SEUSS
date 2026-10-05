@@ -41,29 +41,29 @@ class Fritz(SmartSwitch):
         self.ips, self.ain_groups = self._filter_ips_and_ains(self.ips, self.ain_groups)
 
     def _filter_ips_and_ains(self, ips, ain_groups):
-        """Filtert deaktivierte IPs und deren zugehörige AIN-Gruppen"""
+        """Filters disabled IPs and their AIN groups"""
         active_ips = []
         active_ain_groups = []
 
         for ip, ains in zip(ips, ain_groups):
             ip = ip.strip()
             if ip.startswith("!"):
-                continue  # Überspringe deaktivierte IPs und deren AIN-Gruppen
+                continue  # skip disabled IPs and their AIN groups
             active_ips.append(ip)
             active_ain_groups.append(ains)  # AIN-Gruppen beibehalten, wenn die IP aktiv ist
 
         return active_ips, active_ain_groups
 
     def turn_on(self):
-        """Schaltet alle AINs für jede FritzBox-IP ein"""
+        """Turns all AINs on for every FritzBox IP"""
         self._send_request("setswitchon")
 
     def turn_off(self):
-        """Schaltet alle AINs für jede FritzBox-IP aus"""
+        """Turns all AINs off for every FritzBox IP"""
         self._send_request("setswitchoff")
 
     def _send_request(self, action):
-        """Sendet HTTP-Requests für alle konfigurierten IPs und AINs"""
+        """Sends HTTP requests for all configured IPs and AINs"""
         for ip, ains in zip(self.ips, self.ain_groups):
             sid = self._get_sid(ip)
             if not sid:
@@ -80,7 +80,7 @@ class Fritz(SmartSwitch):
                     self.logger.log.debug(f"[{ip} - AIN {ain}] Error: {e}")
 
     def _get_sid(self, ip):
-        """Holt eine Session-ID über Hash-Authentifizierung"""
+        """Fetches a session ID via hash authentication"""
         login_url = f"http://{ip}/login_sid.lua"
         try:
             response = requests.get(login_url, timeout=5)

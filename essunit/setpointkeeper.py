@@ -26,34 +26,34 @@
 #
 
 """
-Setpoint-Keeper: die komplette SEUSS-Steuerung laeuft ueber den
-RAM-Grid-Setpoint des hub4-Dienstes
+SetpointKeeper: the complete SEUSS control loop runs through the
+hub4 RAM grid setpoint
 (MQTT: W/<uid>/hub4/0/Overrides/Setpoint, {"value": <W>}).
-Das MaxDischargePower-Setting wird als EINSTELLUNG behandelt
-(GUI des Users), nicht als Schalter getoggelt.
+The MaxDischargePower register stays a SETTING (the user's GUI),
+never a toggled switch.
 
-Verifikation 2026-10-05 (live, v3.80):
-  +W -> sofort Netzbezug W (Batterie laedt), -W -> Feed-in.
-  Haltedauer nach dem letzten Write ~180 s; danach verfaellt der
-  Override auf persistiertes /Settings/CGwacs/AcPowerSetPoint (10 W)
-  = normaler Selbstverbrauch (fail-safe).
-  Andere /Overrides/* (MaxDischargePower, ForceCharge, ...) werden
-  von der Steuerlogik ignoriert (totes Vestige -- nie schreiben).
+Live verification 2026-10-05 (v3.80):
+  +W -> immediate grid import W (battery charges), -W -> feed-in.
+  The override decays ~180 s after the last write and falls back to
+  the persisted /Settings/CGwacs/AcPowerSetPoint (10 W) = normal
+  self-consumption (fail-safe).
+  All other /Overrides/* (MaxDischargePower, ForceCharge, ...) are
+  ignored by the ESS control (vestige -- never write them).
 
-Modi (effective pro Takt):
-  CHARGE  Ladefenster aktiv    -> X + max(0, Last - PV)
-  FREE    Entlade-Entscheidung -> die persistierten 10 W spiegeln
-                                 (Selbstverbrauch: Batterie serviert
-                                 die Lasten, eigenes Wollen: keiner)
-  HOLD    sonst (Sperre/Veto)  -> max(0, Last - PV) (Batterie haelt,
-                                 Netz+PV servieren die Lasten)
-  NONE    hands-off/Start      -> schweigen; Verfall -> neutral
+Modes (effective per tick):
+  CHARGE  charge window active  -> X + max(0, load - pv)
+  FREE    discharge granted     -> mirror the persisted setpoint
+                                   (self-consumption: battery serves
+                                   the loads, no will of its own)
+  HOLD    otherwise (veto/gap)   -> max(0, load - pv) (battery held,
+                                   grid+PV serve the loads)
+  NONE    hands-off/startup     -> silent; decay -> neutral
 
-Last/PV pro Takt aus dem GX-MQTT-Feed (zuletzt bekannte Werte; neue
-Daten nachziehen, Stale >120 s nur WARNen und pinnen -- 0-Werte
-wuerden in der Sperre den Akku aktiv leeren). Alle internen
-Sicherheitsgrenzen (BMS CCL, MaxChargeCurrent, Sustain, AC-Voll-SOC)
-bleiben aktiv (Hub4Mode=1).
+Load/PV per tick from the GX MQTT feed (last known values; new data
+refreshes them, stale >120 s only WARNs and pins the last values --
+zeros would actively drain the pack in HOLD). All internal safety
+limits (BMS CCL, MaxChargeCurrent, Sustain, full-SOC stop) stay
+enforced by the internal loop (Hub4Mode stays 1).
 """
 
 import json
@@ -65,8 +65,8 @@ import paho.mqtt.client as mqtt
 from core.log import CustomLogger
 from core.utils import Utils
 
-# Prozessweite Singletons: die essunit-Objekte werden pro
-# Evaluationszyklus neu gebaut, der Keeper-Thread darf das NICHT.
+# Process-wide singletons: the essunit objects are rebuilt every
+# evaluation cycle -- the keeper thread must NOT be.
 _KEEPERS = {}
 _REGISTRY_LOCK = threading.Lock()
 
@@ -75,12 +75,12 @@ MODE_HOLD = "hold"
 MODE_FREE = "free"
 MODE_CHARGE = "charge"
 
-_FRESH_WINDOW_S = 120.0  # Frische-Fenster fuer Last/PV
+_FRESH_WINDOW_S = 120.0  # freshness window for load/pv
 
 
 def get_keeper(mqtt_config, unit_id, max_discharge_power, logger=None):
-    """Prozess-Singleton fuer die unit_id; Thread startet einmal und
-    lebt fuer die Prozessdauer (die essunit-Instanz stirbt pro Zyklus)."""
+    """Process singleton per unit_id; the thread starts once and
+    lives for the process lifetime (essunit instances die per cycle)."""
     key = str(unit_id)
     with _REGISTRY_LOCK:
         keeper = _KEEPERS.get(key)
@@ -113,12 +113,12 @@ class SetpointKeeper:
         self._write_topic = f"W/{self.unit_id}/hub4/0/Overrides/Setpoint"
         self._keepalive_topic = f"R/{self.unit_id}/keepalive"
 
-        # Reads/Writes auf die beiden SD-Settings (nur fuer die
-        # einmaligen Legacy-Heals im Guard).
+        # Reads/writes for the two SD settings (only for the
+        # one-time legacy heals in the guard).
         self._day_reg_path = "/Settings/CGwacs/BatteryLife/Schedule/Charge/0/Day"
         self._discharge_reg_path = "/Settings/CGwacs/MaxDischargePower"
 
-        # Live-Werte (GX pusht on change, nicht retained).
+        # Live values (the GX pushes on change, not retained).
         self._consumption_topics = [
             f"N/{self.unit_id}/system/0/Ac/Consumption/L{p}/Power"
             for p in (1, 2, 3)
@@ -128,8 +128,8 @@ class SetpointKeeper:
             for p in (1, 2, 3)
         ]
         self._read_reply_topic = f"N/{self.unit_id}/hub4/0/Overrides/Setpoint"
-        # Der persistierte Grid-Setpoint (EINSTELLUNG des Systems/Users):
-        # FREE spiegelt ihn (ueberschreibt nichts eigenes).
+        # The persisted grid setpoint (a SETTING of the system/user):
+        # FREE mirrors it instead of imposing anything of its own.
         self._neutral_topic = (
             f"N/{self.unit_id}/settings/0/Settings/CGwacs/AcPowerSetPoint")
 
@@ -179,7 +179,7 @@ class SetpointKeeper:
                 f"(discharge {'on' if wanted else 'off'}).")
 
     def set_hands_off(self):
-        """Kein Steuerrecht (disabled/observation): Schweigen dauerhaft."""
+        """No control authority (disabled/observation): silent forever."""
         with self._state_lock:
             was = not self._hands_off
             self._hands_off = True
@@ -231,9 +231,8 @@ class SetpointKeeper:
                 pv = self._sum(self._pv_topics, "pv")
                 target = max(0.0, power + house - pv)
             elif mode == MODE_FREE:
-                # FREE spiegelt den persistierten Grid-Setpoint
-                # (EINSTELLUNG): kein eigenes Wollen. Unbekannt ->
-                # schweigen (der Verfall faellt aufs persistierte).
+                # FREE mirrors the persisted grid setpoint (a SETTING);
+                # unknown -> silent (decay falls back to the same one).
                 val = self._latest.get(self._neutral_topic, (None,))[0]
                 if isinstance(val, (int, float)):
                     target = float(val)
@@ -352,13 +351,15 @@ class SetpointKeeper:
 
     def _apply_guards(self, client):
         """
-        Einmalig pro Prozess, beim ersten Connect. Ziele:
-          1. Legacy-Scheduler disarmen (Day=7 -> -7): der Scheduler ist
-             mit dem Setpoint-Keeper kein Steuerkanal mehr.
-          2. MaxDischargePower == 0 heilen (0 -> Config-Wert): eine
-             alte, mid-flight gestorbene Sperre wuerde sonst die
-             Entladung dauerhaft blocken. Danach GUI des Users.
-        Danach schreibt SEUSS KEIN Setting mehr (nur den RAM-Setpoint).
+        Once per process, at the first connect:
+          1. Disarm a legacy scheduler (Day=7 -> -7): with the
+             SetpointKeeper it is no longer a control channel.
+          2. Heal MaxDischargePower == 0 (0 -> config value): a stale
+             block left behind by a mid-flight death would otherwise
+             block discharge forever. The register is the user's GUI
+          after that.
+        From then on SEUSS never writes a setting again (only the
+        RAM setpoint).
         """
         if self._guard_done:
             return
@@ -379,7 +380,7 @@ class SetpointKeeper:
                     self.max_discharge_power)
                 self.logger.log.info(
                     f"MaxDischargePower heal: 0 -> "
-                    f"{self.max_discharge_power} (einmalig).")
+                    f"{self.max_discharge_power} (one-time).")
         except Exception as e:
             self.logger.log.warning(
                 f"keeper MaxDischarge-guard failed: {e}")

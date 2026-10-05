@@ -28,7 +28,7 @@ class LogReader:
                     # Wenn die Zeile nicht gefunden wurde, lese die gesamte Datei
                     last_lines = lines
 
-                # Füge die gelesenen Zeilen in die Liste ein
+                # Append the read lines to the list
                 self.lines.extend(last_lines)
         except FileNotFoundError:
             self.lines.extend(["Log file not found."])
@@ -52,7 +52,7 @@ class LogReader:
                 continue
             html_formatted_lines.append(colored_line)
 
-        # Gib das HTML-formatierte Ergebnis zurück
+        # Return the HTML-formatted result
         return '<br>'.join(html_formatted_lines)
 
     def colorize_log_level(self, line):
@@ -60,7 +60,7 @@ class LogReader:
         start_index = line.find('[')
         end_index = line.find(']')
 
-        # Überprüfen Sie, ob '[' und ']' vorhanden sind und start_index vor end_index liegt
+        # Check that '[' and ']' exist and start_index comes before end_index
         if start_index != -1 and end_index != -1 and start_index < end_index:
             # Extrahieren Sie das erste Zeichen zwischen '[' und ']'
             log_level = line[start_index + 1]
@@ -74,12 +74,12 @@ class LogReader:
                 'I': 'lightgreen',  # Info
                 'E': 'red',  # Error
                 'W': 'orange',  # Warning
-                'C': 'purple'  # Custom (oder was auch immer C repräsentiert)
+                'C': 'purple'  # Custom
             }
 
             if log_level in color_mapping:
                 colored_line = f'<span style="color:{color_mapping[log_level]}">{line[start_index:end_index + 1]}</span>{line[end_index + 1:]}'
                 return colored_line
 
-        # Falls keine Farbgebung erforderlich ist, geben Sie die Zeile unverändert zurück
+        # If no coloring is needed, return the line unchanged
         return line

@@ -12,7 +12,7 @@ from design_patterns.singleton import Singleton
 class ConsoleFormatter(logging.Formatter):
     LEVEL_MAP = {
         "DEBUG": '\033[94m',  # Blau
-        "INFO": '\033[92m',  # Grün
+        "INFO": '\033[92m',  # green
         "WARNING": '\033[93m',  # Gelb
         "ERROR": '\033[91m',  # Rot
         "CRITICAL": '\033[95m',  # Magenta
@@ -54,7 +54,7 @@ class CustomLogger(Singleton):
         self.config.load_config()
         self.log_level = self.config.log_level
         if self.log.hasHandlers():
-            self.log.handlers.clear()  # Lösche Standard-Handler
+            self.log.handlers.clear()  # drop default handlers
 
         self.log.propagate = False
 

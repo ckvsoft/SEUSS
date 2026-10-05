@@ -54,7 +54,7 @@ class TibberItem(Item):
             starts_at, '%Y-%m-%dT%H:%M:%S.%f%z'
         ).astimezone(timezone.utc)
         if price_value is None:
-            raise ValueError("Ungültige Tibber-Preisdaten. 'price_value' muss gesetzt sein.")
+            raise ValueError("Invalid Tibber price data: 'price_value' must be set.")
         end_time = start_time + timedelta(minutes=slot_minutes)
         # Tibber delivers currency/kWh (0.19 EUR/kWh = 19 ct), Awattar/
         # ENTSO-E deliver EUR/MWh -> potency 13. Display divisor is 10^14.

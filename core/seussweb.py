@@ -1811,11 +1811,11 @@ class SEUSSWeb:
         files = os.listdir(str(directory_path))
         logfiles = [file for file in files if file.startswith(file_name)]
 
-        # Pfad zum temporären ZIP-Archiv
+        # Path of the temporary ZIP archive
         zip_file_name = 'logfiles_' + str(int(datetime.now().timestamp() / 1000)) + '.zip'
         zip_file_path = os.path.join(directory_path, zip_file_name)
 
-        # ZIP-Archiv erstellen und Dateien hinzufügen
+        # Create the ZIP archive and add the files
         with zipfile.ZipFile(zip_file_path, 'w') as zip_file:
             for file in logfiles:
                 file_path = os.path.join(directory_path, file)
@@ -1888,7 +1888,7 @@ class SEUSSWeb:
 
         # Iteration durch Formulardaten
         for key, value in request.forms.items():
-            # Unterteilung des Schlüssels, um Sektion, Namen und Feld zu extrahieren
+            # Split the key to extract section, name and field
             split_key = key.split(':')
             if len(split_key) == 2:
                 section = split_key[0]
@@ -1918,7 +1918,7 @@ class SEUSSWeb:
                 # Check if the name exists in the section
                 entry = next((e for e in new_config[section] if e['name'] == name), None)
                 if entry is None:
-                    # Neuen Eintrag hinzufügen, falls nicht vorhanden
+                    # Add the new entry if missing
                     entry = {'name': name}
                     new_config[section].append(entry)
 
@@ -1947,7 +1947,7 @@ class SEUSSWeb:
         delay_seconds = 1
         threading.Timer(delay_seconds, self.save_config, args=(new_config,)).start()
 
-        # Zurück zur Indexseite
+        # Back to the index page
         return new_config
 
     def generate_chart_svg(self, data, charge_blocks, discharge_blocks,
@@ -2048,11 +2048,11 @@ class SEUSSWeb:
         # individual quarter prices, so the user can see what's behind
         # the hourly average.
         slice_width = (width - 3) / 4.0  # leave 3px gap between hour groups
-        # SOC-Ziel-Stopp: Ist er im aktuellen Zyklus aktiv (Charge
-        # Condition "SOC target reached"), streicht SEUSS die restlichen
-        # geplanten Lade-Viertel des Tages -- die Chart darf sie nicht
-        # als Gruen weiterzeigen (beobachtet 2026-10-04: 15 Uhr gruen
-        # gemalt, obwohl der Ziel-Stopp das Laden beendet hatte).
+        # SOC-target stop: when active this cycle (charge condition
+        # "SOC target reached"), SEUSS cancels the day's remaining
+        # planned charging quarters -- the chart must not keep showing
+        # them green (observed 2026-10-04: 15:00 painted green although
+        # the target stop had ended charging).
         _charge_condition = str((self._ess_state or {}).get(
             "charge_condition") or "")
         soc_stop = "SOC target" in _charge_condition
@@ -2602,7 +2602,7 @@ class SEUSSWeb:
     def _extract_table_values(self, markdown_text):
         result_dict = {}
 
-        # Suche nach Zeilen, die mit "|" beginnen und nicht den Überschriften entsprechen
+        # Find lines starting with "|" that are not headings
         splitlines = markdown_text.splitlines()
         lines = [line.strip() for line in splitlines if line.strip().startswith('|') and "Setting" not in line.split(' ', 1)[0] and "Meaning" not in line.split(' ', 1)[0] and "-------" not in line]
         for line in lines:

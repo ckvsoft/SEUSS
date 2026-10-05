@@ -37,7 +37,7 @@ from core.timeutilities import TimeUtilities
 class PowerDataHandler:
     def __init__(self):
         self._logger = CustomLogger()
-        self.num_ac_phases = None  # Wird per MQTT gesetzt
+        self.num_ac_phases = None  # set via MQTT
         self.num_grid_phases = None
         self.ac_phases = {}
         self.grid_phases = {}
@@ -59,7 +59,7 @@ class PowerDataHandler:
         self.last_pv_aggregate_ts = time.time()
 
     def update_values(self, topic, payload):
-        """Empfängt MQTT-Daten und aktualisiert Werte."""
+        """Receives MQTT data and updates values."""
         value = payload.get("value")
         if value is not None:
             self.checked_data[topic] = True
@@ -114,13 +114,13 @@ class PowerDataHandler:
         elif topic == "SOC":
             self.final_data["SOC"] = value
 
-        # Berechnungen ausführen
+        # Run the calculations
         self.calculate_power()
 
     def calculate_power(self):
         """Berechnet AC_POWER, AC_GRID_POWER, PV_POWER, DC_POWER und TOTAL_POWER."""
 
-        # Sicherstellen, dass für AC und Grid mindestens ein gültiger Wert da ist
+        # Make sure at least one valid AC and grid value exists
         if self.data_complete(self.updated_ac_phases, self.num_ac_phases):
             self.final_data["AC_POWER"] = sum(v for v in self.ac_phases.values() if v is not None)
             self.reset(self.updated_ac_phases)
@@ -157,25 +157,25 @@ class PowerDataHandler:
                 self.final_data["TOTAL_POWER"], self.final_data["EFFICIENCY"] = self.process_data()
 
     def data_complete(self, phase_set, num_phases):
-        """Überprüft, ob alle Phasen vorhanden sind oder wenn Phasenanzahl nicht bekannt ist."""
+        """Checks whether all phases are present or the phase count is unknown."""
         if num_phases is None:
             return False
         return len(phase_set) >= num_phases
 
     def all_required_data_complete(self):
-        """Prüft, ob alle relevanten Werte für die Berechnung vorhanden sind."""
+        """Checks that all values needed for the calculation are present."""
         return all(key in self.final_data for key in ["AC_POWER", "AC_GRID_POWER", "DC_POWER", "PV_POWER"])
 
     def check_for_data(self):
         missing_data = []
 
-        # Prüfen, ob alle notwendigen Felder vorhanden sind
+        # Check that all required fields are present
         if self.checked_data.get("P_AC_consumption_L1") is None:
             missing_data.append("P_AC_consumption_L1")
         if self.num_ac_phases is None:
             missing_data.append("number_of_phases")
 
-        # Nur für 2 oder 3 Phasen:
+        # Only for 2 or 3 phases:
         if self.num_ac_phases is not None and self.num_ac_phases >= 2 and self.checked_data.get(
                 "P_AC_consumption_L2") is None:
             missing_data.append("P_AC_consumption_L2")
@@ -189,7 +189,7 @@ class PowerDataHandler:
         if self.num_grid_phases is None:
             missing_data.append("number_of_grid_phases")
 
-        # Nur für 2 oder 3 Phasen:
+        # Only for 2 or 3 phases:
         if self.num_grid_phases is not None and self.num_grid_phases >= 2 and self.checked_data.get(
                 "G_AC_consumption_L2") is None:
             missing_data.append("G_AC_consumption_L2")
@@ -197,7 +197,7 @@ class PowerDataHandler:
                 "G_AC_consumption_L3") is None:
             missing_data.append("G_AC_consumption_L3")
 
-        # Hier auch die PV_DC-Überprüfung und ggf. Initialisierung:
+        # Also the PV_DC check and, if needed, initialization here:
         if self.checked_data.get("PV_DC") is None:
             self.final_data["PV_DC"] = 0
             # missing_data.append("PV_DC")
@@ -268,17 +268,17 @@ class PowerDataHandler:
         return self.last_loss_efficiency
 
     def is_complete(self, phase_set, num_phases):
-        """Überprüft, ob alle Phasen im Set aktualisiert wurden."""
+        """Checks whether all phases in the set were updated."""
         required_phases = {f"L{i + 1}" for i in range(num_phases)}
         return required_phases.issubset(phase_set)
 
     def reset(self, phase_set):
-        """Setzt das Phase-Set zurück, nachdem die Berechnung abgeschlossen ist."""
-        phase_set.clear()  # Alle Phasen in diesem Set zurücksetzen
+        """Resets the phase set after the calculation completes."""
+        phase_set.clear()  # clear all phases in this set
 
     def get_power(self, power_type):
         """
-        Gibt den aggregierten Power-Wert für den angegebenen Typ zurück:
+        Returns the aggregated power value for the given type:
           - "PV_POWER": Summe aus PV_DC und allen PV_AC-Werten
           - "AC_GRID_POWER": Aggregierte Grid-Leistung
           - "AC_POWER": Aggregierte AC-Leistung
@@ -993,15 +993,15 @@ class PowerConsumptionBase:
             self.last_time = timestamp
             return
 
-        # Berechne den Wh-Verbrauch für diesen Zeitraum
+        # Compute the Wh consumption for this period
         wh = (self.last_value * time_diff)
         self.hourly_wh += wh  # Addiere zum aktuellen Stundenverbrauch
-        self.daily_wh += wh   # Update des täglichen Verbrauchs
+        self.daily_wh += wh   # daily consumption update
 
         grid_wh = (self.last_grid_value * time_diff)
         if grid_wh > 0.0:
             self.hour_grid_wh += grid_wh  # Addiere zum aktuellen Stundenverbrauch
-            self.daily_grid_wh += grid_wh   # Update des täglichen Verbrauchs
+            self.daily_grid_wh += grid_wh   # daily consumption update
         elif grid_wh < 0.0:
             # Negative grid power = export to grid. Track as positive Wh
             # (it's nicer to read "1234 Wh exported" than "-1234").
@@ -1195,9 +1195,9 @@ class PowerConsumptionBase:
         current_hour = time.localtime(timestamp).tm_hour
         current_day = time.localtime(timestamp).tm_yday
 
-        # Überprüfe, ob ein neuer Tag begonnen hat
+        # Check whether a new day has started
         if current_day != self.current_day:
-            self.save_day()  # Speichere den täglichen Verbrauch
+            self.save_day()  # persist the daily consumption
             self.current_day = current_day
             # Reset all four daily running totals. Note that
             # daily_grid_wh used to NOT be reset here -- a bug that
@@ -1242,11 +1242,11 @@ class PowerConsumptionBase:
             # minutes of the new day doesn't restore yesterday's slot.
             self.save_data()
 
-        # Überprüfe, ob eine neue Stunde begonnen hat
+        # Check whether a new hour has started
         if current_hour != self.current_hour:
-            self.save_hour()  # Speichere den Durchschnitt für die letzte Stunde
+            self.save_hour()  # persist the average for the last hour
             self.current_hour = current_hour
-            self.hourly_wh = 0  # Setze den stündlichen Verbrauch zurück
+            self.hourly_wh = 0  # reset the hourly consumption
             self.hourly_start_time = timestamp
             self.hour_grid_wh = 0
 

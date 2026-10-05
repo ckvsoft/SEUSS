@@ -119,8 +119,8 @@ class Victron(ESSUnit):
             self.logger.log.info(f"Charging mode is deactivated.")
             self.logger.log.info(f"Discharge mode is activated.")
             if self.hub4_available():
-                # Kein Steuerrecht: Setpoint-Streaming aus (Verfall ->
-                # neutral); das SD-Setting wird nie angeruehrt.
+                # No control authority: setpoint streaming off
+                # (decay -> neutral); the SD setting stays untouched.
                 self._keeper().set_hands_off()
             else:
                 self.set_charge('off')
@@ -251,24 +251,23 @@ class Victron(ESSUnit):
             self.logger.log.error(f"Error: {e}")
 
     # ------------------------------------------------------------------
-    # SetpointKeeper-Bruecke: hub4-Firmware steuert Laden UND die
-    # Entlade-Gate-Freigabe ueber den RAM-Grid-Setpoint; die
-    # SD-Settings (MaxDischargePower, Scheduler Day/Duration/Soc) und
-    # der ForceCharge-Override sind kein Steuerkanal mehr.
+    # SetpointKeeper bridge: on hub4 firmware charging AND the
+    # discharge-grant run through the RAM grid setpoint; the SD
+    # settings (MaxDischargePower, scheduler Day/Duration/Soc) and
+    # the ForceCharge override are no control channels.
     # ------------------------------------------------------------------
 
     def _keeper(self):
-        """Prozess-Singleton (die essunit-Objekte werden pro
-        Evaluationszyklus neu gebaut)."""
+        """Process singleton (essunit objects are rebuilt per cycle)."""
         return get_keeper(
             self.mqtt_config, self.unit_id, self.max_discharge_power,
             logger=self.logger)
 
     def _keeper_charge_power_w(self):
         """
-        Ziel-Ladeleistung (W) -- dieselbe Auto-Erkennung wie die
-        Economic-Strategie (measured-first): last_grid_charge_power_w
-        -> GX/BMS-Capability -> Default 2500 W.
+        Target charge power (W) -- same auto-detection as the
+        economic strategy (measured-first): last_grid_charge_power_w
+        -> GX/BMS capability -> default 2500 W.
         """
         measured = 0.0
         try:
@@ -300,8 +299,9 @@ class Victron(ESSUnit):
         try:
             status_enum = ESSStatus(status.lower())
             if self.hub4_available():
-                # Freiheit via Setpoint (FREE/HOLD); das SD-Setting
-                # wird einmalig im Guard beheilt, sonst nie angeruehrt.
+                # Discharge grant via setpoint (FREE/HOLD); the SD
+                # setting gets a one-time heal in the guard, never a
+                # toggle from here.
                 self._keeper().set_discharge(status_enum == ESSStatus.ON)
                 return
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))

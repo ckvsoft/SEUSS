@@ -41,7 +41,7 @@ class TimeUtilities:
         utc_time = TimeUtilities.check_and_convert(utc_time)
 
         if utc_time is not None:
-            # Füge den UTC-Offset hinzu, um sicherzustellen, dass die Zeitzone korrekt behandelt wird
+            # Add the UTC offset so the timezone is handled correctly
             utc_time = utc_time.replace(tzinfo=pytz.utc)
             local_time = utc_time.astimezone(TimeUtilities.TZ)
             if time_str:
@@ -62,10 +62,10 @@ class TimeUtilities:
                 print(f"Der String {utc_time} entspricht nicht dem erwarteten Format.")
                 return None
         elif isinstance(utc_time, datetime):
-            # Wenn es bereits ein Datum ist, gebe es einfach zurück
+            # If it is a date already, just return it
             return utc_time
         else:
-            print(f"Ungültiger Datentyp: {type(utc_time)}")
+            print(f"Invalid data type: {type(utc_time)}")
             return None
 
     @staticmethod
