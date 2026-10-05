@@ -366,13 +366,14 @@ class SEUSSWeb:
         )
         colors_today = self._freeze_past_decisions(
             colors_today, self._target_date(False), veto, data)
-        # Tomorrow(+): PLAN display, not a decision -- the veto verdict
-        # for a future day cannot exist yet (the deficit math re-runs
-        # with tomorrow's SOC and prices). Charge windows render green
-        # as planned candidates; the live decision happens that day.
+        # Tomorrow: SAME veto projection as today -- the day boundary
+        # must not be an artificial cut (pre-5abc33b the projection
+        # stopped at midnight). The projection is a live estimate
+        # (refreshed per cycle); the past-hours freeze takes over the
+        # physical truth hour by hour.
         colors_tomorrow = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=True,
-            hour_prices=next_data, veto=None,
+            hour_prices=next_data, veto=veto,
         )
 
         strategy = getattr(self.config, "charging_strategy", "cap")
@@ -2108,33 +2109,18 @@ class SEUSSWeb:
                     # expensive quarter that the cap will skip.
                     below_limit = q_price < self.config.charging_price_limit
                     below_cap = q_price < self._effective_price_ceiling()
-                    # Strategy veto (economic marginal rule / hard cap):
-                    # a charge quarter the strategy would NOT buy shows
-                    # olive, exactly matching the evaluation log's
-                    # "Abort charge" line. PAST hours serve the FROZEN
-                    # decision (frozen the first time they were rendered
-                    # after their end) so history keeps the colour the
-                    # decision had at decision time instead of being
-                    # re-painted with the current marginal.
-                    # Strategy veto (economic marginal rule / hard cap):
-                    # a charge quarter the strategy would NOT buy shows
-                    # olive, exactly matching the evaluation log's
-                    # "Abort charge" line. PAST hours serve the OBSERVED
-                    # truth (did SEUSS actually charge in this hour?)
-                    # or the frozen decision -- history is never
-                    # re-painted with the current marginal. The tomorrow
-                    # chart never freezes (its hours are all future).
+                    # Strategy veto: a charge quarter the strategy would
+                    # NOT buy shows olive, matching the log's
+                    # "Abort charge". Past hours keep their frozen
+                    # observed truth; future hours (both days) carry the
+                    # live veto projection.
                     base_veto = self._charge_veto()(q_price)
                     observed_day = self._hour_state_observations.get(
                         target_date.isoformat(), {})
                     hour_obs = observed_day.get(hour) if not tomorrow else None
                     strategy_veto = base_veto
                     if tomorrow:
-                        # Tomorrow(+): PLAN display -- charge windows are
-                        # planned candidates. The veto verdict for a
-                        # FUTURE day cannot exist: the deficit math
-                        # re-runs with that day's SOC and prices.
-                        strategy_veto = False
+                        pass  # same live veto projection as today
                     elif hour_obs is not None and hour <= current_hour:
                         # Observed truth: this quarter's own recorded
                         # state (current hour), or the hour's charging
