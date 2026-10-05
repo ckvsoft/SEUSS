@@ -682,6 +682,13 @@ class Conditions:
 
     _economic_note_logged = False
 
+    # SOC-target abort latch (class-level: Conditions objects are
+    # rebuilt every evaluation cycle, instance state would be lost).
+    #Once tripped the SOC-target abort stays engaged until the SOC
+    # drops below the resume threshold (target - 1% - gap). Set/reset
+    # in _abort_charging_soc_target_reached().
+    _soc_target_latched = False
+
     @classmethod
     def _note_economic_flags_subsumed(cls):
         """Log ONCE per process that the SOC-based skip flags are
@@ -1205,8 +1212,19 @@ class Conditions:
                                 and current_soc < target_soc):
                             serving_avg = (
                                 sum(serving_prices) / len(serving_prices))
-                            if serving_avg > (marginal or 0.0):
-                                marginal = serving_avg
+                            # RTE-Konsistenz: der Abort vergleicht die
+                            # Viertelpreise durch die RTE -- der
+                            # Referenz-Grenzpreis muss dieselbe Teilung
+                            # tragen (wie im Deficit-Zweig). Zuvor galt
+                            # der rohe Serving-Durchschnitt => ~11%
+                            # Phantom-Huerte: die billigste Nachtstunde
+                            # wurde vetoiert, obwohl sie billiger war
+                            # als ihre eigene Alternative (32.17 vs
+                            # 32.56, Nacht 04./05.10.).
+                            eff_marginal = (
+                                serving_avg / self.round_trip_efficiency)
+                            if eff_marginal > (marginal or 0.0):
+                                marginal = eff_marginal
                                 info["basis"] = "preload"
                                 info["serving_chain_price"] = serving_avg
 
@@ -1374,8 +1392,13 @@ class Conditions:
         D-Bus glitch can't lock charging out entirely.
 
         Includes a 1% tolerance so the abort doesn't oscillate around
-        the threshold due to SOC measurement noise (e.g. 99.6 vs 100.1
-        flapping at the boundary).
+        the threshold due to SOC measurement noise.
+
+        Resume hysteresis (soc_target_resume_gap_percent, default 2%):
+        the abort LATCHES once tripped and only releases when the SOC
+        falls below target - 1% - gap. Without it the band at the trip
+        boundary has zero width -- observed live as 5-minute
+        grid-charge bursts with two SD Day-writes each (2026-10-05).
         """
         try:
             if not self.essunit:
@@ -1385,18 +1408,42 @@ class Conditions:
             if current_soc is None or scheduler_soc is None:
                 return False
 
-            # 1% tolerance: trip the abort once we're within 1 of the
-            # target, not only AT or above it. Avoids stop/start churn
-            # when the BMS hovers just below 100%.
-            should_abort = float(current_soc) >= (float(scheduler_soc) - 1.0)
-            if should_abort:
+            try:
+                gap = float(getattr(
+                    self.config, "soc_target_resume_gap_percent", 2.0))
+            except (TypeError, ValueError):
+                gap = 2.0
+            if gap < 0.0:
+                gap = 0.0
+
+            # Latch lives on the class: Conditions objects are rebuilt
+            # per evaluation cycle, instance state would be lost.
+            cls = type(self)
+            trip_at = float(scheduler_soc) - 1.0
+            resume_below = trip_at - gap
+            soc = float(current_soc)
+
+            if not cls._soc_target_latched:
+                if soc >= trip_at:
+                    cls._soc_target_latched = True
+                    self.logger.log.info(
+                        f"SOC-target abort: current_soc={current_soc}% "
+                        f">= scheduler_soc_target={scheduler_soc}% "
+                        f"(with 1% tolerance), charging is unnecessary."
+                    )
+                    self._record_abort_fired("soc_target")
+                    return True
+                return False
+
+            if soc <= resume_below:
+                cls._soc_target_latched = False
                 self.logger.log.info(
-                    f"SOC-target abort: current_soc={current_soc}% "
-                    f">= scheduler_soc_target={scheduler_soc}% "
-                    f"(with 1% tolerance), charging is unnecessary."
+                    f"SOC-target resume: current_soc={current_soc}% < "
+                    f"{resume_below:.1f}% (target {float(scheduler_soc):.0f}%), "
+                    f"charging allowed again."
                 )
-                self._record_abort_fired("soc_target")
-            return should_abort
+                return False
+            return True
         except Exception as e:
             self.logger.log.warning(
                 f"SOC-target abort check failed: {e}. "
