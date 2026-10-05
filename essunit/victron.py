@@ -34,7 +34,7 @@ from typing import Tuple
 from core.log import CustomLogger
 from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus
-from essunit.setpointkeeper import SetpointKeeper
+from essunit.setpointkeeper import get_keeper
 from core.config import Config
 
 
@@ -87,15 +87,9 @@ class Victron(ESSUnit):
         # its leftover /Settings/DynamicEss/Mode=4 disabled the classic
         # scheduled charging on VenusOS 3.7x. Only classic remains.
         self._control_backend = "classic"
-        # hub4 RAM overrides: live-verified on v3.80 (2026-10-05) --
-        # /Overrides/* are accepted but IGNORED by the ESS control
-        # (vestige, undocumented). The one register that acts is
-        # /Overrides/Setpoint (RAM grid-setpoint) -- see the
-        # SetpointKeeper used by set_charge().
+        # SetpointKeeper: prozessweites Singleton (lazily via
+        # self._keeper()); start/stopp durch set_charge/set_discharge.
         self._hub4_available = None      # None = not probed yet
-
-        self._keeper = None              # SetpointKeeper (lazy)
-
         self._get_data()
 
         # self.mqtt = MqttClient(self.mqtt_config)
@@ -124,8 +118,13 @@ class Victron(ESSUnit):
             self.logger.log.info(f"ESS Unit {self._name} has been disabled or in observation mode.")
             self.logger.log.info(f"Charging mode is deactivated.")
             self.logger.log.info(f"Discharge mode is activated.")
-            self.set_charge('off')
-            self.set_discharge('on')
+            if self.hub4_available():
+                # Kein Steuerrecht: Setpoint-Streaming aus (Verfall ->
+                # neutral); das SD-Setting wird nie angeruehrt.
+                self._keeper().set_hands_off()
+            else:
+                self.set_charge('off')
+                self.set_discharge('on')
 
     def get_battery_current_voltage(self):
         try:
@@ -252,26 +251,18 @@ class Victron(ESSUnit):
             self.logger.log.error(f"Error: {e}")
 
     # ------------------------------------------------------------------
-    # Setpoint-Keeper (hub4 Mode-2 grid-setpoint charging)
+    # SetpointKeeper-Bruecke: hub4-Firmware steuert Laden UND die
+    # Entlade-Gate-Freigabe ueber den RAM-Grid-Setpoint; die
+    # SD-Settings (MaxDischargePower, Scheduler Day/Duration/Soc) und
+    # der ForceCharge-Override sind kein Steuerkanal mehr.
     # ------------------------------------------------------------------
 
-    def _keeper_charge_start(self):
-        """Ladefenster AN: Legacy-Scheduler disarmen (einmalig) und
-        den Keeper mit der auto-detektierten Ladeleistung starten."""
-        if self._keeper is None:
-            self._keeper = SetpointKeeper(
-                self.mqtt_config, self.unit_id, logger=self.logger)
-        self._keeper_legacy_disarm_guard()
-        self._keeper.start(self._keeper_charge_power_w())
-
-    def _keeper_charge_stop(self):
-        """Ladefenster zu: Keeper stoppen (einmaliger 0-Write, danach
-        Verfall). No-op wenn nie aktiv."""
-        if self._keeper is not None:
-            self._keeper.stop()
-        # auch beim ersten Nicht-Lade-Zyklus: ein von der Vorversion
-        # hinterlassener armed Scheduler wuerde sonst weiterladen
-        self._keeper_legacy_disarm_guard()
+    def _keeper(self):
+        """Prozess-Singleton (die essunit-Objekte werden pro
+        Evaluationszyklus neu gebaut)."""
+        return get_keeper(
+            self.mqtt_config, self.unit_id, self.max_discharge_power,
+            logger=self.logger)
 
     def _keeper_charge_power_w(self):
         """
@@ -305,39 +296,14 @@ class Victron(ESSUnit):
             return capability
         return 2500.0
 
-    def _keeper_legacy_disarm_guard(self):
-        """
-        Einmalig pro Prozess: falls ein Legacy-Scheduler noch ARMED
-        ist (Day=7), einmalig disarmen -- sonst laedt er parallel zum
-        Keeper weiter. Der EINZIGE Day-Write auf hub4-Firmware.
-        """
-        if getattr(self, "_keeper_day_guard_done", False):
-            return
-        self._keeper_day_guard_done = True
-        try:
-            day = self._process_result(
-                self.subsribers.get('Schedule', 'Day'))
-            if day == 7:
-                self._publish(
-                    f"/{self.unit_id}/settings/0/Settings/CGwacs/"
-                    "BatteryLife/Schedule/Charge/0/Day", -7)
-                self.logger.log.info(
-                    f"{self._name} Legacy scheduled charge was armed "
-                    f"(Day=7) -- disarmed once (Setpoint-Keeper takes "
-                    f"over charging).")
-        except Exception as e:
-            self.logger.log.warning(
-                f"Legacy scheduler disarm guard failed: {e}")
-
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())
-            # SD-Register = Watt-Regulator + GUI-Anzeige:
-            #   OFF (Sperre)  -> 0   (Limiter AN, 0 W)
-            #   ON (Freigabe) -> Config verbatim (-1 = "AUS"/unbegrenzt).
-            # Ist aus dem frischen Zyklus-Feed; schreiben nur bei
-            # Abweichung, die /Overrides/*-RAM-Register werden von
-            # v3.80 ignoriert (Vestige) und bleiben unberuehrt.
+            if self.hub4_available():
+                # Freiheit via Setpoint (FREE/HOLD); das SD-Setting
+                # wird einmalig im Guard beheilt, sonst nie angeruehrt.
+                self._keeper().set_discharge(status_enum == ESSStatus.ON)
+                return
             value = self._process_result(self.subsribers.get('DisCharge', 'MaxDischargePower'))
             if status_enum == ESSStatus.ON:
                 if value == self.max_discharge_power: return
@@ -354,13 +320,8 @@ class Victron(ESSUnit):
             status_enum = ESSStatus(status.lower())
             if status_enum == ESSStatus.ON:
                 if self.hub4_available():
-                    # hub4 (Venus 3.x): Laden ueber den Setpoint-Keeper
-                    # (RAM-Grid-Setpoint). Scheduler (Day/Duration/Soc)
-                    # und ForceCharge sind hier kein Steuerkanal mehr
-                    # (ForceCharge = ignorierter Vestige).
-                    self._keeper_charge_start()
+                    self._keeper().set_charge(True, self._keeper_charge_power_w())
                 else:
-                    # Alte Firmware ohne hub4: Scheduler-Arming-Pfad.
                     value = self._process_result(
                         self.subsribers.get('Schedule', 'Day'))
                     if value == 7: return
@@ -370,7 +331,7 @@ class Victron(ESSUnit):
                         "BatteryLife/Schedule/Charge/0/Day", 7)
             elif status_enum == ESSStatus.OFF:
                 if self.hub4_available():
-                    self._keeper_charge_stop()
+                    self._keeper().set_charge(False)
                 else:
                     value = self._process_result(
                         self.subsribers.get('Schedule', 'Day'))
