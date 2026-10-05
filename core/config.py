@@ -144,16 +144,7 @@ class Config(Singleton):
         "stats_history_retention_days": 400,
         "prices": [
             {
-                "use_second_day": False,
-                "number_of_lowest_prices_for_charging": 0,
-                "number_of_highest_prices_for_discharging": 0,
-                "number_of_lowest_prices_for_switching": 0,
-                "charging_block_minutes": 60,
-                "discharging_block_minutes": 60,
-                "switching_block_minutes": 60,
-                "fill_gaps_with_short_clusters": True,
-                "charging_price_limit": -999,
-                "charging_price_hard_cap": 999,
+                "charging_strategy": "cap",
                 # Charging strategy:
                 #   "cap"      -- classic behaviour: charge the N cheapest
                 #                 clusters unless the per-quarter price
@@ -165,7 +156,16 @@ class Config(Singleton):
                 #                 The hard cap is NOT applied in this
                 #                 mode; economic_price_ceiling acts as
                 #                 the outlier leash instead.
-                "charging_strategy": "cap"
+                "use_second_day": False,
+                "number_of_lowest_prices_for_charging": 0,
+                "number_of_highest_prices_for_discharging": 0,
+                "number_of_lowest_prices_for_switching": 0,
+                "charging_block_minutes": 60,
+                "discharging_block_minutes": 60,
+                "switching_block_minutes": 60,
+                "fill_gaps_with_short_clusters": True,
+                "charging_price_limit": -999,
+                "charging_price_hard_cap": 999
             }
         ],
         "pv_panels": [

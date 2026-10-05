@@ -121,6 +121,24 @@
 
                 <fieldset>
                     <legend>Battery / Charging</legend>
+                    % if isinstance(config.get("prices"), list) and config["prices"] and "charging_strategy" in config["prices"][0]:
+                        <%
+                        strategy_value = config["prices"][0]["charging_strategy"]
+                        if tooltips and "charging_strategy" in tooltips:
+                            title = tooltips.get("charging_strategy")
+                            additional = ' \u2139\ufe0f'
+                        else:
+                            title = ''
+                            additional = ''
+                        end
+                        %>
+                        <label class="tooltip" for="prices:charging_strategy" title="{{ title }}">{{ " ".join(word.capitalize() for word in "charging_strategy".split("_")) }}{{ additional }}</label><br>
+                        <select id="prices:charging_strategy" name="prices:charging_strategy">
+                            <option value="cap" {{ 'selected' if strategy_value == 'cap' else '' }}>Cap (hard cap blocks charging)</option>
+                            <option value="economic" {{ 'selected' if strategy_value == 'economic' else '' }}>Economic (marginal displaced price)</option>
+                        </select><br>
+                        <br>
+                    % end
                     % for key in battery_keys:
                         % if key in config:
                             <%
@@ -178,6 +196,9 @@
                         <legend>Prices</legend>
                         % for price_data in config["prices"]:
                             % for field_key, field_value in price_data.items():
+                                % if field_key == "charging_strategy":
+                                    % continue
+                                % end
                                 <%
                                 if tooltips and field_key in tooltips:
                                     title=tooltips.get(field_key)
