@@ -1564,8 +1564,11 @@ class Conditions:
                         buy = True
                         pack = min(full_wh, pack + power_w * dur_h * rte)
                 if not buy:
-                    # Vetoed charge window: the battery serves the
-                    # loads (HOLD), the pack drains.
+                    # Vetoed charge window: with the discharge
+                    # fall-through active (discharge_fallthrough_
+                    # on_charge_veto, surplus rules decide), an
+                    # allowed discharge -> FREE self-consumption:
+                    # the battery serves the loads, the pack drains.
                     pack = max(min_wh, pack - hourly_avg_w * dur_h)
                 day_map[key] = buy
             return projection if projection else None
