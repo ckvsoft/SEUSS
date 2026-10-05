@@ -94,6 +94,12 @@ class Config(Singleton):
         # it only skips when the horizon plan is actually safe.
         "skip_charge_when_cheaper_cluster_coming": False,
         "cheaper_cluster_min_reserve_hours": 2.0,
+        # Resume gap for the SOC-target abort hysteresis: once the
+        # abort trips at (target - 1%), charging only resumes when the
+        # SOC fell below (target - 1% - gap). Kills the one-cycle
+        # resume/trip oscillation at the boundary (5-min grid-charge
+        # bursts). 0 restores the old zero-width band.
+        "soc_target_resume_gap_percent": 2.0,
         # New: skip charging the current quarter when at least one
         # upcoming quarter is priced below zero AND the battery will
         # have enough headroom to absorb it (current free Wh +
@@ -130,6 +136,14 @@ class Config(Singleton):
         # phase, prioritise discharge to the most expensive blocks only;
         # cheaper expensive-phase hours fall back to grid.
         "smart_discharge_priority_to_expensive_hours": False,
+        # Setpoint-Keeper refresh cadence (seconds). On hub4 firmware
+        # (Venus 3.5x+) charging is driven through the RAM grid-
+        # setpoint override (/hub4/0/Overrides/Setpoint): SEUSS
+        # re-publishes the target every N seconds while a charge
+        # window is active. The override decays ~180 s after the last
+        # write; 30 s refreshes it 6x inside that TTL. Clamped to
+        # [5, 120].
+        "setpoint_refresh_seconds": 30,
         # ------------------------------------------------------------------
         # Solar forecast adjustment
         # ------------------------------------------------------------------
@@ -384,6 +398,7 @@ class Config(Singleton):
             # is older than this build (migration adds them on next save).
             self.solar_adj_ewma_alpha = 0.3
             self.cheaper_cluster_min_reserve_hours = 2.0
+            self.soc_target_resume_gap_percent = 2.0
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
             self.solar_adj_max_daily_change = 0.20
@@ -520,6 +535,12 @@ class Config(Singleton):
             # every point of the chain -- otherwise skipping is
             # considered unsafe and charging proceeds now.
             ("cheaper_cluster_min_reserve_hours", 2.0),
+            # SOC-target hysteresis gap (see template comment). Kept
+            # float-typed like the other strategy tunables.
+            ("soc_target_resume_gap_percent", 2.0),
+            # Setpoint-Keeper refresh cadence (seconds), clamped to
+            # [5, 120] below.
+            ("setpoint_refresh_seconds", 30),
         ):
             raw = config_data.get(attr, default)
             try:
@@ -530,6 +551,17 @@ class Config(Singleton):
         # alpha=0 freezes the factor entirely. Negative or >1 would
         # destabilise the EWMA so we silently snap them.
         self.solar_adj_ewma_alpha = max(0.0, min(1.0, self.solar_adj_ewma_alpha))
+
+        # Setpoint-Keeper cadence: clamp to [5, 120] seconds. Below 5
+        # would hammer the broker; above 120 risks outliving the
+        # ~180 s decay of the RAM override.
+        try:
+            self.setpoint_refresh_seconds = float(
+                self.setpoint_refresh_seconds)
+        except (AttributeError, TypeError, ValueError):
+            self.setpoint_refresh_seconds = 30.0
+        self.setpoint_refresh_seconds = max(
+            5.0, min(120.0, self.setpoint_refresh_seconds))
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")
