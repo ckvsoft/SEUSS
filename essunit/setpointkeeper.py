@@ -42,8 +42,9 @@ Verifikation 2026-10-05 (live, v3.80):
 
 Modi (effective pro Takt):
   CHARGE  Ladefenster aktiv    -> X + max(0, Last - PV)
-  FREE    Entlade-Entscheidung -> 0 (Selbstverbrauch; Batterie
-                                 serviert die Lasten, kein Feed-in)
+  FREE    Entlade-Entscheidung -> die persistierten 10 W spiegeln
+                                 (Selbstverbrauch: Batterie serviert
+                                 die Lasten, eigenes Wollen: keiner)
   HOLD    sonst (Sperre/Veto)  -> max(0, Last - PV) (Batterie haelt,
                                  Netz+PV servieren die Lasten)
   NONE    hands-off/Start      -> schweigen; Verfall -> neutral
@@ -127,6 +128,10 @@ class SetpointKeeper:
             for p in (1, 2, 3)
         ]
         self._read_reply_topic = f"N/{self.unit_id}/hub4/0/Overrides/Setpoint"
+        # Der persistierte Grid-Setpoint (EINSTELLUNG des Systems/Users):
+        # FREE spiegelt ihn (ueberschreibt nichts eigenes).
+        self._neutral_topic = (
+            f"N/{self.unit_id}/settings/0/Settings/CGwacs/AcPowerSetPoint")
 
         self._client = None
         self._client_lock = threading.Lock()
@@ -226,7 +231,14 @@ class SetpointKeeper:
                 pv = self._sum(self._pv_topics, "pv")
                 target = max(0.0, power + house - pv)
             elif mode == MODE_FREE:
-                target = 0.0
+                # FREE spiegelt den persistierten Grid-Setpoint
+                # (EINSTELLUNG): kein eigenes Wollen. Unbekannt ->
+                # schweigen (der Verfall faellt aufs persistierte).
+                val = self._latest.get(self._neutral_topic, (None,))[0]
+                if isinstance(val, (int, float)):
+                    target = float(val)
+                else:
+                    mode = MODE_NONE
             elif mode == MODE_HOLD:
                 house = self._sum(self._consumption_topics, "consumption")
                 pv = self._sum(self._pv_topics, "pv")
@@ -296,7 +308,7 @@ class SetpointKeeper:
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         try:
             for topic in (self._consumption_topics + self._pv_topics
-                          + [self._read_reply_topic]):
+                          + [self._neutral_topic, self._read_reply_topic]):
                 client.subscribe(topic)
             self._apply_guards(client)
         except Exception as e:
