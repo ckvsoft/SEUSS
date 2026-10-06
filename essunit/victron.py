@@ -265,35 +265,19 @@ class Victron(ESSUnit):
 
     def _keeper_charge_power_w(self):
         """
-        Target charge power (W) -- same auto-detection as the
-        economic strategy (measured-first): last_grid_charge_power_w
-        -> GX/BMS capability -> default 2500 W.
+        Charge COMMAND side: a deliberately HIGH target -- the ESS
+        loop self-regulates at the physical ceiling; commanding more
+        than possible simply caps (user-verified live 2026-10-06: a
+        32000 W setpoint charged at the system's full rate, and the
+        old "measured 2628 W" was never a hardware limit, just the
+        stored echo of our own earlier command). No measured/
+        capability resolution here: a stored measured value is
+        CIRCULAR on the command side -- it can only ratchet down,
+        never up. The measured value stays on the PLANNING side
+        (conditions._resolve_charge_power_w), where it measures the
+        self-capped reality.
         """
-        measured = 0.0
-        try:
-            from core.statsmanager import StatsManager
-            val = StatsManager().get_data(
-                "powerconsumption", "last_grid_charge_power_w")
-            if isinstance(val, dict):
-                w = val.get("w", 0)
-                if isinstance(w, (int, float)) and w > 0:
-                    measured = float(w)
-            elif isinstance(val, (int, float)) and val > 0:
-                measured = float(val)
-        except Exception:
-            measured = 0.0
-        capability = 0.0
-        try:
-            cap = self.get_max_charge_capability_w()
-            if cap and cap > 0:
-                capability = float(cap)
-        except Exception:
-            capability = 0.0
-        if measured > 0:
-            return measured
-        if capability > 0:
-            return capability
-        return 2500.0
+        return 32000.0
 
     def set_manual_feedin(self, watts):
         """

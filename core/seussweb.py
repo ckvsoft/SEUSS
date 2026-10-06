@@ -683,9 +683,9 @@ class SEUSSWeb:
 
         try:
             feedin_max = int(float(getattr(
-                self.config, "feedin_max_w", 2500.0) or 2500.0))
+                self.config, "feedin_max_w", 5000.0) or 5000.0))
         except (TypeError, ValueError):
-            feedin_max = 2500
+            feedin_max = 5000
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
                         version=version.__version__, root=self.view_path,

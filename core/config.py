@@ -152,7 +152,7 @@ class Config(Singleton):
         # (the pack keeps its reserve). The price guard is fixed,
         # not configurable: feeding at price <= 0 means PAYING to
         # export. Guards are re-checked every evaluation cycle.
-        "feedin_max_w": 2500.0,
+        "feedin_max_w": 5000.0,
         "feedin_min_soc_percent": 25.0,
         # ------------------------------------------------------------------
         # Solar forecast adjustment
@@ -409,7 +409,7 @@ class Config(Singleton):
             self.solar_adj_ewma_alpha = 0.3
             self.cheaper_cluster_min_reserve_hours = 2.0
             self.soc_target_resume_gap_percent = 2.0
-            self.feedin_max_w = 2500.0
+            self.feedin_max_w = 5000.0
             self.feedin_min_soc_percent = 25.0
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
@@ -556,7 +556,7 @@ class Config(Singleton):
             # Manual grid feed-in slider ceiling (W) and the SOC
             # floor (%) where an active feed-in auto-stops. Clamped
             # below (max >= 0, floor in [0, 100]).
-            ("feedin_max_w", 2500.0),
+            ("feedin_max_w", 5000.0),
             ("feedin_min_soc_percent", 25.0),
         ):
             raw = config_data.get(attr, default)
@@ -584,7 +584,7 @@ class Config(Singleton):
         try:
             self.feedin_max_w = float(self.feedin_max_w)
         except (AttributeError, TypeError, ValueError):
-            self.feedin_max_w = 2500.0
+            self.feedin_max_w = 5000.0
         self.feedin_max_w = max(0.0, self.feedin_max_w)
         try:
             self.feedin_min_soc_percent = float(self.feedin_min_soc_percent)

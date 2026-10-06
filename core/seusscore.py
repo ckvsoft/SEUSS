@@ -542,7 +542,7 @@ class SEUSS:
         if watts < 0:
             watts = 0.0
         try:
-            max_w = float(getattr(self.config, "feedin_max_w", 2500.0))
+            max_w = float(getattr(self.config, "feedin_max_w", 5000.0))
         except (TypeError, ValueError):
             max_w = 2500.0
         if max_w > 0 and watts > max_w:
