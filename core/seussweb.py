@@ -61,6 +61,9 @@ class SEUSSWeb:
         # persisted (see _publish_ess_state) so the /api/battery polling
         # endpoint costs zero SD writes.
         self._ess_state = {}
+        # Manual grid feed-in control (set by seusscore): callable
+        # watts -> status-dict, bridging into the SetpointKeeper.
+        self._feedin_control = None
         # RAM-only freeze of past hours' charge decisions (green/olive),
         # keyed by ISO-date -> {hour: color}. Without it the chart
         # re-paints HISTORY with the current marginal: hours that were
@@ -105,6 +108,7 @@ class SEUSSWeb:
         self.app.route('/get_charts', method='GET', callback=self.get_charts)
         self.app.route('/api/prices', method='GET', callback=self.api_prices)
         self.app.route('/api/battery', method='GET', callback=self.api_battery)
+        self.app.route('/api/feedin', method='POST', callback=self.api_feedin_set)
 
     def add_config_entry(self):
         param_name = request.json.get('param_name')
@@ -138,6 +142,13 @@ class SEUSSWeb:
              if entry.get('name', '').lower() == self.market_items.current_market_name.lower()),
             ""
         )
+
+    def set_feedin_control(self, fn):
+        """Called by seusscore at startup: registers the callable
+        (watts -> status dict) that guards and commands the manual
+        grid feed-in through the SetpointKeeper."""
+        if callable(fn):
+            self._feedin_control = fn
 
     def set_ess_state(self, state):
         """Called by seusscore after every evaluation cycle. Keeps the
@@ -177,6 +188,35 @@ class SEUSSWeb:
             return getattr(self.config, "economic_price_ceiling",
                            self.config.charging_price_hard_cap)
         return self.config.charging_price_hard_cap
+
+    def api_feedin_set(self):
+        """
+        Manual grid feed-in slider endpoint (POST; watts in the body
+        as JSON {"watts": 3000} or a form field "watts"). 0 or absent
+        stops the feed-in and returns to the automatic modes. The
+        guards (price <= 0, SOC floor) live in the controller
+        callback -- a refusal carries the reason.
+        """
+        response.content_type = 'application/json'
+        if self._feedin_control is None:
+            return json.dumps({
+                "status": "error",
+                "message": "feed-in control not available (no ESS unit yet)",
+            })
+        try:
+            try:
+                body = request.json or {}
+            except Exception:
+                body = {}
+            raw = body.get("watts", None)
+            if raw is None:
+                raw = request.forms.get("watts", 0)
+            result = self._feedin_control(raw)
+            if not isinstance(result, dict):
+                result = {"status": "error", "message": "unexpected result"}
+            return json.dumps(result)
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)})
 
     def api_battery(self):
         """
@@ -630,8 +670,15 @@ class SEUSSWeb:
     def index(self):
         chart_svg, next_chart_svg, legend_svg = self.get_charts(False)
 
+        try:
+            feedin_max = int(float(getattr(
+                self.config, "feedin_max_w", 2500.0) or 2500.0))
+        except (TypeError, ValueError):
+            feedin_max = 2500
+
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
-                        version=version.__version__, root=self.view_path)
+                        version=version.__version__, root=self.view_path,
+                        feedin_max=feedin_max)
 
     def logview(self):
         reader = LogReader()

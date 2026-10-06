@@ -63,6 +63,20 @@
                     </div>
                 </div>
             </div>
+            <div id="feedin-panel">
+                <h1>Grid Feed-In (manual)</h1>
+                <div class="feedin-row">
+                    <input type="range" id="feedinSlider" min="0"
+                           max="{{ feedin_max }}" step="100" value="0">
+                    <span id="feedinValue">0 W</span>
+                </div>
+                <div id="feedinStatus">inactive</div>
+                <div class="feedin-note">
+                    Feeds W into the grid (PV first, battery second).
+                    Auto-stops at price &le;&nbsp;0 or the SOC floor;
+                    slider to 0 returns to the automatic modes.
+                </div>
+            </div>
         </div>
     </div>
 
@@ -276,6 +290,42 @@
                 .catch(error => console.error("Error updating charts:", error));
 
             console.log("Charts updated at full hour");
+        }
+
+        // ---- Manual grid feed-in slider ----
+        // POST /api/feedin {"watts": N} debounced while dragging;
+        // the guards (price <= 0, SOC floor) answer in the response.
+        const feedinSlider = document.getElementById('feedinSlider');
+        const feedinValue = document.getElementById('feedinValue');
+        const feedinStatus = document.getElementById('feedinStatus');
+        if (feedinSlider && feedinValue && feedinStatus) {
+            let feedinTimer = null;
+            const sendFeedin = () => {
+                const watts = parseInt(feedinSlider.value, 10) || 0;
+                fetch('/api/feedin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ watts: watts })
+                }).then(r => r.json()).then(res => {
+                    if (res.status === 'ok') {
+                        feedinStatus.textContent = res.watts > 0
+                            ? 'feeding ' + res.watts + ' W into the grid'
+                            : 'inactive';
+                    } else {
+                        feedinStatus.textContent =
+                            'stopped: ' + (res.message || res.status);
+                        feedinSlider.value = 0;
+                        feedinValue.textContent = '0 W';
+                    }
+                }).catch(() => {
+                    feedinStatus.textContent = 'send failed';
+                });
+            };
+            feedinSlider.addEventListener('input', () => {
+                feedinValue.textContent = feedinSlider.value + ' W';
+                clearTimeout(feedinTimer);
+                feedinTimer = setTimeout(sendFeedin, 400);
+            });
         }
 
         // Initialize WebSocket connection

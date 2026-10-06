@@ -351,3 +351,29 @@ body.dark-mode #soc-value {
 body.dark-mode .chart-text {
     fill: #fff;
 }
+
+/*
+ * Manual grid feed-in panel (index page): slider + live value +
+ * status line. Simple flex row so the slider and the watt display
+ * sit side by side on any width; the note stays small and grey.
+ */
+.feedin-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0;
+}
+
+.feedin-row input[type="range"] {
+    flex: 1;
+}
+
+#feedinStatus {
+    font-weight: bold;
+    margin: 4px 0;
+}
+
+.feedin-note {
+    font-size: 0.85em;
+    color: #888;
+}

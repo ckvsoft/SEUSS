@@ -144,6 +144,16 @@ class Config(Singleton):
         # write; 30 s refreshes it 6x inside that TTL. Clamped to
         # [5, 120].
         "setpoint_refresh_seconds": 30,
+        # Manual grid feed-in (UI slider, "send W into the grid"):
+        # the slider ceiling (W) -- a plain UI range, NOT a device
+        # query: commanding more than the system can deliver simply
+        # self-regulates at the physical cap. feedin_min_soc_percent
+        # is the SOC floor at which an active feed-in auto-stops
+        # (the pack keeps its reserve). The price guard is fixed,
+        # not configurable: feeding at price <= 0 means PAYING to
+        # export. Guards are re-checked every evaluation cycle.
+        "feedin_max_w": 2500.0,
+        "feedin_min_soc_percent": 25.0,
         # ------------------------------------------------------------------
         # Solar forecast adjustment
         # ------------------------------------------------------------------
@@ -399,6 +409,8 @@ class Config(Singleton):
             self.solar_adj_ewma_alpha = 0.3
             self.cheaper_cluster_min_reserve_hours = 2.0
             self.soc_target_resume_gap_percent = 2.0
+            self.feedin_max_w = 2500.0
+            self.feedin_min_soc_percent = 25.0
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
             self.solar_adj_max_daily_change = 0.20
@@ -541,6 +553,11 @@ class Config(Singleton):
             # Setpoint-Keeper refresh cadence (seconds), clamped to
             # [5, 120] below.
             ("setpoint_refresh_seconds", 30),
+            # Manual grid feed-in slider ceiling (W) and the SOC
+            # floor (%) where an active feed-in auto-stops. Clamped
+            # below (max >= 0, floor in [0, 100]).
+            ("feedin_max_w", 2500.0),
+            ("feedin_min_soc_percent", 25.0),
         ):
             raw = config_data.get(attr, default)
             try:
@@ -562,6 +579,19 @@ class Config(Singleton):
             self.setpoint_refresh_seconds = 30.0
         self.setpoint_refresh_seconds = max(
             5.0, min(120.0, self.setpoint_refresh_seconds))
+
+        # Manual grid feed-in: ceiling >= 0, SOC floor in [0, 100].
+        try:
+            self.feedin_max_w = float(self.feedin_max_w)
+        except (AttributeError, TypeError, ValueError):
+            self.feedin_max_w = 2500.0
+        self.feedin_max_w = max(0.0, self.feedin_max_w)
+        try:
+            self.feedin_min_soc_percent = float(self.feedin_min_soc_percent)
+        except (AttributeError, TypeError, ValueError):
+            self.feedin_min_soc_percent = 25.0
+        self.feedin_min_soc_percent = max(
+            0.0, min(100.0, self.feedin_min_soc_percent))
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")

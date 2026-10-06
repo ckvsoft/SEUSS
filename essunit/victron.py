@@ -295,6 +295,37 @@ class Victron(ESSUnit):
             return capability
         return 2500.0
 
+    def set_manual_feedin(self, watts):
+        """
+        Manual grid feed-in (the UI slider). hub4 setpoint path only:
+        the classic register backend has no feed-in channel. Returns
+        True when the command reached the keeper.
+        """
+        if self.hub4_available():
+            self._keeper().set_manual_feedin(watts)
+            return True
+        self.logger.log.warning(
+            "Manual feed-in needs the hub4 setpoint path "
+            "(firmware without hub4 or classic backend).")
+        return False
+
+    def get_manual_feedin(self):
+        """(active, watts) of the manual grid feed-in."""
+        if self.hub4_available():
+            try:
+                return self._keeper().get_manual_feedin()
+            except Exception:
+                return (False, 0.0)
+        return (False, 0.0)
+
+    def update_manual_guard(self, allowed, reason=""):
+        """Cycle-side guard refresh for an active manual feed-in."""
+        if self.hub4_available():
+            try:
+                self._keeper().update_manual_guard(allowed, reason)
+            except Exception:
+                pass
+
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())

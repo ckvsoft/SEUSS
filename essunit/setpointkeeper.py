@@ -47,6 +47,10 @@ Modes (effective per tick):
                                    the loads, no will of its own)
   HOLD    otherwise (veto/gap)   -> max(0, load - pv) (battery held,
                                    grid+PV serve the loads)
+  FEEDIN  manual slider active   -> -W (feed W into the grid; PV
+                                   first, pack second -- the loop
+                                   self-regulates at the physical
+                                   cap, no load compensation)
   NONE    hands-off/startup     -> silent; decay -> neutral
 
 Load/PV per tick from the GX MQTT feed (last known values; new data
@@ -74,6 +78,7 @@ MODE_NONE = "none"
 MODE_HOLD = "hold"
 MODE_FREE = "free"
 MODE_CHARGE = "charge"
+MODE_FEEDIN = "feedin"
 
 _FRESH_WINDOW_S = 120.0  # freshness window for load/pv
 
@@ -144,6 +149,7 @@ class SetpointKeeper:
         self._charge_power_w = 0.0
         self._discharge_wanted = False
         self._hands_off = False
+        self._manual_feedin_w = 0.0
         self._terminating = False
         self._wake = threading.Event()
 
@@ -185,17 +191,61 @@ class SetpointKeeper:
             self._hands_off = True
             self._charge_open = False
             self._discharge_wanted = False
+            self._manual_feedin_w = 0.0
         if was:
             self.logger.log.info(
                 "Setpoint hands-off: keeper stays silent "
                 "(decay -> neutral).")
 
+    def set_manual_feedin(self, watts):
+        """
+        Manual grid feed-in (the UI slider): feed `watts` INTO the
+        grid (negative setpoint) until turned off (watts <= 0), a
+        guard kills it (update_manual_guard) or the process dies
+        (the ~180 s override decay is the fail-safe). Overrides the
+        automatic modes while active; hands_off still wins -- no
+        control authority means no manual feed either.
+        """
+        try:
+            watts = max(0.0, float(watts or 0.0))
+        except (TypeError, ValueError):
+            watts = 0.0
+        with self._state_lock:
+            changed = abs(watts - self._manual_feedin_w) > 0.5
+            self._manual_feedin_w = watts
+        if changed:
+            self.logger.log.info(
+                f"Setpoint MANUAL FEEDIN {'on' if watts > 0 else 'off'} "
+                f"({watts:.0f} W).")
+        self._wake.set()
+
+    def get_manual_feedin(self):
+        """(active, watts) of the manual grid feed-in."""
+        with self._state_lock:
+            return (self._manual_feedin_w > 0.0, self._manual_feedin_w)
+
+    def update_manual_guard(self, allowed, reason=""):
+        """
+        Guard refresh from the evaluation cycle (price/SOC floors).
+        A REFUSED guard ends an active manual feed-in (logged why);
+        an allowed guard never starts one -- only the slider does.
+        """
+        with self._state_lock:
+            active = self._manual_feedin_w > 0.0
+            if active and not allowed:
+                self._manual_feedin_w = 0.0
+        if active and not allowed:
+            self.logger.log.info(
+                f"Setpoint MANUAL FEEDIN off (guard: {reason or 'refused'}).")
+        self._wake.set()
+
     def shutdown(self):
-        """Prozess-Ende: Thread beenden, dann 0-Write, dann trennen."""
+        """Process end: stop the thread, then one 0-write, then disconnect."""
         with self._state_lock:
             self._terminating = True
             self._charge_open = False
             self._discharge_wanted = False
+            self._manual_feedin_w = 0.0
             self._wake.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=10)
@@ -212,12 +262,15 @@ class SetpointKeeper:
                 if self._terminating:
                     return
                 hands_off = self._hands_off
+                manual_w = self._manual_feedin_w
                 charge_open = self._charge_open
                 power = self._charge_power_w
                 discharge = self._discharge_wanted
 
             if hands_off:
                 mode = MODE_NONE
+            elif manual_w > 0.0:
+                mode = MODE_FEEDIN
             elif charge_open:
                 mode = MODE_CHARGE
             elif discharge:
@@ -226,7 +279,14 @@ class SetpointKeeper:
                 mode = MODE_HOLD
 
             target = None
-            if mode == MODE_CHARGE:
+            if mode == MODE_FEEDIN:
+                # Manual export: an ABSOLUTE grid target, no load
+                # compensation -- the loop pulls PV first and the
+                # rest from the pack, self-regulating at the
+                # physical cap (same evidence as the charge path:
+                # commanding more than possible simply caps).
+                target = -float(manual_w)
+            elif mode == MODE_CHARGE:
                 house = self._sum(self._consumption_topics, "consumption")
                 pv = self._sum(self._pv_topics, "pv")
                 target = max(0.0, power + house - pv)
@@ -251,9 +311,9 @@ class SetpointKeeper:
             self._wake.wait(self.refresh_s)
 
     def _sum(self, topics, what):
-        """Summe der zuletzt bekannten Phase-Werte. Bei Staleness die
-        letzten Werte PINNEN (richtungssicher genug; 0 wuerde in der
-        Sperre den Akku aktiv leeren), nur einmal pro 5 min WARNen."""
+        """Sum of the last known phase values. On staleness the last
+        values get PINNED (direction-safe enough; zeros would
+        actively drain the pack in HOLD), one WARN per 5 min."""
         with self._latest_lock:
             now = time.time()
             vals = [max(0.0, self._latest.get(t, (0.0, 0.0))[0])
