@@ -58,6 +58,13 @@
                     # power wins, else GX/BMS capability. Manual value
                     # ignored (goes stale after hardware changes).
                     "charge_power_watts",
+                    # Inert since the dynamic_ess removal (2026-10):
+                    # every value resolves to classic; the real control
+                    # channel picks itself per firmware (hub4 -> the
+                    # RAM setpoint keeper, else the classic registers).
+                    # Nothing left to choose -- hidden, documented in
+                    # the README table.
+                    "control_backend",
                 ]
                 grouped_keys = set(solar_keys + battery_keys + economics_keys + deprecated_keys)
                 section_keys = ["ess_unit", "markets", "prices", "pv_panels", "smart_switches", "solar_forecast_providers"]
@@ -90,11 +97,6 @@
                             <select id="{{ key }}" name="{{ key }}">
                                 <option value="hourly" {{ 'selected' if value == 'hourly' else '' }}>Hourly</option>
                                 <option value="quarterly" {{ 'selected' if value == 'quarterly' else '' }}>Quarterly (15 min)</option>
-                            </select><br>
-                        % elif key == "control_backend":
-                            <select id="{{ key }}" name="{{ key }}">
-                                <option value="auto" {{ 'selected' if value == 'auto' else '' }}>Auto (classic registers)</option>
-                                <option value="classic" {{ 'selected' if value == 'classic' else '' }}>Classic (Day/MaxDischargePower toggles)</option>
                             </select><br>
                         % else:
                             <input type="text" id="{{ key }}" name="{{ key }} " value="{{ value }}"><br>
@@ -131,9 +133,7 @@
 
                 <fieldset>
                     <legend>Battery / Charging</legend>
-                    % if economic_mode:
-                        <p class="economic-note">Economic mode active: the cap-only rules (covering-block, cheaper-cluster) are hidden while dormant &mdash; the marginal-price rule decides. They re-appear when the strategy is switched back to Cap.</p>
-                    % end
+                    <p class="economic-note" id="economic-note" {{ '' if economic_mode else 'style="display:none;"' }}>Economic mode active: the cap-only rules (covering-block, cheaper-cluster, hard cap) are hidden while dormant &mdash; the marginal-price rule decides. They re-appear when the strategy is switched back to Cap.</p>
                     % if isinstance(config.get("prices"), list) and config["prices"] and "charging_strategy" in config["prices"][0]:
                         <%
                         strategy_value = config["prices"][0]["charging_strategy"]
@@ -153,7 +153,8 @@
                         <br>
                     % end
                     % for key in battery_keys:
-                        % if key in config and not (economic_mode and key in cap_only_keys):
+                        % if key in config:
+                            <div class="cfg-row" data-cap-only="{{ '1' if key in cap_only_keys else '0' }}" {{ !('style="display:none;"' if economic_mode and key in cap_only_keys else '') }}>
                             <%
                             value = config[key]
                             if tooltips and key in tooltips:
@@ -173,6 +174,7 @@
                             % else:
                                 <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
                             % end
+                            </div>
                         % end
                     % end
                 </fieldset>
@@ -209,10 +211,11 @@
                         <legend>Prices</legend>
                         % for price_data in config["prices"]:
                             % for field_key, field_value in price_data.items():
-                                % if field_key == "charging_strategy" or (economic_mode and field_key in cap_only_keys):
+                                % if field_key == "charging_strategy":
                                     % continue
                                 % end
                                 <%
+                                cap_only = field_key in cap_only_keys
                                 if tooltips and field_key in tooltips:
                                     title=tooltips.get(field_key)
                                     additional=' ℹ️'
@@ -222,18 +225,15 @@
                                 end
                                 formatted_text = " ".join(word.capitalize() for word in field_key.split("_")) + additional
                                 %>
+                                <div class="cfg-row" data-cap-only="{{ '1' if cap_only else '0' }}" {{ !('style="display:none;"' if economic_mode and cap_only else '') }}>
                                 <label class="tooltip" for="prices:{{ field_key }}" title="{{ title }}">{{ formatted_text }}</label><br/>
                                 % if isinstance(field_value, bool):
                                     <input type="hidden" id="prices:{{ field_key }}_hidden" name="prices:{{ field_key }}" value="off">
                                     <input type="checkbox" id="prices:{{ field_key }}" name="prices:{{ field_key }}" {{ 'checked' if field_value == True else '' }}><br/>
-                                % elif field_key == "charging_strategy":
-                                    <select id="prices:{{ field_key }}" name="prices:{{ field_key }}">
-                                        <option value="cap" {{ 'selected' if field_value == 'cap' else '' }}>Cap (hard cap blocks charging)</option>
-                                        <option value="economic" {{ 'selected' if field_value == 'economic' else '' }}>Economic (marginal displaced price)</option>
-                                    </select><br>
                                 % else:
                                     <input type="text" id="prices:{{ field_key }}" name="prices:{{ field_key }}" value="{{ field_value }}"><br>
                                 % end
+                                </div>
                             % end
                         % end
                     </fieldset>
@@ -286,6 +286,26 @@
         var config = {{ !json_config }};
         var tooltips = {{ !tooltips }};
         var names = {{ !names }};
+    </script>
+    <script>
+        // Charging-strategy toggle: instantly show/hide the cap-only
+        // switches (dormant under economic) WITHOUT save + reload --
+        // mirrors the server-side rendering (same rows, same note).
+        (function () {
+            var strat = document.getElementById('prices:charging_strategy');
+            if (!strat) return;
+            var note = document.getElementById('economic-note');
+            var rows = document.querySelectorAll('.cfg-row[data-cap-only="1"]');
+            function apply() {
+                var economic = (strat.value === 'economic');
+                if (note) note.style.display = economic ? '' : 'none';
+                for (var i = 0; i < rows.length; i++) {
+                    rows[i].style.display = economic ? 'none' : '';
+                }
+            }
+            strat.addEventListener('change', apply);
+            apply();
+        })();
     </script>
 
 </body>
