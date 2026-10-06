@@ -476,7 +476,9 @@ class SEUSSWeb:
         must not claim green), "red" when it is part of a discharging
         block, otherwise "gray". Mirrors the slice-coloring in
         generate_chart_svg so the thermostat's bar display agrees with
-        the SEUSS web chart.
+        the SEUSS web chart. ORANGE is added by the freeze layer for
+        PAST charge-block hours where the battery actually discharged
+        (fall-through): this method itself never emits orange.
 
         veto: callable price_cent -> True when the active strategy
         would NOT buy this window (economic marginal rule / hard cap).
@@ -570,14 +572,16 @@ class SEUSSWeb:
 
     def _freeze_past_decisions(self, colors, target_date, veto, hour_prices):
         """
-        Freeze each PAST hour's green/olive verdict from what SEUSS
-        actually DID (observed evaluation states), not from the current
-        veto math: an hour where charging was observed is green, a
-        charge-block hour without observed charging is olive. Hours
-        with no observations (e.g. SEUSS restarted mid-day) keep the
-        first-seen computed colour. The current and future hours stay
-        live (the veto may flip inside the hour). RAM-only; keeps the
-        last 3 days.
+        Freeze each PAST hour's green/olive/orange verdict from what
+        SEUSS actually DID (observed evaluation states), not from the
+        current veto math: an hour where charging was observed is
+        green; a charge-block hour where the battery actually
+        DISCHARGED (discharge fall-through on a vetoed charge window)
+        is orange; a charge-block hour without observed charging is
+        olive. Hours with no observations (e.g. SEUSS restarted
+        mid-day) keep the first-seen computed colour. The current and
+        future hours stay live (the veto may flip inside the hour).
+        RAM-only; keeps the last 3 days.
         """
         self._ensure_log_seeded()
         now_hour = datetime.now().hour
@@ -597,9 +601,16 @@ class SEUSSWeb:
             if hour >= now_hour or color not in ("green", "olive"):
                 continue
             if hour in observed:
-                # Physical truth: charging observed -> green, else olive.
-                frozen_colour = ("green" if "charging" in
-                                 observed[hour].values() else "olive")
+                # Physical truth: charging observed -> green, battery
+                # served the loads in a vetoed charge window (fall-
+                # through) -> orange, else olive (vetoed, held).
+                states = set(observed[hour].values())
+                if "charging" in states:
+                    frozen_colour = "green"
+                elif "discharging" in states:
+                    frozen_colour = "orange"
+                else:
+                    frozen_colour = "olive"
             elif hour in frozen:
                 frozen_colour = frozen[hour]
             elif verdict_ok and hour_prices is not None:
@@ -2171,6 +2182,11 @@ class SEUSSWeb:
                         target_date.isoformat(), {})
                     hour_obs = observed_day.get(hour) if not tomorrow else None
                     strategy_veto = base_veto
+                    # Orange truth: this charge quarter was vetoed but
+                    # the discharge fall-through let the battery SERVE
+                    # the loads (discharge_fallthrough_on_charge_veto).
+                    discharged = False
+                    q_state = None
                     if tomorrow:
                         pass  # same live veto projection as today
                     elif hour_obs is not None and hour <= current_hour:
@@ -2180,6 +2196,7 @@ class SEUSSWeb:
                         q_state = hour_obs.get(q)
                         if q_state is not None:
                             strategy_veto = q_state != "charging"
+                            discharged = q_state == "discharging"
                         else:
                             # No record for THIS quarter: never inherit
                             # "the hour charged somehow" -- that used to
@@ -2188,7 +2205,9 @@ class SEUSSWeb:
                             # Fall back to the computed veto instead.
                             strategy_veto = base_veto or soc_stop
                     elif hour < current_hour and hour in frozen_day:
-                        strategy_veto = frozen_day[hour] == "olive"
+                        # Frozen truth may be orange (vetoed + drained).
+                        strategy_veto = frozen_day[hour] in ("olive", "orange")
+                        discharged = frozen_day[hour] == "orange"
                     else:
                         strategy_veto = base_veto or soc_stop
                         if (not tomorrow and hour < current_hour and in_charge
@@ -2198,6 +2217,15 @@ class SEUSSWeb:
 
                     if (in_charge or below_limit) and below_cap and not strategy_veto:
                         slice_color = self._green_color(hour, current_hour, tomorrow)
+                    elif in_charge and discharged:
+                        # Charge window vetoed + fall-through: the
+                        # battery actually DISCHARGED here (FREE self-
+                        # consumption, observed state "discharging").
+                        # Orange, not olive -- olive reads as "held",
+                        # which was a half-truth for these hours
+                        # (2026-10-06: 02:00/04:00 charge blocks
+                        # drained ~1 kWh each while painted olive).
+                        slice_color = self._orange_color(hour, current_hour, tomorrow)
                     elif in_charge and (not below_cap or strategy_veto):
                         # Algorithm picked this quarter for charging, but
                         # the strategy refuses it (above hard cap, or the
@@ -2499,14 +2527,29 @@ class SEUSSWeb:
             return "#9ACD32"        # yellowgreen, bright
         return "#556B2F" if current_hour > hour else "#9ACD32"  # darkolivegreen / yellowgreen
 
+    @staticmethod
+    def _orange_color(hour, current_hour, tomorrow):
+        """
+        Orange shade for "charge window vetoed, but the discharge
+        fall-through let the battery SERVE the loads" (FREE self-
+        consumption instead of import). Its own colour: olive reads
+        as "held", which was a half-truth for those hours (observed
+        2026-10-06: the 02:00/04:00 charge blocks drained ~1 kWh
+        each while painted olive). Past hours darker, future
+        brighter, matching the dimming convention.
+        """
+        if tomorrow:
+            return "#FFA500"       # orange, bright
+        return "#CD6600" if current_hour > hour else "#FFA500"  # darkorange3 / orange
+
     def generate_legend_svg(self):
         average_price_today, average_price_tomorrow = (
             self.market_items.get_average_price_by_date(True)
         )
 
-        # Legend dimensions: enough room for 6 entries.
+        # Legend dimensions: enough room for 7 entries + market line.
         legend_svg = (
-            '<svg width="280" height="240" '
+            '<svg width="280" height="280" '
             'xmlns="http://www.w3.org/2000/svg" '
             'style="border: 1px solid #ccc; margin-top: 18px;">'
         )
@@ -2532,35 +2575,43 @@ class SEUSSWeb:
             f'{blocked_label}</text>'
         )
 
-        # Discharging (red)
+        # Charge vetoed but the battery served the loads (orange)
         legend_svg += (
             '<rect x="10" y="70" width="20" height="20" '
-            'fill="red" stroke="#000" stroke-width="1"/>'
+            'fill="#FFA500" stroke="#000" stroke-width="1"/>'
             '<text x="40" y="85" font-size="12" class="chart-text">'
+            'Vetoed + drained (fall-through)</text>'
+        )
+
+        # Discharging (red)
+        legend_svg += (
+            '<rect x="10" y="100" width="20" height="20" '
+            'fill="red" stroke="#000" stroke-width="1"/>'
+            '<text x="40" y="115" font-size="12" class="chart-text">'
             'Discharging</text>'
         )
 
         # Average today line (magenta)
         legend_svg += (
-            '<rect x="10" y="105" width="20" height="4" '
+            '<rect x="10" y="135" width="20" height="4" '
             'fill="magenta" stroke="#000" stroke-width="1"/>'
-            f'<text x="40" y="115" font-size="12" class="chart-text">'
+            f'<text x="40" y="145" font-size="12" class="chart-text">'
             f'Average Today ({average_price_today})</text>'
         )
 
         # Average tomorrow line (magenta)
         legend_svg += (
-            '<rect x="10" y="135" width="20" height="4" '
+            '<rect x="10" y="165" width="20" height="4" '
             'fill="magenta" stroke="#000" stroke-width="1"/>'
-            f'<text x="40" y="145" font-size="12" class="chart-text">'
+            f'<text x="40" y="175" font-size="12" class="chart-text">'
             f'Average Tomorrow ({average_price_tomorrow})</text>'
         )
 
         # Charging price limit line (yellow)
         legend_svg += (
-            '<rect x="10" y="165" width="20" height="4" '
+            '<rect x="10" y="195" width="20" height="4" '
             'fill="yellow" stroke="#000" stroke-width="1"/>'
-            f'<text x="40" y="175" font-size="12" class="chart-text">'
+            f'<text x="40" y="205" font-size="12" class="chart-text">'
             f'Charging Price Limit ({self.config.charging_price_limit})</text>'
         )
 
@@ -2571,9 +2622,9 @@ class SEUSSWeb:
             else 'Charging Price Hard Cap'
         )
         legend_svg += (
-            '<rect x="10" y="195" width="20" height="4" '
+            '<rect x="10" y="225" width="20" height="4" '
             'fill="blue" stroke="#000" stroke-width="1"/>'
-            f'<text x="40" y="205" font-size="12" class="chart-text">'
+            f'<text x="40" y="235" font-size="12" class="chart-text">'
             f'{ceiling_label} ({self._effective_price_ceiling()})</text>'
         )
 
@@ -2588,7 +2639,7 @@ class SEUSSWeb:
             market_line = None
         if market_line:
             legend_svg += (
-                '<text x="10" y="228" font-size="12" '
+                '<text x="10" y="258" font-size="12" '
                 f'class="chart-text">{market_line}</text>'
             )
 
