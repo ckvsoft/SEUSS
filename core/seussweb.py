@@ -565,8 +565,9 @@ class SEUSSWeb:
         Reconstruct today's per-hour charging truth from the SEUSS log
         (tmpfs -- zero extra disk writes). Seeds the observed states so
         past hours keep their TRUE colour across SEUSS restarts: every
-        cycle logs "charging is turned on/off", which maps exactly to
-        the green/olive display semantics.
+        cycle logs "charging/discharging is turned on/off", which maps
+        exactly to the green/olive/orange display semantics (charging /
+        held / fall-through discharge).
         """
         try:
             path = getattr(self.config, "log_file_path", None) or "/tmp/seuss.log"
@@ -574,6 +575,7 @@ class SEUSSWeb:
             day = datetime.now().strftime("%Y-%m-%d")
             obs = self._hour_state_observations.setdefault(day, {})
             charging = False
+            discharging = False
             state_known = False
             with open(path, "r", errors="replace") as fh:
                 for line in fh:
@@ -586,19 +588,28 @@ class SEUSSWeb:
                     quarter = int(m.group(3)) // 15
                     if re.search(r"(?<!dis)charging is turned on\.", line):
                         charging = True
+                        discharging = False
                         state_known = True
                     elif re.search(r"(?<!dis)charging is turned off\.", line):
                         charging = False
                         state_known = True
+                    elif re.search(r"discharging is turned on\.", line):
+                        discharging = True
+                        charging = False
+                        state_known = True
+                    elif re.search(r"discharging is turned off\.", line):
+                        discharging = False
+                        state_known = True
                     if state_known:
                         # Per-quarter record of the OBSERVED state --
-                        # charging AND not-charging quarters. Without
-                        # the not-charging records the gaps inherited
-                        # "the hour charged somehow" and rendered green
-                        # although nothing was charged there (e.g. the
-                        # rest of an hour after an abort at :25).
+                        # charging, DISCHARGING (fall-through truth,
+                        # painted orange) and not-charging quarters.
+                        # Same-second on/off line pairs overwrite per
+                        # quarter, the LAST line of a cycle wins.
                         obs.setdefault(hour, {})[quarter] = (
-                            "charging" if charging else "idle")
+                            "charging" if charging
+                            else "discharging" if discharging
+                            else "idle")
         except Exception:
             pass
 
