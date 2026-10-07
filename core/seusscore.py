@@ -448,17 +448,22 @@ class SEUSS:
         self.control_discharging(essunit, condition_discharging_result)
         self.control_switching(condition_switching_result, essunit=essunit)
 
-        # Manual feed-in guard refresh: an active slider feed must
-        # survive the price/SOC floors -- re-checked here each cycle
-        # (the slider command itself is guarded at set time).
+        # Manual grid overlay guard refresh: an active slider state
+        # (feed-in OR the grid-neutral hold) must survive the floors --
+        # re-checked here each cycle (the slider command itself is
+        # guarded at set time). The price floor applies to a feed-in
+        # only; the SOC floor to both.
         try:
-            if (hasattr(essunit, "get_manual_feedin")
-                    and essunit.get_manual_feedin()[0]):
-                allowed, reason = self._manual_feedin_guard()
-                if not allowed and hasattr(essunit, "update_manual_guard"):
-                    essunit.update_manual_guard(allowed, reason)
+            if hasattr(essunit, "get_manual_feedin"):
+                active, manual_w = essunit.get_manual_feedin()
+                if active:
+                    allowed, reason = self._manual_feedin_guard(
+                        feedin=float(manual_w or 0.0) > 0)
+                    if not allowed and hasattr(essunit, "update_manual_guard"):
+                        essunit.update_manual_guard(allowed, reason)
         except Exception as e:
-            self.logger.log.debug(f"feed-in guard refresh failed: {e}")
+            self.logger.log.debug(
+                f"manual overlay guard refresh failed: {e}")
 
         # Expose the current decision + battery state to the web layer
         # (/api/battery for external consumers like the thermostat).
@@ -491,24 +496,26 @@ class SEUSS:
                 f"Control backend resolution failed, keeping classic: {e}"
             )
 
-    def _manual_feedin_guard(self):
+    def _manual_feedin_guard(self, feedin=True):
         """
-        (allowed, reason) for the manual grid feed-in -- ONE guard
+        (allowed, reason) for the manual grid overlay -- ONE guard
         truth for the slider command AND the per-cycle re-check:
-          * price <= 0  -> feeding would PAY to export
-          * SOC <= feedin_min_soc_percent -> the pack keeps its
-            reserve
+          * feed-in only: price <= 0 -> feeding would PAY to export
+          * always: SOC <= feedin_min_soc_percent -> the pack keeps
+            its reserve (also true for the grid-neutral hold: the
+            pack must serve the loads while the setpoint is 0)
         """
         try:
             price = self.items.get_current_price(True)
-            if price is None:
-                return False, "no price data"
-            try:
-                price = float(price)
-            except (TypeError, ValueError):
-                return False, "no valid price data"
-            if price <= 0.0:
-                return False, f"price {price:g} ct <= 0 (feeding would pay)"
+            if feedin:
+                if price is None:
+                    return False, "no price data"
+                try:
+                    price = float(price)
+                except (TypeError, ValueError):
+                    return False, "no valid price data"
+                if price <= 0.0:
+                    return False, f"price {price:g} ct <= 0 (feeding would pay)"
             essunit = self._latest_essunit
             if essunit is not None:
                 soc = essunit.get_soc()
@@ -530,7 +537,8 @@ class SEUSS:
         """
         Web-slider callback (runs in the bottle thread): clamp to the
         configured ceiling, run the guards, then command the keeper.
-        Returns a JSON-ready status dict for the UI.
+        Slider protocol: -1 = deactivated, 0 = grid-neutral hold,
+        > 0 = feed-in. Returns a JSON-ready status dict for the UI.
         """
         essunit = self._latest_essunit
         if essunit is None or not hasattr(essunit, "set_manual_feedin"):
@@ -539,21 +547,26 @@ class SEUSS:
             watts = float(watts)
         except (TypeError, ValueError):
             return {"status": "error", "message": "invalid watts value"}
-        if watts < 0:
-            watts = 0.0
+        if watts < 0.0:
+            # Deactivate: always allowed (release, needs no guard).
+            if not essunit.set_manual_feedin(-1.0):
+                return {"status": "error",
+                        "message": "manual grid overlay needs the "
+                                   "hub4 setpoint path"}
+            return {"status": "ok", "watts": -1.0}
         try:
             max_w = float(getattr(self.config, "feedin_max_w", 5000.0))
         except (TypeError, ValueError):
-            max_w = 2500.0
+            max_w = 5000.0
         if max_w > 0 and watts > max_w:
             watts = max_w
-        if watts > 0:
-            allowed, reason = self._manual_feedin_guard()
-            if not allowed:
-                return {"status": "refused", "message": reason, "watts": 0.0}
+        allowed, reason = self._manual_feedin_guard(feedin=watts > 0)
+        if not allowed:
+            return {"status": "refused", "message": reason, "watts": -1.0}
         if not essunit.set_manual_feedin(watts):
             return {"status": "error",
-                    "message": "manual feed-in needs the hub4 setpoint path"}
+                    "message": "manual grid overlay needs the hub4 "
+                               "setpoint path"}
         return {"status": "ok", "watts": watts}
 
     def _publish_ess_state(self, essunit, charge_result, discharge_result,
@@ -563,8 +576,30 @@ class SEUSS:
         via the StatsManager, so the thermostat endpoint costs zero
         disk writes (same SD-wear reasoning as the register topic).
         """
+        # Manual grid overlay (UI slider) state. It OUTRANKS the
+        # automatic modes in the keeper, so a "charging" decision must
+        # not be reported as charging while the overlay owns the
+        # setpoint -- the chart's observed truth would otherwise paint
+        # an hour green that never charged. mode "off" (deactivated),
+        # "neutral" (holding 0 W) or "feedin" (exporting the wattage).
+        manual_feedin = None
+        overlay_active = False
+        if essunit is not None and hasattr(essunit, "get_manual_feedin"):
+            try:
+                active, mw = essunit.get_manual_feedin()
+                mw = float(mw or 0.0)
+                overlay_active = bool(active)
+                manual_feedin = {
+                    "active": bool(active),
+                    "watts": round(mw, 1),
+                    "mode": ("off" if not active
+                             else "feedin" if mw > 0 else "neutral"),
+                }
+            except Exception:
+                manual_feedin = None
+
         state = "idle"
-        if charge_result.execute:
+        if charge_result.execute and not overlay_active:
             state = "charging"
         elif discharge_result.execute:
             state = "discharging"
@@ -590,18 +625,6 @@ class SEUSS:
                     conditions_instance.get_economic_projection()
             except Exception:
                 economic_projection = None
-
-        # Manual grid feed-in (UI slider) state for the web layer.
-        manual_feedin = None
-        if essunit is not None and hasattr(essunit, "get_manual_feedin"):
-            try:
-                active, mw = essunit.get_manual_feedin()
-                manual_feedin = {
-                    "active": bool(active),
-                    "watts": round(float(mw or 0.0), 1),
-                }
-            except Exception:
-                manual_feedin = None
 
         payload = {
             "state": state,

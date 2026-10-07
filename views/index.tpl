@@ -64,17 +64,21 @@
                 </div>
             </div>
             <div id="feedin-panel">
-                <h1>Grid Feed-In (manual)</h1>
+                <h1>Grid Setpoint (manual)</h1>
                 <div class="feedin-row">
-                    <input type="range" id="feedinSlider" min="0"
-                           max="{{ feedin_max }}" step="100" value="0">
-                    <span id="feedinValue">0 W</span>
+                    <input type="range" id="feedinSlider" min="-1"
+                           max="{{ feedin_max }}" step="1" value="-1">
+                    <span id="feedinValue">deactivated</span>
                 </div>
                 <div id="feedinStatus">inactive</div>
                 <div class="feedin-note">
-                    Feeds W into the grid (PV first, battery second).
-                    Auto-stops at price &le;&nbsp;0 or the SOC floor;
-                    slider to 0 returns to the automatic modes.
+                    &minus;1&nbsp;= deactivated (SEUSS's automatic modes
+                    own the setpoint). 0&nbsp;W = hold the grid neutral
+                    &mdash; no import, no export, the pack/PV serve the
+                    loads. &gt;&nbsp;0&nbsp;W = feed into the grid (PV
+                    first, pack second). A feed-in auto-stops at price
+                    &le;&nbsp;0 or below the SOC floor; the neutral hold
+                    stops below the SOC floor too.
                 </div>
             </div>
         </div>
@@ -292,37 +296,60 @@
             console.log("Charts updated at full hour");
         }
 
-        // ---- Manual grid feed-in slider ----
-        // POST /api/feedin {"watts": N} debounced while dragging;
-        // the guards (price <= 0, SOC floor) answer in the response.
+        // ---- Manual grid overlay slider ----
+        // POST /api/feedin {"watts": N} debounced while dragging.
+        // Protocol: -1 = deactivated, 0 = grid-neutral hold, > 0 =
+        // feed-in. The guards (price <= 0 for a feed-in, SOC floor for
+        // both) answer in the response.
         const feedinSlider = document.getElementById('feedinSlider');
         const feedinValue = document.getElementById('feedinValue');
         const feedinStatus = document.getElementById('feedinStatus');
         if (feedinSlider && feedinValue && feedinStatus) {
             let feedinTimer = null;
+            // The range is 1-step so that both special states stay
+            // reachable (-1 off, 0 neutral); everything above snaps to
+            // whole hundreds to keep the wattages round.
+            const snapFeedin = (v) => {
+                v = parseInt(v, 10);
+                if (isNaN(v) || v < 0) return -1;
+                if (v <= 50) return 0;
+                return Math.round(v / 100) * 100;
+            };
+            const labelFeedin = (v) => {
+                if (v < 0) return 'deactivated';
+                if (v === 0) return '0 W (grid-neutral)';
+                return v + ' W feed-in';
+            };
             const sendFeedin = () => {
-                const watts = parseInt(feedinSlider.value, 10) || 0;
+                const watts = parseInt(feedinSlider.value, 10);
                 fetch('/api/feedin', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ watts: watts })
                 }).then(r => r.json()).then(res => {
                     if (res.status === 'ok') {
-                        feedinStatus.textContent = res.watts > 0
-                            ? 'feeding ' + res.watts + ' W into the grid'
-                            : 'inactive';
+                        const w = parseInt(res.watts, 10);
+                        feedinSlider.value = w;
+                        feedinValue.textContent = labelFeedin(w);
+                        feedinStatus.textContent = w < 0
+                            ? 'inactive'
+                            : w === 0
+                                ? 'holding the grid at 0 W'
+                                : 'feeding ' + w + ' W into the grid';
                     } else {
                         feedinStatus.textContent =
                             'stopped: ' + (res.message || res.status);
-                        feedinSlider.value = 0;
-                        feedinValue.textContent = '0 W';
+                        feedinSlider.value = -1;
+                        feedinValue.textContent = labelFeedin(-1);
                     }
                 }).catch(() => {
                     feedinStatus.textContent = 'send failed';
                 });
             };
             feedinSlider.addEventListener('input', () => {
-                feedinValue.textContent = feedinSlider.value + ' W';
+                const v = snapFeedin(feedinSlider.value);
+                feedinSlider.value = v;
+                feedinValue.textContent = labelFeedin(v);
                 clearTimeout(feedinTimer);
                 feedinTimer = setTimeout(sendFeedin, 400);
             });

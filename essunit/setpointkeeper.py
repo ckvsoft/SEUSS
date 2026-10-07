@@ -47,10 +47,15 @@ Modes (effective per tick):
                                    the loads, no will of its own)
   HOLD    otherwise (veto/gap)   -> max(0, load - pv) (battery held,
                                    grid+PV serve the loads)
-  FEEDIN  manual slider active   -> -W (feed W into the grid; PV
-                                   first, pack second -- the loop
-                                   self-regulates at the physical
-                                   cap, no load compensation)
+  MANUAL  manual slider active   -> an ABSOLUTE grid target
+                                   -W (feed W into the grid; PV first,
+                                   pack second -- the loop self-
+                                   regulates at the physical cap, no
+                                   load compensation). W = 0 is the
+                                   grid-neutral hold: the setpoint is
+                                   held at exactly 0 W (no import, no
+                                   export). Outranks the automatic
+                                   modes while active.
   NONE    hands-off/startup     -> silent; decay -> neutral
 
 Load/PV per tick from the GX MQTT feed (last known values; new data
@@ -78,7 +83,12 @@ MODE_NONE = "none"
 MODE_HOLD = "hold"
 MODE_FREE = "free"
 MODE_CHARGE = "charge"
-MODE_FEEDIN = "feedin"
+MODE_MANUAL = "manual"
+
+# The manual overlay's wire/slider protocol: any negative value (the
+# slider's -1 position) means "deactivated", 0 means "hold the grid at
+# 0 W", a positive value is the feed-in wattage.
+MANUAL_OFF = -1.0
 
 _FRESH_WINDOW_S = 120.0  # freshness window for load/pv
 
@@ -149,6 +159,10 @@ class SetpointKeeper:
         self._charge_power_w = 0.0
         self._discharge_wanted = False
         self._hands_off = False
+        # Manual grid overlay (the UI slider): inactive by default.
+        # Active with _manual_feedin_w == 0 -> grid-neutral hold,
+        # > 0 -> feed that many watts into the grid.
+        self._manual_active = False
         self._manual_feedin_w = 0.0
         self._terminating = False
         self._wake = threading.Event()
@@ -191,6 +205,7 @@ class SetpointKeeper:
             self._hands_off = True
             self._charge_open = False
             self._discharge_wanted = False
+            self._manual_active = False
             self._manual_feedin_w = 0.0
         if was:
             self.logger.log.info(
@@ -199,44 +214,67 @@ class SetpointKeeper:
 
     def set_manual_feedin(self, watts):
         """
-        Manual grid feed-in (the UI slider): feed `watts` INTO the
-        grid (negative setpoint) until turned off (watts <= 0), a
-        guard kills it (update_manual_guard) or the process dies
-        (the ~180 s override decay is the fail-safe). Overrides the
-        automatic modes while active; hands_off still wins -- no
-        control authority means no manual feed either.
+        Manual grid overlay (the UI slider). Three states:
+          watts < 0  -> deactivated: release the setpoint back to the
+                        automatic modes (the persisted system setpoint
+                        applies again).
+          watts == 0 -> active, GRID-NEUTRAL: hold the setpoint at
+                        exactly 0 W (no import, no export; the pack/PV
+                        serve the loads). Unlike "deactivated" this
+                        overrides the persisted setpoint -- the loop
+                        never falls back to it.
+          watts > 0  -> active: feed `watts` INTO the grid (-W target).
+        Overrides the automatic modes while active; a guard
+        (update_manual_guard) or the process dying (the ~180 s
+        override decay) ends it. hands_off still wins -- no control
+        authority means no manual overlay either.
         """
         try:
-            watts = max(0.0, float(watts or 0.0))
+            watts = float(watts)
         except (TypeError, ValueError):
-            watts = 0.0
+            watts = MANUAL_OFF
+        if watts < 0.0:
+            active, watts = False, 0.0
+        else:
+            active = True
         with self._state_lock:
-            changed = abs(watts - self._manual_feedin_w) > 0.5
+            changed = (active != self._manual_active
+                       or abs(watts - self._manual_feedin_w) > 0.5)
+            self._manual_active = active
             self._manual_feedin_w = watts
         if changed:
-            self.logger.log.info(
-                f"Setpoint MANUAL FEEDIN {'on' if watts > 0 else 'off'} "
-                f"({watts:.0f} W).")
+            if not active:
+                self.logger.log.info(
+                    "Setpoint MANUAL overlay off (automatic modes "
+                    "resume).")
+            elif watts > 0:
+                self.logger.log.info(
+                    f"Setpoint MANUAL FEEDIN on ({watts:.0f} W).")
+            else:
+                self.logger.log.info(
+                    "Setpoint MANUAL GRID-NEUTRAL on (holding 0 W).")
         self._wake.set()
 
     def get_manual_feedin(self):
-        """(active, watts) of the manual grid feed-in."""
+        """(active, watts) of the manual grid overlay: active with
+        watts == 0 is the grid-neutral hold, watts > 0 the feed-in."""
         with self._state_lock:
-            return (self._manual_feedin_w > 0.0, self._manual_feedin_w)
+            return (self._manual_active, self._manual_feedin_w)
 
     def update_manual_guard(self, allowed, reason=""):
         """
         Guard refresh from the evaluation cycle (price/SOC floors).
-        A REFUSED guard ends an active manual feed-in (logged why);
+        A REFUSED guard ends an active manual overlay (logged why);
         an allowed guard never starts one -- only the slider does.
         """
         with self._state_lock:
-            active = self._manual_feedin_w > 0.0
+            active = self._manual_active
             if active and not allowed:
+                self._manual_active = False
                 self._manual_feedin_w = 0.0
         if active and not allowed:
             self.logger.log.info(
-                f"Setpoint MANUAL FEEDIN off (guard: {reason or 'refused'}).")
+                f"Setpoint MANUAL overlay off (guard: {reason or 'refused'}).")
         self._wake.set()
 
     def shutdown(self):
@@ -245,6 +283,7 @@ class SetpointKeeper:
             self._terminating = True
             self._charge_open = False
             self._discharge_wanted = False
+            self._manual_active = False
             self._manual_feedin_w = 0.0
             self._wake.set()
         if self._thread and self._thread is not threading.current_thread():
@@ -262,6 +301,7 @@ class SetpointKeeper:
                 if self._terminating:
                     return
                 hands_off = self._hands_off
+                manual_active = self._manual_active
                 manual_w = self._manual_feedin_w
                 charge_open = self._charge_open
                 power = self._charge_power_w
@@ -269,8 +309,8 @@ class SetpointKeeper:
 
             if hands_off:
                 mode = MODE_NONE
-            elif manual_w > 0.0:
-                mode = MODE_FEEDIN
+            elif manual_active:
+                mode = MODE_MANUAL
             elif charge_open:
                 mode = MODE_CHARGE
             elif discharge:
@@ -279,12 +319,14 @@ class SetpointKeeper:
                 mode = MODE_HOLD
 
             target = None
-            if mode == MODE_FEEDIN:
-                # Manual export: an ABSOLUTE grid target, no load
-                # compensation -- the loop pulls PV first and the
-                # rest from the pack, self-regulating at the
-                # physical cap (same evidence as the charge path:
-                # commanding more than possible simply caps).
+            if mode == MODE_MANUAL:
+                # Manual overlay: an ABSOLUTE grid target, no load
+                # compensation -- the loop pulls PV first and the rest
+                # from the pack, self-regulating at the physical cap
+                # (same evidence as the charge path: commanding more
+                # than possible simply caps). w == 0 is the grid-
+                # neutral hold: the setpoint is held at exactly 0 W,
+                # so the loop never falls back to the persisted value.
                 target = -float(manual_w)
             elif mode == MODE_CHARGE:
                 house = self._sum(self._consumption_topics, "consumption")

@@ -281,15 +281,16 @@ class Victron(ESSUnit):
 
     def set_manual_feedin(self, watts):
         """
-        Manual grid feed-in (the UI slider). hub4 setpoint path only:
-        the classic register backend has no feed-in channel. Returns
-        True when the command reached the keeper.
+        Manual grid overlay (the UI slider): -1 deactivates, 0 holds the
+        grid neutral, > 0 feeds that many watts into the grid. hub4
+        setpoint path only: the classic register backend has no such
+        channel. Returns True when the command reached the keeper.
         """
         if self.hub4_available():
             self._keeper().set_manual_feedin(watts)
             return True
         self.logger.log.warning(
-            "Manual feed-in needs the hub4 setpoint path "
+            "Manual grid overlay needs the hub4 setpoint path "
             "(firmware without hub4 or classic backend).")
         return False
 

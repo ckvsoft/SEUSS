@@ -191,11 +191,12 @@ class SEUSSWeb:
 
     def api_feedin_set(self):
         """
-        Manual grid feed-in slider endpoint (POST; watts in the body
-        as JSON {"watts": 3000} or a form field "watts"). 0 or absent
-        stops the feed-in and returns to the automatic modes. The
-        guards (price <= 0, SOC floor) live in the controller
-        callback -- a refusal carries the reason.
+        Manual grid overlay slider endpoint (POST; watts in the body as
+        JSON {"watts": 3000} or a form field "watts"). Slider protocol:
+        -1 (or any negative) = deactivated, 0 = grid-neutral hold
+        (setpoint held at 0 W), > 0 = feed that many watts into the
+        grid. The guards (price <= 0 for a feed-in, SOC floor for both)
+        live in the controller callback -- a refusal carries the reason.
         """
         response.content_type = 'application/json'
         if self._feedin_control is None:
@@ -395,15 +396,22 @@ class SEUSSWeb:
         #             purchase (economic: need already covered; cap:
         #             above hard cap) -- the LOG says "Abort charge",
         #             so the display must NOT claim green
+        #   orange -- charge-block hour vetoed AND the battery actually
+        #             discharged (fall-through) -- LIVE for the current
+        #             hour via the observed quarters, frozen for past
+        #             hours
         #   red    -- discharge block (expensive)
         #   gray   -- neutral / hold
         # in_cheap_block stays PRICE-based (household signal: cheap power
         # NOW -> flexible loads); the battery decision is charging_now.
+        self._ensure_log_seeded()
+        today_key = SEUSSWeb._target_date(False).isoformat()
         veto = self._charge_veto()
         colors_today = self._hour_colors(
             charge_blocks, discharge_blocks, tomorrow=False,
             hour_prices=data, veto=veto,
             verdicts=self._projection_day(SEUSSWeb._target_date(False)),
+            observed=self._hour_state_observations.get(today_key),
         )
         colors_today = self._freeze_past_decisions(
             colors_today, self._target_date(False), veto, data)
@@ -507,7 +515,8 @@ class SEUSSWeb:
 
     @staticmethod
     def _hour_colors(charge_blocks, discharge_blocks, tomorrow=False,
-                     hour_prices=None, veto=None, verdicts=None):
+                     hour_prices=None, veto=None, verdicts=None,
+                     observed=None):
         """
         Build a 24-element list of per-hour colors for the chart/API:
         "green" when the hour is part of a cheap charging block and the
@@ -516,9 +525,13 @@ class SEUSSWeb:
         must not claim green), "red" when it is part of a discharging
         block, otherwise "gray". Mirrors the slice-coloring in
         generate_chart_svg so the thermostat's bar display agrees with
-        the SEUSS web chart. ORANGE is added by the freeze layer for
-        PAST charge-block hours where the battery actually discharged
-        (fall-through): this method itself never emits orange.
+        the SEUSS web chart. ORANGE marks a charge-block hour where the
+        battery actually DISCHARGED (discharge fall-through on a vetoed
+        charge window). It comes from TWO sources: `observed` (the
+        per-quarter evaluation states of TODAY -- this keeps the
+        CURRENT hour live: the freeze layer alone could only paint
+        orange AFTER the hour had passed, user report 2026-10-07) and,
+        for past hours without live observations, the freeze layer.
 
         veto: callable price_cent -> True when the active strategy
         would NOT buy this window (economic marginal rule / hard cap).
@@ -528,6 +541,12 @@ class SEUSSWeb:
         hours: the live marginal is only valid for the CURRENT
         quarter -- painted day-wide it vetoes every hour when the
         pack covers the horizon now ("all olive", 2026-10-05).
+        observed: {hour: {quarter: "charging"|"discharging"|"idle"}}
+        for the SAME day (today only; None for tomorrow). It only ever
+        UPGRADES a charge hour (observed activity wins over the
+        projection); hours without a positive observation keep the
+        computed colour, so the start of a charge window does not
+        flicker olive before the first charging cycle.
         """
         target = SEUSSWeb._target_date(tomorrow)
         charge_quarters = SEUSSWeb._collect_quarter_keys(charge_blocks, target)
@@ -539,6 +558,17 @@ class SEUSSWeb:
             has_discharge = any((h, q) in discharge_quarters for q in range(4))
             if has_charge:
                 color = "green"
+                states = set((observed or {}).get(h, {}).values())
+                if "charging" in states:
+                    # Physical truth (any hour, live): it really charged.
+                    hours[str(h)] = "green"
+                    continue
+                if "discharging" in states:
+                    # Charge window vetoed + fall-through: the battery
+                    # actually served the loads -- orange, not the
+                    # olive "held" half-truth.
+                    hours[str(h)] = "orange"
+                    continue
                 if verdicts is not None:
                     known = [verdicts.get("%d:%d" % (h, q))
                              for q in range(4)]
