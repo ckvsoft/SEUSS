@@ -33,6 +33,7 @@ from datetime import date, datetime, timedelta
 from core.log import CustomLogger
 from core.statsmanager import StatsManager
 from core.timeutilities import TimeUtilities
+from core.griddemand import GridDemandTracker
 
 class PowerDataHandler:
     def __init__(self):
@@ -328,6 +329,9 @@ class PowerConsumptionBase:
         self.ws_server = None
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
+        # Grid demand tracker (Leistungspreis): measures the monthly
+        # 15-min peak from the measured grid import, read-only.
+        self.grid_demand = GridDemandTracker(self.statsmanager)
         self.running = False
         self.last_minute = None
         self.last_value = None  # Last power value in watts
@@ -992,6 +996,14 @@ class PowerConsumptionBase:
             self.last_battery_value = battery_power or 0
             self.last_time = timestamp
             return
+
+        # Grid demand tracker (Leistungspreis): feed the PREVIOUS
+        # sample's grid import (import side only) so the integration
+        # matches the Wh computation below. Read-only measurement.
+        try:
+            self.grid_demand.feed(max(0.0, self.last_grid_value), timestamp)
+        except Exception as e:
+            self.logger.log.debug(f"grid demand feed failed: {e}")
 
         # Compute the Wh consumption for this period
         wh = (self.last_value * time_diff)

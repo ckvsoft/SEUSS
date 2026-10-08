@@ -657,6 +657,15 @@ class SEUSS:
                 "price_above_eur_kw_year": getattr(
                     self.config, "grid_demand_price_above_eur_kw_year", 0.0),
             }
+            # Measured demand (running quarter average, monthly peak)
+            # from the powerconsumption tracker.
+            try:
+                pc = self.power_consumption_manager.get_instance()
+                tracker = getattr(pc, "grid_demand", None)
+                if tracker is not None:
+                    grid_demand.update(tracker.get_status())
+            except Exception:
+                pass
 
         payload = {
             "state": state,
