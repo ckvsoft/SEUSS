@@ -41,6 +41,7 @@ import core.version as version
 from core.config import Config
 from core.logreader import LogReader
 from core.log import CustomLogger
+from core.gridtariff import GridTariff
 from spotmarket.abstract_classes.itemlist import Itemlist
 
 class SEUSSWeb:
@@ -368,6 +369,11 @@ class SEUSSWeb:
             self.market_items.get_current_list()
         )
 
+        # SNAP/WiNAP discount windows per hour (list of 24; "" when the
+        # grid tariff is off). Lets external displays mark the zones.
+        zone_today = [z or "" for z in self._zone_hours(self._target_date(False))]
+        zone_tomorrow = [z or "" for z in self._zone_hours(self._target_date(True))]
+
         # Cheap-block detection: mirrored from core/conditions.py so the
         # API answer matches what SEUSS itself would decide right now.
         in_charge_block = False
@@ -450,6 +456,8 @@ class SEUSSWeb:
             "prices_tomorrow": {str(h): v for h, v in sorted(next_data.items())},
             "colors_today": colors_today,
             "colors_tomorrow": colors_tomorrow,
+            "zone_today": zone_today,
+            "zone_tomorrow": zone_tomorrow,
             "market": getattr(self.market_items, "current_market_name", None),
             "timestamp": datetime.now().astimezone().isoformat(),
         })
@@ -2118,6 +2126,36 @@ class SEUSSWeb:
             f'style="border: 1px solid #ccc; margin: 25px;">'
         )
 
+        # SNAP/WiNAP zone overlay: a soft tint behind the bars for every
+        # hour inside a discounted grid-fee window (WiNAP winter night,
+        # SNAP summer midday) + a thin top strip + the zone label at the
+        # start of each contiguous run. Drawn FIRST so bars and lines
+        # render on top. Empty when the grid tariff is off.
+        target_date = self._target_date(tomorrow)
+        zone_hours = self._zone_hours(target_date)
+        zone_fill = {"winap": "rgba(125, 170, 255, 0.14)",
+                     "snap": "rgba(255, 205, 110, 0.14)"}
+        zone_strip = {"winap": "#7d9dff", "snap": "#ffc76e"}
+        for hour, zone in enumerate(zone_hours):
+            if not zone:
+                continue
+            x = hour * width
+            svg += (
+                f'<rect x="{x}" y="0" width="{width}" '
+                f'height="{baseline_y}" fill="{zone_fill[zone]}" '
+                f'stroke="none"/>'
+                f'<rect x="{x}" y="0" width="{width}" height="4" '
+                f'fill="{zone_strip[zone]}" stroke="none"/>'
+            )
+        for hour, zone in enumerate(zone_hours):
+            if not zone:
+                continue
+            if hour == 0 or zone_hours[hour - 1] != zone:
+                svg += (
+                    f'<text x="{hour * width + 3}" y="16" font-size="9" '
+                    f'fill="{zone_strip[zone]}">{zone.upper()}</text>'
+                )
+
         # Average price line (magenta)
         average_price_today, average_price_tomorrow = (
             self.market_items.get_average_price_by_date(True)
@@ -2500,6 +2538,29 @@ class SEUSSWeb:
             d = d + timedelta(days=1)
         return d
 
+    def _zone_hours(self, target_date):
+        """
+        Per-hour SNAP/WiNAP window for a local date: a list of 24
+        entries, each None (no discount), "snap" or "winap". Gated on
+        the grid-tariff master switch -- with the feature off there is
+        no overlay and no zone info anywhere.
+        """
+        if not bool(getattr(self.config, "grid_tariff_enabled", False)):
+            return [None] * 24
+        snap = bool(getattr(self.config, "grid_zone_snap_enabled", True))
+        winap = bool(getattr(self.config, "grid_zone_winap_enabled", True))
+        from datetime import time as _time
+        out = []
+        for hour in range(24):
+            d = datetime.combine(target_date, _time(hour=hour))
+            if GridTariff.zone_active(d, snap_enabled=snap,
+                                      winap_enabled=winap):
+                out.append("winap" if d.month in GridTariff.WINTER_MONTHS
+                           else "snap")
+            else:
+                out.append(None)
+        return out
+
     @staticmethod
     def _collect_quarter_keys(blocks, target_date):
         """
@@ -2635,9 +2696,20 @@ class SEUSSWeb:
             self.market_items.get_average_price_by_date(True)
         )
 
+        # Zone swatches reserve one row each when the grid tariff is on.
+        zone_rows = sum(
+            1 for enabled in (
+                bool(getattr(self.config, "grid_tariff_enabled", False)
+                     and getattr(self.config, "grid_zone_winap_enabled", True)),
+                bool(getattr(self.config, "grid_tariff_enabled", False)
+                     and getattr(self.config, "grid_zone_snap_enabled", True)),
+            ) if enabled
+        )
+        legend_height = 280 + 28 * zone_rows
+
         # Legend dimensions: enough room for 7 entries + market line.
         legend_svg = (
-            '<svg width="280" height="280" '
+            f'<svg width="280" height="{legend_height}" '
             'xmlns="http://www.w3.org/2000/svg" '
             'style="border: 1px solid #ccc; margin-top: 18px;">'
         )
@@ -2716,6 +2788,29 @@ class SEUSSWeb:
             f'{ceiling_label} ({self._effective_price_ceiling()})</text>'
         )
 
+        # SNAP/WiNAP zone swatches (only with the grid tariff on).
+        # The label reuses the strip colours of the chart overlay.
+        if getattr(self.config, "grid_tariff_enabled", False):
+            zone_row = 0
+            for name, color, label in (
+                ("winap", "#7d9dff", "WiNAP (Oct-Mar, 22-04)"),
+                ("snap", "#ffc76e", "SNAP (Apr-Sep, 10-16)"),
+            ):
+                enabled = bool(getattr(
+                    self.config,
+                    "grid_zone_winap_enabled" if name == "winap"
+                    else "grid_zone_snap_enabled", True))
+                if not enabled:
+                    continue
+                y = 248 + 28 * zone_row
+                zone_row += 1
+                legend_svg += (
+                    f'<rect x="10" y="{y}" width="20" height="4" '
+                    f'fill="{color}" stroke="#000" stroke-width="1"/>'
+                    f'<text x="40" y="{y + 12}" font-size="12" '
+                    f'class="chart-text">{label}</text>'
+                )
+
         # Active market data source (RAM attributes of the itemlist --
         # shows which feed the chart data came from).
         try:
@@ -2727,8 +2822,9 @@ class SEUSSWeb:
             market_line = None
         if market_line:
             legend_svg += (
-                '<text x="10" y="258" font-size="12" '
+                '<text x="10" y="%d" font-size="12" '
                 f'class="chart-text">{market_line}</text>'
+                % (258 + 28 * zone_rows)
             )
 
         legend_svg += "</svg>"
