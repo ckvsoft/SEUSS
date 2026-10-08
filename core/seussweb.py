@@ -2126,35 +2126,8 @@ class SEUSSWeb:
             f'style="border: 1px solid #ccc; margin: 25px;">'
         )
 
-        # SNAP/WiNAP zone overlay: a soft tint behind the bars for every
-        # hour inside a discounted grid-fee window (WiNAP winter night,
-        # SNAP summer midday) + a thin top strip + the zone label at the
-        # start of each contiguous run. Drawn FIRST so bars and lines
-        # render on top. Empty when the grid tariff is off.
-        target_date = self._target_date(tomorrow)
-        zone_hours = self._zone_hours(target_date)
-        zone_fill = {"winap": "rgba(125, 170, 255, 0.14)",
-                     "snap": "rgba(255, 205, 110, 0.14)"}
-        zone_strip = {"winap": "#7d9dff", "snap": "#ffc76e"}
-        for hour, zone in enumerate(zone_hours):
-            if not zone:
-                continue
-            x = hour * width
-            svg += (
-                f'<rect x="{x}" y="0" width="{width}" '
-                f'height="{baseline_y}" fill="{zone_fill[zone]}" '
-                f'stroke="none"/>'
-                f'<rect x="{x}" y="0" width="{width}" height="4" '
-                f'fill="{zone_strip[zone]}" stroke="none"/>'
-            )
-        for hour, zone in enumerate(zone_hours):
-            if not zone:
-                continue
-            if hour == 0 or zone_hours[hour - 1] != zone:
-                svg += (
-                    f'<text x="{hour * width + 3}" y="16" font-size="9" '
-                    f'fill="{zone_strip[zone]}">{zone.upper()}</text>'
-                )
+        # SNAP/WiNAP overlay is drawn AFTER the bars (on top of them) --
+        # see the end of this method.
 
         # Average price line (magenta)
         average_price_today, average_price_tomorrow = (
@@ -2495,6 +2468,9 @@ class SEUSSWeb:
                         f'fill="{dominant_color}">{label_price}</text>'
                     )
 
+        # SNAP/WiNAP overlay drawn ON TOP of the bars (see the helper).
+        svg += self._zone_overlay_svg(target_date, width, baseline_y)
+
         # Hard-cap line (blue). In the "economic" strategy this is the
         # outlier ceiling -- the real decision threshold (marginal
         # displaced price) is dynamic and exposed via /api/battery.
@@ -2559,6 +2535,49 @@ class SEUSSWeb:
                            else "snap")
             else:
                 out.append(None)
+        return out
+
+    def _zone_overlay_svg(self, target_date, width, baseline_y):
+        """
+        SNAP/WiNAP overlay drawn ON TOP of the bars: a translucent
+        FILLED AREA spanning the plot height for every hour inside a
+        discounted grid-fee window (WiNAP winter night, SNAP summer
+        midday), plus a thin solid strip and a label at the start of
+        each contiguous run.
+
+        Uses fill="rgb(...)" + fill-opacity (NOT rgba() in the fill
+        attribute, which some SVG renderers silently skip -- that made
+        an earlier version show only the strip). Empty string when the
+        grid tariff is off or no hour is in a window.
+        """
+        zone_hours = self._zone_hours(target_date)
+        if not any(zone_hours):
+            return ""
+        area = {"winap": "rgb(125, 170, 255)", "snap": "rgb(255, 205, 110)"}
+        strip = {"winap": "#7d9dff", "snap": "#ffc76e"}
+        out = ""
+        for hour, zone in enumerate(zone_hours):
+            if not zone:
+                continue
+            x = hour * width
+            out += (
+                f'<rect x="{x}" y="0" width="{width}" '
+                f'height="{baseline_y}" fill="{area[zone]}" '
+                f'fill-opacity="0.15" stroke="none"/>'
+            )
+        for hour, zone in enumerate(zone_hours):
+            if not zone:
+                continue
+            x = hour * width
+            out += (
+                f'<rect x="{x}" y="0" width="{width}" height="4" '
+                f'fill="{strip[zone]}" stroke="none"/>'
+            )
+            if hour == 0 or zone_hours[hour - 1] != zone:
+                out += (
+                    f'<text x="{x + 3}" y="16" font-size="9" '
+                    f'fill="{strip[zone]}">{zone.upper()}</text>'
+                )
         return out
 
     @staticmethod
