@@ -57,6 +57,11 @@ class Config(Singleton):
         # Tariff / price-feed resolution
         # ------------------------------------------------------------------
         "tariff_resolution": "hourly",
+        # VAT (Umsatzsteuer) in percent, applied as a single multiplier on
+        # the FINAL net total (spot + all fees + grid fee). 0 (default) =
+        # off -> prices exclude tax (historical behaviour). 20 = Austrian
+        # standard rate -> every displayed/compared price is gross.
+        "vat_percent": 0.0,
         # ------------------------------------------------------------------
         # Charging-strategy constants (both modes). The strategy switch
         # and the cap/limit knobs live in the prices block below; these
@@ -415,6 +420,8 @@ class Config(Singleton):
             self.time_zone = "Europe/Vienna"
             self.use_second_day = False
             self.tariff_resolution = "hourly"
+            # VAT multiplier (0 = off). Real value read by load_config.
+            self.vat_percent = 0.0
             # Top-level boolean flags. Defaults are duplicated in
             # DEFAULT_CONFIG_TEMPLATE; the load_config loop reads them
             # from the actual config.json on startup.
@@ -584,6 +591,13 @@ class Config(Singleton):
         # Clamp the efficiency to a sane band. Below 0.5 no battery is
         # that bad; above 1.0 would mean creating energy.
         self.round_trip_efficiency = max(0.5, min(1.0, self.round_trip_efficiency))
+
+        # VAT percent: type-safe, clamped to [0, 100]. 0 = off.
+        try:
+            self.vat_percent = float(config_data.get("vat_percent", 0.0))
+        except (TypeError, ValueError):
+            self.vat_percent = 0.0
+        self.vat_percent = max(0.0, min(100.0, self.vat_percent))
 
         # Solar adjustment-factor tunables -- top-level, with type-safe
         # fallback to the in-memory default if the config value is bogus.

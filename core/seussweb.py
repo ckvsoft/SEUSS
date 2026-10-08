@@ -2492,19 +2492,28 @@ class SEUSSWeb:
             grid_ct = float(getattr(self.config, "grid_work_price_ct", 0.0) or 0.0)
         except (TypeError, ValueError):
             grid_ct = 0.0
+        try:
+            vat = float(getattr(self.config, "vat_percent", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            vat = 0.0
         # Only show the grid fee separately when it is actually auto-added
         # (i.e. not already placed via the {grid_fee} token in the fee).
         grid_auto = grid_enabled and grid_ct > 0 and "{grid_fee}" not in (self.fee or "")
-        if formula_parts or grid_auto:
+        if formula_parts or grid_auto or vat > 0:
             if grid_auto:
                 formula_parts.append(f"grid fee {grid_ct:g} (SNAP/WiNAP discounted)")
-            formula = " + ".join(formula_parts)
+            formula = " + ".join(formula_parts) or "0"
+            if vat > 0:
+                tax_note = "Prices INCLUDE tax and fees."
+                formula_expr = f"(Base price + {formula}) x {1 + vat / 100:.2f}"
+            else:
+                tax_note = "Prices exclude tax and include fees."
+                formula_expr = f"Base price + {formula}"
             x_center = width * 12
             svg += (
                 f'<text x="{x_center}" y="{svg_height - 15}" '
                 f'text-anchor="middle" font-size="12" fill="yellow">'
-                f'"Prices exclude tax and include fees. Formula: '
-                f'Final price = Base price + {formula}"</text>'
+                f'"{tax_note} Formula: Final price = {formula_expr}"</text>'
             )
 
         svg += "</svg>"

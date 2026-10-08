@@ -48,7 +48,20 @@ class Item:
         fee = Utils.calculate_fee(self.price, fee_str)
         if not explicit_grid_fee:
             fee += GridTariff.auto_fee_millicents(self.starttime)
-        self.price += fee
+        # VAT (Umsatzsteuer) as a single multiplier on the FINAL net total
+        # (spot + all fees + grid fee): VAT always applies to the net sum
+        # and scales everything equally, so it must come last. vat_percent
+        # 0 (default) = off -> the historical tax-exclusive price.
+        try:
+            from core.config import Config
+            vat = float(getattr(Config(), "vat_percent", 0.0) or 0.0)
+        except Exception:
+            vat = 0.0
+        net = self.price + fee
+        if vat > 0.0:
+            self.price = int(round(net * (1.0 + vat / 100.0)))
+        else:
+            self.price = net
         self.logger = CustomLogger()
 
     def is_expired(self, check_time=False):
