@@ -266,6 +266,12 @@ document.addEventListener('DOMContentLoaded', function () {
         sendeFormular(formData).then(function () {
             console.log('Formular wurde erfolgreich gesendet und Server ist wieder online.');
             showNotification('Formular wurde erfolgreich gesendet und Server ist wieder online.', 'green');
+            // Neu laden, damit die Seite den GESPEICHERTEN Zustand zeigt:
+            // der Strategie-Toggle (cap <-> economic) blendet z. B. die
+            // cap-only-Regeln erst nach dem Reload zuverlaessig aus/ein
+            // (der Live-Toggle unten deckt das Umschalten im Dropdown ab,
+            // das Speichern selbst hat bisher nie neu geladen).
+            setTimeout(function () { location.reload(); }, 1500);
         }).catch(function (error) {
             console.error('Fehler beim Server-Vorgang:', error);
             showNotification('Es ist ein Fehler aufgetreten. Bitte versuche es erneut.', 'red');

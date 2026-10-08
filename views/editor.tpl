@@ -348,6 +348,7 @@
                 }
             }
             strat.addEventListener('change', apply);
+            strat.addEventListener('input', apply);
             apply();
         })();
     </script>
