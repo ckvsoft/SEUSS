@@ -63,7 +63,7 @@ function addConfigEntry(paramName) {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                // Hier kannst du die aktualisierte Konfiguration verwenden
+                // Use the updated configuration here
                 console.log('Updated Configuration:', data.config);
                 config = data.config
                 showNotification('Entry added successfully', 'green');
@@ -250,7 +250,7 @@ document.addEventListener('DOMContentLoaded', function () {
             // Use the selected section name here
             console.log('Selected section:', selectedSection);
 
-            // Hier rufen Sie die Funktion addConfigEntry auf
+            // Call the addConfigEntry function
             var paramName = selectedSection;  // use the selected section as paramName
             addConfigEntry(paramName);
         } else {
@@ -258,7 +258,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
-    document.getElementById('configForm').addEventListener('submit', function (event) {
+    document.getElementById('meinFormular').addEventListener('submit', function (event) {
         event.preventDefault();
 
         var formData = new FormData(event.target);
@@ -312,7 +312,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (status === 'OK') {
                     // Wenn der Status "OK" ist, zeige die grüne Benachrichtigung an
                     showNotification('Configuration saved and server is back online.', 'green');
-                    // Hier kannst du responseData verwenden
+                    // Use responseData here
                     console.log('Serverantwort:', responseData);
                 } else {
                     // Wenn der Status nicht "OK" ist, warte erneut und überprüfe erneut

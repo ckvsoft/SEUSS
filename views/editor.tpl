@@ -11,24 +11,9 @@
 
 <body>
     % include('header', title='Config Editor')
-            <form id="configForm" class="editor-form" autocomplete="off">
-    <div class="editor-wrap">
-        <div class="editor-toolbar">
-            <label for="selectedSection">Select Section:</label>
-            <select id="selectedSection" name="selectedSection">
-                <option value="ess_unit">Ess Unit</option>
-                <option value="markets">Markets</option>
-                <option value="pv_panels">Pv Panels</option>
-                <option value="smart_switches">Smart Switches</option>
-                <option value="solar_forecast_providers">Solar Forecast Providers</option>
-            </select>
-            <button id="sendSectionButton" type="button">Send Section</button>
-            <input type="submit" value="Save Configuration">
-        </div>
-
-        <div class="editor-grid">
-        <fieldset>
-            <legend>General</legend>
+            <form id="meinFormular" autocomplete="off">
+    <div class="container">
+        <div class="left">
                 <%
                 # Top-level keys that get their own grouped fieldset
                 # below; the generic loop should skip them.
@@ -144,8 +129,6 @@
                         % end
                     % end
                 % end
-
-                </fieldset>
 
                 <fieldset>
                     <legend>Solar Forecast</legend>
@@ -314,12 +297,24 @@
                 % end
         </div>
 
-        <div class="editor-sections">
-            <div id="sectionFields_ess_unit" style="display: none;"></div>
-            <div id="sectionFields_markets" style="display: none;"></div>
-            <div id="sectionFields_pv_panels" style="display: none;"></div>
-            <div id="sectionFields_smart_switches" style="display: none;"></div>
-            <div id="sectionFields_solar_forecast_providers" style="display: none;"></div>
+        <div class="right">
+                <label class="tooltip" for="selectedSection">Select Section:</label>
+                <select id="selectedSection" name="selectedSection">
+                    <option value="ess_unit">Ess Unit</option>
+                    <option value="markets">Markets</option>
+                    <option value="pv_panels">Pv Panels</option>
+                    <option value="smart_switches">Smart Switches</option>
+                    <option value="solar_forecast_providers">Solar Forecast Providers</option>
+                </select>
+
+                <button id="sendSectionButton" type="button">Send Section</button>
+                <div id="sectionFields_ess_unit" style="display: none;"></div>
+                <div id="sectionFields_markets" style="display: none;"></div>
+                <div id="sectionFields_pv_panels" style="display: none;"></div>
+                <div id="sectionFields_smart_switches" style="display: none;"></div>
+                <div id="sectionFields_solar_forecast_providers" style="display: none;"></div>
+
+                <input type="submit" value="Save Configuration">
         </div>
     </div>
             </form>
