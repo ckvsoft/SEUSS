@@ -63,6 +63,23 @@
                     </div>
                 </div>
             </div>
+            % if grid_tariff_enabled:
+            <div id="grid-demand-panel">
+                <h1>Grid Demand (15 min)</h1>
+                <div class="realtime-left">
+                    <div id="gdQuarter">This quarter: - kW</div>
+                    <div id="gdRemaining">Next quarter in: -</div>
+                    <div id="gdPeak">Month peak: - kW</div>
+                    <div id="gdLimit">Limit: - kW</div>
+                </div>
+                <div class="feedin-note">
+                    The highest 15-minute average grid import of the month
+                    drives the demand charge. SEUSS caps it at the limit;
+                    this is SEUSS's own measurement (the utility meter is
+                    authoritative). Refreshed every few seconds.
+                </div>
+            </div>
+            % end
             <div id="feedin-panel">
                 <h1>Grid Setpoint (manual)</h1>
                 <div class="feedin-row">
@@ -353,6 +370,42 @@
                 clearTimeout(feedinTimer);
                 feedinTimer = setTimeout(sendFeedin, 400);
             });
+        }
+
+        // Grid demand display (Leistungspreis demand charge): poll the
+        // RAM-only /api/battery snapshot every 5 s and show the running
+        // 15-minute quarter average, the monthly peak and the limit.
+        function gdFmtKw(w) {
+            if (w === null || w === undefined || isNaN(w)) return "-";
+            return (w / 1000).toFixed(2) + " kW";
+        }
+        function updateGridDemand() {
+            var panel = document.getElementById('grid-demand-panel');
+            if (!panel) return;
+            fetch('/api/battery')
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    var gd = d && d.grid_demand;
+                    if (!gd) { panel.style.display = 'none'; return; }
+                    panel.style.display = '';
+                    var q = document.getElementById('gdQuarter');
+                    if (q) q.textContent = 'This quarter: ' + gdFmtKw(gd.quarter_avg_w);
+                    var rem = document.getElementById('gdRemaining');
+                    if (rem && gd.quarter_remaining_s != null) {
+                        var s = Math.max(0, parseInt(gd.quarter_remaining_s, 10));
+                        rem.textContent = 'Next quarter in: ' +
+                            Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+                    }
+                    var pk = document.getElementById('gdPeak');
+                    if (pk) pk.textContent = 'Month peak: ' + gdFmtKw(gd.month_peak_w);
+                    var lim = document.getElementById('gdLimit');
+                    if (lim) lim.textContent = 'Limit: ' + gdFmtKw(gd.hard_limit_w);
+                })
+                .catch(function () { /* keep last values */ });
+        }
+        if (document.getElementById('grid-demand-panel')) {
+            setInterval(updateGridDemand, 5000);
+            updateGridDemand();
         }
 
         // Initialize WebSocket connection

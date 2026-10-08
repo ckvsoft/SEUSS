@@ -727,7 +727,9 @@ class SEUSSWeb:
 
         return template('index', chart_svg=chart_svg, legend_svg=legend_svg, next_chart_svg=next_chart_svg,
                         version=version.__version__, root=self.view_path,
-                        feedin_max=feedin_max)
+                        feedin_max=feedin_max,
+                        grid_tariff_enabled=bool(getattr(
+                            self.config, "grid_tariff_enabled", False)))
 
     def logview(self):
         reader = LogReader()
