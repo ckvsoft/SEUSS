@@ -465,6 +465,10 @@ class SEUSS:
             self.logger.log.debug(
                 f"manual overlay guard refresh failed: {e}")
 
+        # Grid demand limiter (Leistungspreis): push the current limit /
+        # charge cap / shaving permission into the setpoint keeper.
+        self._apply_demand_control(essunit)
+
         # Expose the current decision + battery state to the web layer
         # (/api/battery for external consumers like the thermostat).
         self._publish_ess_state(
@@ -626,6 +630,34 @@ class SEUSS:
             except Exception:
                 economic_projection = None
 
+        # Grid tariff (Leistungspreis) control state: config values plus
+        # the shaving flag the keeper is actually running with (the SOC
+        # floor was folded in this cycle). The measured quarter average /
+        # monthly peak are added by the keeper's demand tracker.
+        grid_demand = None
+        if getattr(self.config, "grid_tariff_enabled", False):
+            shaving = False
+            try:
+                if essunit is not None and \
+                        hasattr(essunit, "get_demand_control"):
+                    _, _, shaving = essunit.get_demand_control()
+            except Exception:
+                shaving = False
+            grid_demand = {
+                "enabled": True,
+                "hard_limit_w": getattr(
+                    self.config, "grid_demand_peak_limit_w", 0.0),
+                "charge_target_w": getattr(
+                    self.config, "grid_demand_peak_target_w", 0.0),
+                "shaving": bool(shaving),
+                "threshold_w": getattr(
+                    self.config, "grid_demand_threshold_w", 0.0),
+                "price_below_eur_kw_year": getattr(
+                    self.config, "grid_demand_price_below_eur_kw_year", 0.0),
+                "price_above_eur_kw_year": getattr(
+                    self.config, "grid_demand_price_above_eur_kw_year", 0.0),
+            }
+
         payload = {
             "state": state,
             "charge_condition": charge_result.condition,
@@ -646,6 +678,7 @@ class SEUSS:
             "economic": economic,
             "economic_projection": economic_projection,
             "manual_feedin": manual_feedin,
+            "grid_demand": grid_demand,
             "timestamp": TimeUtilities.get_now().isoformat(),
         }
         try:
@@ -803,6 +836,63 @@ class SEUSS:
             return bool(info.get("only_observation", False))
         except Exception:
             return False
+
+    def _apply_demand_control(self, essunit):
+        """
+        Push the grid demand limiter (Leistungspreis) into the setpoint
+        keeper each cycle. The hard ceiling and soft charge cap are pure
+        config; the SHAVING permission folds the SOC floor in HERE because
+        the keeper has no SOC reading. Observation mode writes nothing.
+        """
+        if essunit is None or not hasattr(essunit, "set_demand_control"):
+            return
+        enabled = bool(getattr(self.config, "grid_tariff_enabled", False))
+        if not enabled:
+            if not self._is_observation_mode(essunit):
+                try:
+                    essunit.set_demand_control(0.0, 0.0, False)
+                except Exception as e:
+                    self.logger.log.debug(
+                        f"demand control reset failed: {e}")
+            return
+        try:
+            hard = float(getattr(
+                self.config, "grid_demand_peak_limit_w", 0.0) or 0.0)
+            target = float(getattr(
+                self.config, "grid_demand_peak_target_w", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            hard, target = 0.0, 0.0
+        shaving = bool(getattr(self.config, "grid_demand_peak_shaving", False))
+        if shaving:
+            try:
+                floor = float(getattr(
+                    self.config,
+                    "grid_demand_peak_shaving_min_soc_percent", 30.0))
+            except (TypeError, ValueError):
+                floor = 30.0
+            try:
+                soc = essunit.get_soc()
+            except Exception:
+                soc = None
+            # Protect the pack: no forced discharge at/below the floor,
+            # and none when SOC is unknown (degraded data).
+            if soc is None:
+                shaving = False
+            else:
+                try:
+                    shaving = float(soc) > floor
+                except (TypeError, ValueError):
+                    shaving = False
+        if self._is_observation_mode(essunit):
+            self.logger.log.info(
+                f"[OBSERVATION] Would set grid demand control "
+                f"(limit {hard:.0f} W, charge-cap {target:.0f} W, "
+                f"shaving {'on' if shaving else 'off'})")
+            return
+        try:
+            essunit.set_demand_control(hard, target, shaving)
+        except Exception as e:
+            self.logger.log.warning(f"Grid demand control failed: {e}")
 
     def _apply_charge(self, essunit, state):
         if essunit is None:

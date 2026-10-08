@@ -58,6 +58,14 @@ Modes (effective per tick):
                                    modes while active.
   NONE    hands-off/startup     -> silent; decay -> neutral
 
+Grid demand limiter (Leistungspreis): when enabled by the evaluation
+cycle (set_demand_control), the CHARGE target is throttled so grid
+charging never adds beyond a cap, and (with shaving) the HOLD/CHARGE
+target is clamped to the hard limit so the internal loop discharges an
+over-limit house load. The monthly maximum 15-min average therefore
+never exceeds the hard limit unless the pack has no headroom (the SOC
+floor is folded in cycle-side).
+
 Load/PV per tick from the GX MQTT feed (last known values; new data
 refreshes them, stale >120 s only WARNs and pins the last values --
 zeros would actively drain the pack in HOLD). All internal safety
@@ -164,6 +172,14 @@ class SetpointKeeper:
         # > 0 -> feed that many watts into the grid.
         self._manual_active = False
         self._manual_feedin_w = 0.0
+        # Grid demand limiter (Leistungspreis). Zeroed/off by default;
+        # the evaluation cycle pushes fresh values every tick via
+        # set_demand_control(). hard = absolute import ceiling (W),
+        # charge = soft charge cap (W, 0 = off), shaving = allow battery
+        # discharge to shave an over-limit house load.
+        self._demand_hard_w = 0.0
+        self._demand_charge_w = 0.0
+        self._demand_shaving = False
         self._terminating = False
         self._wake = threading.Event()
 
@@ -261,6 +277,52 @@ class SetpointKeeper:
         with self._state_lock:
             return (self._manual_active, self._manual_feedin_w)
 
+    def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
+                           shaving=False):
+        """
+        Grid demand limiter (Leistungspreis). Pushed by the evaluation
+        cycle each tick (the keeper is a process singleton and does NOT
+        re-read config):
+
+          hard_limit_w    absolute grid-import ceiling in W. 0 = off.
+                          Applied to CHARGE (own contribution) and, when
+                          shaving is on, to HOLD (forces battery discharge
+                          of the house-load excess). The monthly maximum
+                          15-min average can therefore never exceed it
+                          (unless the pack has no headroom).
+          charge_target_w soft charge cap in W (0 = off): the CHARGE
+                          target is throttled to this so grid-charging
+                          plus the house load stays at/below it. Purely
+                          additive-by-us; never forces discharge.
+          shaving         allow the battery to discharge to keep the
+                          grid import <= hard_limit_w in HOLD/CHARGE.
+                          The cycle already folded the SOC floor in.
+        """
+        try:
+            hard = max(0.0, float(hard_limit_w or 0.0))
+            charge = max(0.0, float(charge_target_w or 0.0))
+        except (TypeError, ValueError):
+            hard, charge = 0.0, 0.0
+        with self._state_lock:
+            changed = (abs(hard - self._demand_hard_w) > 0.5
+                       or abs(charge - self._demand_charge_w) > 0.5
+                       or bool(shaving) != self._demand_shaving)
+            self._demand_hard_w = hard
+            self._demand_charge_w = charge
+            self._demand_shaving = bool(shaving)
+        if changed:
+            self.logger.log.info(
+                f"Grid demand control: limit {hard:.0f} W, "
+                f"charge-cap {charge:.0f} W, "
+                f"shaving {'on' if shaving else 'off'}.")
+            self._wake.set()
+
+    def get_demand_control(self):
+        """(hard_limit_w, charge_target_w, shaving) currently applied."""
+        with self._state_lock:
+            return (self._demand_hard_w, self._demand_charge_w,
+                    self._demand_shaving)
+
     def update_manual_guard(self, allowed, reason=""):
         """
         Guard refresh from the evaluation cycle (price/SOC floors).
@@ -306,6 +368,9 @@ class SetpointKeeper:
                 charge_open = self._charge_open
                 power = self._charge_power_w
                 discharge = self._discharge_wanted
+                demand_hard = self._demand_hard_w
+                demand_charge = self._demand_charge_w
+                demand_shaving = self._demand_shaving
 
             if hands_off:
                 mode = MODE_NONE
@@ -331,7 +396,14 @@ class SetpointKeeper:
             elif mode == MODE_CHARGE:
                 house = self._sum(self._consumption_topics, "consumption")
                 pv = self._sum(self._pv_topics, "pv")
-                target = max(0.0, power + house - pv)
+                base = max(0.0, house - pv)
+                # Grid demand cap (Leistungspreis). The effective charge
+                # cap is the smaller of the hard ceiling and the soft
+                # charge target (0 = not set). We add AT MOST up to the
+                # cap on top of the house load -- we never force discharge
+                # here; that is the shaving clamp below.
+                target = self._demand_charge_target(
+                    base, power, demand_hard, demand_charge)
             elif mode == MODE_FREE:
                 # FREE mirrors the persisted grid setpoint (a SETTING);
                 # unknown -> silent (decay falls back to the same one).
@@ -345,12 +417,44 @@ class SetpointKeeper:
                 pv = self._sum(self._pv_topics, "pv")
                 target = max(0.0, house - pv)
 
+            # Peak-shaving: when the battery may shave and the load alone
+            # would push the grid import over the hard limit, lower the
+            # target so the internal loop discharges the excess. Only the
+            # import side is touched (min), never a feed-in command.
+            if (demand_shaving and demand_hard > 0
+                    and target is not None
+                    and mode in (MODE_CHARGE, MODE_HOLD)):
+                target = min(target, demand_hard)
+
             if mode != MODE_NONE:
                 self._keep_alive()
                 self._publish(self._write_topic, target)
 
             self._wake.clear()
             self._wake.wait(self.refresh_s)
+
+    @staticmethod
+    def _demand_charge_target(base_w, power_w, hard_w, charge_cap_w):
+        """
+        Grid-import target (W) for CHARGE mode under the demand cap.
+
+          base_w   house load minus PV (what the grid would serve idle)
+          power_w  the commanded charge power (32000, self-regulating)
+          hard_w   absolute import ceiling (0 = off)
+          charge_cap_w soft charge cap (0 = off)
+
+        The effective cap is min(hard, soft). We add at most (cap - base)
+        of charge on top of the house load, so the target never exceeds
+        the cap through our own charging and we never force discharge
+        (when base > cap the target stays at base -- the shaving clamp in
+        _run handles the over-limit case separately).
+        """
+        cap = hard_w if hard_w > 0 else float("inf")
+        if charge_cap_w > 0:
+            cap = min(cap, charge_cap_w)
+        if cap == float("inf"):
+            return base_w + power_w
+        return base_w + min(power_w, max(0.0, cap - base_w))
 
     def _sum(self, topics, what):
         """Sum of the last known phase values. On staleness the last

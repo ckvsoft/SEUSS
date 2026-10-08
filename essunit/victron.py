@@ -311,6 +311,29 @@ class Victron(ESSUnit):
             except Exception:
                 pass
 
+    def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
+                           shaving=False):
+        """
+        Grid demand limiter (Leistungspreis) -> SetpointKeeper. hub4
+        setpoint path only: the classic register backend does not own the
+        grid import setpoint, so the demand cap cannot be enforced there.
+        Returns True when the values reached the keeper.
+        """
+        if self.hub4_available():
+            self._keeper().set_demand_control(
+                hard_limit_w, charge_target_w, shaving)
+            return True
+        return False
+
+    def get_demand_control(self):
+        """(hard_limit_w, charge_target_w, shaving) from the keeper."""
+        if self.hub4_available():
+            try:
+                return self._keeper().get_demand_control()
+            except Exception:
+                return (0.0, 0.0, False)
+        return (0.0, 0.0, False)
+
     def set_discharge(self, status):
         try:
             status_enum = ESSStatus(status.lower())

@@ -155,6 +155,47 @@ class Config(Singleton):
         "feedin_max_w": 5000.0,
         "feedin_min_soc_percent": 25.0,
         # ------------------------------------------------------------------
+        # Grid tariff (Austrian Netzentgelt from ~2027)
+        # ------------------------------------------------------------------
+        # Master switch: the demand (Leistungspreis) limiter and the
+        # time-of-day grid fee (SNAP/WiNAP) are OPT-IN. Everything below
+        # is configurable because the regulation is still a draft and the
+        # grid operators keep moving the thresholds.
+        "grid_tariff_enabled": False,
+        # Hard ceiling for grid import (W). SEUSS keeps the grid setpoint
+        # at or below this in every mode (charge/HOLD). With peak-shaving
+        # on, the battery discharges the excess of an uncontrollable house
+        # load. The monthly maximum 15-min average can therefore never
+        # exceed this -- that's the whole "nie drueber" guarantee.
+        "grid_demand_peak_limit_w": 10000.0,
+        # Soft target (W) the CHARGE path aims for: grid-charging is
+        # throttled so charge + house stays at/below this. 0 disables the
+        # soft cap (the hard limit still applies). This is the "bonus
+        # under 5 kW" zone -- not a forced discharge.
+        "grid_demand_peak_target_w": 5000.0,
+        # Let the battery shave house peaks: when the load alone would
+        # exceed the limit, discharge the difference (only above the SOC
+        # floor below). Off = charge is still capped, but the battery is
+        # never forced to discharge for peak-shaving.
+        "grid_demand_peak_shaving": False,
+        # SOC floor (%) for peak-shaving discharge. At or below this the
+        # pack is protected and an over-limit load is allowed (logged).
+        "grid_demand_peak_shaving_min_soc_percent": 30.0,
+        # Two-tier demand-charge definition (informational + API cost
+        # estimate). Threshold (W) where the higher rate kicks in, and
+        # the two yearly prices (EUR per kW). Draft values only.
+        "grid_demand_threshold_w": 10000.0,
+        "grid_demand_price_below_eur_kw_year": 33.82,
+        "grid_demand_price_above_eur_kw_year": 67.64,
+        # Grid Arbeitspreis (Netznutzungsentgelt Arbeitspreis, ct/kWh)
+        # base value, zone discount (%) and the two Austrian low-price
+        # windows: SNAP (Apr-Sep, 10-16h) and WiNAP (Oct-Mar, 22-04h).
+        # Used via the {grid_fee} token in a market's fee expression.
+        "grid_work_price_ct": 0.0,
+        "grid_zone_discount_percent": 20.0,
+        "grid_zone_snap_enabled": True,
+        "grid_zone_winap_enabled": True,
+        # ------------------------------------------------------------------
         # Solar forecast adjustment
         # ------------------------------------------------------------------
         "use_solar_forecast_to_abort": False,
@@ -414,6 +455,20 @@ class Config(Singleton):
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
             self.solar_adj_max_daily_change = 0.20
+            # Grid tariff (Leistungspreis + SNAP/WiNAP). Defaults mirror
+            # DEFAULT_CONFIG_TEMPLATE; load_config reads the real values.
+            self.grid_tariff_enabled = False
+            self.grid_demand_peak_limit_w = 10000.0
+            self.grid_demand_peak_target_w = 5000.0
+            self.grid_demand_peak_shaving = False
+            self.grid_demand_peak_shaving_min_soc_percent = 30.0
+            self.grid_demand_threshold_w = 10000.0
+            self.grid_demand_price_below_eur_kw_year = 33.82
+            self.grid_demand_price_above_eur_kw_year = 67.64
+            self.grid_work_price_ct = 0.0
+            self.grid_zone_discount_percent = 20.0
+            self.grid_zone_snap_enabled = True
+            self.grid_zone_winap_enabled = True
             self.load_config()
             self.update_config_with_template()
 
@@ -486,6 +541,10 @@ class Config(Singleton):
             ("smart_discharge_priority_to_expensive_hours", False),
             ("delay_grid_charging_below_active_soc_limit", False),
             ("discharge_fallthrough_on_charge_veto", False),
+            ("grid_tariff_enabled", False),
+            ("grid_demand_peak_shaving", False),
+            ("grid_zone_snap_enabled", True),
+            ("grid_zone_winap_enabled", True),
         ):
             raw = config_data.get(attr, default)
             # Accept both real bools and the string "off"/"on" that the
@@ -592,6 +651,42 @@ class Config(Singleton):
             self.feedin_min_soc_percent = 25.0
         self.feedin_min_soc_percent = max(
             0.0, min(100.0, self.feedin_min_soc_percent))
+
+        # Grid tariff tunables -- type-safe like the solar_adj block, then
+        # clamped to sane bands. The regulation is a draft, so nothing is
+        # hardcoded: the user edits these when the grid operator moves the
+        # goalposts.
+        for attr, default in (
+            ("grid_demand_peak_limit_w", 10000.0),
+            ("grid_demand_peak_target_w", 5000.0),
+            ("grid_demand_peak_shaving_min_soc_percent", 30.0),
+            ("grid_demand_threshold_w", 10000.0),
+            ("grid_demand_price_below_eur_kw_year", 33.82),
+            ("grid_demand_price_above_eur_kw_year", 67.64),
+            ("grid_work_price_ct", 0.0),
+            ("grid_zone_discount_percent", 20.0),
+        ):
+            raw = config_data.get(attr, default)
+            try:
+                setattr(self, attr, float(raw))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
+        # Power limits in W: never negative; the hard limit may be 0
+        # (= no limit / feature inert).
+        self.grid_demand_peak_limit_w = max(0.0, self.grid_demand_peak_limit_w)
+        self.grid_demand_peak_target_w = max(0.0, self.grid_demand_peak_target_w)
+        self.grid_demand_threshold_w = max(0.0, self.grid_demand_threshold_w)
+        # SOC floor and discount in [0, 100].
+        self.grid_demand_peak_shaving_min_soc_percent = max(
+            0.0, min(100.0, self.grid_demand_peak_shaving_min_soc_percent))
+        self.grid_zone_discount_percent = max(
+            0.0, min(100.0, self.grid_zone_discount_percent))
+        # Prices >= 0.
+        self.grid_demand_price_below_eur_kw_year = max(
+            0.0, self.grid_demand_price_below_eur_kw_year)
+        self.grid_demand_price_above_eur_kw_year = max(
+            0.0, self.grid_demand_price_above_eur_kw_year)
+        self.grid_work_price_ct = max(0.0, self.grid_work_price_ct)
 
         self.markets = config_data.get("markets", [])
         self.failback_market = config_data.get("failback_market", "")

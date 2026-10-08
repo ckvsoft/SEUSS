@@ -90,6 +90,10 @@ class ESSUnit:
     def set_charge(self, status):
         pass
 
+    def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
+                           shaving=False):
+        pass
+
     def get_grid_meters(self):
         pass
 
