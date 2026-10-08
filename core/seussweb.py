@@ -2563,7 +2563,7 @@ class SEUSSWeb:
             out += (
                 f'<rect x="{x}" y="0" width="{width}" '
                 f'height="{baseline_y}" fill="{area[zone]}" '
-                f'fill-opacity="0.15" stroke="none"/>'
+                f'fill-opacity="0.25" stroke="none"/>'
             )
         for hour, zone in enumerate(zone_hours):
             if not zone:
