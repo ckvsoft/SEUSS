@@ -37,11 +37,17 @@ class Item:
         self.starttime = starttime
         self.endtime = endtime - timedelta(seconds=1) if endtime is not None else None
         self.price = Utils.convert_to_millicents(price, potency)
-        # The {grid_fee} token lets a market fee expression include the
-        # zone-aware grid work price (SNAP/WiNAP) for this item's
-        # start time -- resolved here, before the expression is parsed.
+        # Grid tariff: the zone-aware grid work price (SNAP/WiNAP) is
+        # added to every price AUTOMATICALLY when grid_tariff_enabled is
+        # on and grid_work_price_ct is set. A market fee may also place
+        # it explicitly with the {grid_fee} token -- in that case we do
+        # NOT auto-add (no double count).
+        explicit_grid_fee = (isinstance(fee_str, str)
+                             and "{grid_fee}" in fee_str)
         fee_str = GridTariff.substitute_grid_fee(fee_str, self.starttime)
         fee = Utils.calculate_fee(self.price, fee_str)
+        if not explicit_grid_fee:
+            fee += GridTariff.auto_fee_millicents(self.starttime)
         self.price += fee
         self.logger = CustomLogger()
 

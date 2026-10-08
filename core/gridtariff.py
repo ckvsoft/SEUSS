@@ -111,6 +111,27 @@ class GridTariff:
         return round(base, 4)
 
     @staticmethod
+    def auto_fee_millicents(starttime_utc, config=None):
+        """
+        The zone-aware grid work price for an item's start time as a
+        potency-14 millicent fee (the scale Utils.calculate_fee uses),
+        so it can be ADDED to a price directly. 0 when the grid tariff
+        is off or no work price is configured.
+        """
+        try:
+            from core.utils import Utils
+            from core.timeutilities import TimeUtilities
+            local = TimeUtilities.convert_utc_to_local(starttime_utc, False)
+            ct = GridTariff.work_price_ct(local, config)
+            if ct <= 0:
+                return 0
+            return int(Utils.convert_to_millicents(ct, 14))
+        except Exception as e:
+            CustomLogger().log.debug(
+                f"grid fee auto-add failed, using 0: {e}")
+            return 0
+
+    @staticmethod
     def substitute_grid_fee(fee_str, starttime_utc, config=None):
         """
         Replace every {grid_fee} token in a market fee expression with
