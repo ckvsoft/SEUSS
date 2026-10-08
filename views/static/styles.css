@@ -417,14 +417,26 @@ body.dark-mode .chart-text {
 }
 
 .editor-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 14px;
-    align-items: start;
+    /* Two compact columns (masonry-style): fieldsets pack tightly with
+       no row-height gaps and NOTHING stretches to the full width. */
+    column-count: 2;
+    column-gap: 14px;
 }
 
 .editor-grid fieldset {
-    margin: 0;
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    display: inline-block;
+    vertical-align: top;
+    width: 100%;
+    margin: 0 0 14px;
+}
+
+@media (max-width: 820px) {
+    .editor-grid {
+        column-count: 1;
+    }
 }
 
 .editor-sections {
