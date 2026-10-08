@@ -314,7 +314,7 @@ class Victron(ESSUnit):
     def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
                            shaving=False):
         """
-        Grid demand limiter (Leistungspreis) -> SetpointKeeper. hub4
+        Grid demand limiter (demand charge) -> SetpointKeeper. hub4
         setpoint path only: the classic register backend does not own the
         grid import setpoint, so the demand cap cannot be enforced there.
         Returns True when the values reached the keeper.

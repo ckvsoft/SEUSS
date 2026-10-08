@@ -58,7 +58,7 @@ Modes (effective per tick):
                                    modes while active.
   NONE    hands-off/startup     -> silent; decay -> neutral
 
-Grid demand limiter (Leistungspreis): when enabled by the evaluation
+Grid demand limiter (demand charge): when enabled by the evaluation
 cycle (set_demand_control), the CHARGE target is throttled so grid
 charging never adds beyond a cap, and (with shaving) the HOLD/CHARGE
 target is clamped to the hard limit so the internal loop discharges an
@@ -172,7 +172,7 @@ class SetpointKeeper:
         # > 0 -> feed that many watts into the grid.
         self._manual_active = False
         self._manual_feedin_w = 0.0
-        # Grid demand limiter (Leistungspreis). Zeroed/off by default;
+        # Grid demand limiter (demand charge). Zeroed/off by default;
         # the evaluation cycle pushes fresh values every tick via
         # set_demand_control(). hard = absolute import ceiling (W),
         # charge = soft charge cap (W, 0 = off), shaving = allow battery
@@ -280,7 +280,7 @@ class SetpointKeeper:
     def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
                            shaving=False):
         """
-        Grid demand limiter (Leistungspreis). Pushed by the evaluation
+        Grid demand limiter (demand charge). Pushed by the evaluation
         cycle each tick (the keeper is a process singleton and does NOT
         re-read config):
 
@@ -397,7 +397,7 @@ class SetpointKeeper:
                 house = self._sum(self._consumption_topics, "consumption")
                 pv = self._sum(self._pv_topics, "pv")
                 base = max(0.0, house - pv)
-                # Grid demand cap (Leistungspreis). The effective charge
+                # Grid demand cap (demand charge). The effective charge
                 # cap is the smaller of the hard ceiling and the soft
                 # charge target (0 = not set). We add AT MOST up to the
                 # cap on top of the house load -- we never force discharge

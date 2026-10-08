@@ -27,15 +27,15 @@
 
 """
 GridDemandTracker: measures the grid-import demand that the Austrian
-Leistungspreis (Netzentgelt from ~2027) is billed on -- the highest
-15-minute block average per calendar month.
+demand charge of the grid fee (from ~2027) is billed on -- the
+highest 15-minute block average per calendar month.
 
 - Fixed 15-minute blocks aligned to the clock (:00/:15/:30/:45). The
   epoch grid coincides with the local grid in Austria because the UTC
   offset (+1/+2 h) is a whole multiple of 15 minutes.
 - Powered by the measured grid import (AC_GRID_POWER, positive side
-  only -- export samples are 0 here, the demand is billed in
-  Entnahmerichtung).
+  only -- export samples are 0 here, the demand is billed on the
+  import direction only).
 - The monthly peak is monotonic within a month and persisted through
   StatsManager (status.json). A NEW peak is force-saved (the normal
   6-h flush debounce of status.json would lose a fresh peak on a

@@ -329,7 +329,7 @@ class PowerConsumptionBase:
         self.ws_server = None
         self.logger = CustomLogger()
         self.statsmanager = StatsManager()
-        # Grid demand tracker (Leistungspreis): measures the monthly
+        # Grid demand tracker (demand charge): measures the monthly
         # 15-min peak from the measured grid import, read-only.
         self.grid_demand = GridDemandTracker(self.statsmanager)
         self.running = False
@@ -997,7 +997,7 @@ class PowerConsumptionBase:
             self.last_time = timestamp
             return
 
-        # Grid demand tracker (Leistungspreis): feed the PREVIOUS
+        # Grid demand tracker (demand charge): feed the PREVIOUS
         # sample's grid import (import side only) so the integration
         # matches the Wh computation below. Read-only measurement.
         try:

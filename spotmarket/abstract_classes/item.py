@@ -38,7 +38,7 @@ class Item:
         self.endtime = endtime - timedelta(seconds=1) if endtime is not None else None
         self.price = Utils.convert_to_millicents(price, potency)
         # The {grid_fee} token lets a market fee expression include the
-        # zone-aware grid Arbeitspreis (SNAP/WiNAP) for this item's
+        # zone-aware grid work price (SNAP/WiNAP) for this item's
         # start time -- resolved here, before the expression is parsed.
         fee_str = GridTariff.substitute_grid_fee(fee_str, self.starttime)
         fee = Utils.calculate_fee(self.price, fee_str)

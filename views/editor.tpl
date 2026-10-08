@@ -11,9 +11,24 @@
 
 <body>
     % include('header', title='Config Editor')
-            <form id="meinFormular" autocomplete="off">
-    <div class="container">
-        <div class="left">
+            <form id="configForm" class="editor-form" autocomplete="off">
+    <div class="editor-wrap">
+        <div class="editor-toolbar">
+            <label for="selectedSection">Select Section:</label>
+            <select id="selectedSection" name="selectedSection">
+                <option value="ess_unit">Ess Unit</option>
+                <option value="markets">Markets</option>
+                <option value="pv_panels">Pv Panels</option>
+                <option value="smart_switches">Smart Switches</option>
+                <option value="solar_forecast_providers">Solar Forecast Providers</option>
+            </select>
+            <button id="sendSectionButton" type="button">Send Section</button>
+            <input type="submit" value="Save Configuration">
+        </div>
+
+        <div class="editor-grid">
+        <fieldset>
+            <legend>General</legend>
                 <%
                 # Top-level keys that get their own grouped fieldset
                 # below; the generic loop should skip them.
@@ -37,22 +52,32 @@
                     "economic_price_ceiling",
                     "round_trip_efficiency",
                 ]
-                # Grid tariff (Austrian Netzentgelt from ~2027): the
-                # Leistungspreis demand limiter + the SNAP/WiNAP zones.
+                # Grid tariff (Austria, from ~2027): the demand-charge
+                # limiter + the SNAP/WiNAP grid-fee windows. Short
+                # display names keep the editor compact -- the full
+                # descriptions live in the README and the tooltips (i).
                 grid_keys = [
                     "grid_tariff_enabled",
                     "grid_demand_peak_limit_w",
                     "grid_demand_peak_target_w",
                     "grid_demand_peak_shaving",
                     "grid_demand_peak_shaving_min_soc_percent",
-                    "grid_demand_threshold_w",
-                    "grid_demand_price_below_eur_kw_year",
-                    "grid_demand_price_above_eur_kw_year",
                     "grid_work_price_ct",
                     "grid_zone_discount_percent",
                     "grid_zone_snap_enabled",
                     "grid_zone_winap_enabled",
                 ]
+                grid_labels = {
+                    "grid_tariff_enabled": "Enabled",
+                    "grid_demand_peak_limit_w": "Peak Limit (W)",
+                    "grid_demand_peak_target_w": "Peak Target (W)",
+                    "grid_demand_peak_shaving": "Peak Shaving",
+                    "grid_demand_peak_shaving_min_soc_percent": "Shaving Min SOC (%)",
+                    "grid_work_price_ct": "Grid Work Price (ct/kWh)",
+                    "grid_zone_discount_percent": "Zone Discount (%)",
+                    "grid_zone_snap_enabled": "SNAP Window",
+                    "grid_zone_winap_enabled": "WiNAP Window",
+                }
                 # Cap-strategy-only switches: dormant under the economic
                 # strategy (the marginal rule decides; the flags are
                 # simply not registered there). Hidden while economic
@@ -119,6 +144,8 @@
                         % end
                     % end
                 % end
+
+                </fieldset>
 
                 <fieldset>
                     <legend>Solar Forecast</legend>
@@ -223,12 +250,14 @@
                 </fieldset>
 
                 <fieldset>
-                    <legend>Grid Tariff (Netzentgelt)</legend>
-                    <p class="economic-note">Opt-in. Leistungspreis (monthly 15-min peak) limiter + SNAP/WiNAP zones. Draft regulation &mdash; all values editable.</p>
+                    <legend>Grid Tariff</legend>
                     % for key in grid_keys:
                         % if key in config:
                             <%
                             value = config[key]
+                            label = grid_labels.get(
+                                key, " ".join(word.capitalize()
+                                              for word in key.split("_")))
                             if tooltips and key in tooltips:
                                 title = tooltips.get(key)
                                 additional = ' \u2139\ufe0f'
@@ -236,16 +265,15 @@
                                 title = ''
                                 additional = ''
                             end
-                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
                             %>
-                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
+                            <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ label }}{{ additional }}</label>
                             % if isinstance(value, bool):
-                                <br/>
                                 <input type="hidden" id="{{ key }}_hidden" name="{{ key }}" value="off">
-                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}><br/>
+                                <input type="checkbox" id="{{ key }}" name="{{ key }}" {{ 'checked' if value == True else '' }}>
                             % else:
-                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}"><br>
+                                <input type="text" id="{{ key }}" name="{{ key }}" value="{{ value }}">
                             % end
+                            <br/>
                         % end
                     % end
                 </fieldset>
@@ -286,39 +314,12 @@
                 % end
         </div>
 
-        <div class="right">
-                <label class="tooltip" for="selectedSection">Select Section:</label>
-                <select id="selectedSection" name="selectedSection">
-                    <option value="ess_unit">Ess Unit</option>
-                    <option value="markets">Markets</option>
-                    <option value="pv_panels">Pv Panels</option>
-                    <option value="smart_switches">Smart Switches</option>
-                    <option value="solar_forecast_providers">Solar Forecast Providers</option>
-                    <!-- Weitere Optionen nach Bedarf hinzufügen -->
-                </select>
-
-                <button id="sendSectionButton">Abschnitt senden</button>
-                <div id="sectionFields_ess_unit" style="display: none;">
-                    <!-- Felder für die Sektion "ess_unit" -->
-                </div>
-
-                <div id="sectionFields_markets" style="display: none;">
-                    <!-- Felder für die Sektion "markets" -->
-                </div>
-
-                <div id="sectionFields_pv_panels" style="display: none;">
-                    <!-- Felder für die Sektion "pv_panels" -->
-                </div>
-
-                <div id="sectionFields_smart_switches" style="display: none;">
-                    <!-- Felder für die Sektion "smart_switches" -->
-                </div>
-
-                <div id="sectionFields_solar_forecast_providers" style="display: none;">
-                    <!-- Felder für die Sektion "solar_forecast_providers" -->
-                </div>
-
-                <input type="submit" value="Save Configuration">
+        <div class="editor-sections">
+            <div id="sectionFields_ess_unit" style="display: none;"></div>
+            <div id="sectionFields_markets" style="display: none;"></div>
+            <div id="sectionFields_pv_panels" style="display: none;"></div>
+            <div id="sectionFields_smart_switches" style="display: none;"></div>
+            <div id="sectionFields_solar_forecast_providers" style="display: none;"></div>
         </div>
     </div>
             </form>

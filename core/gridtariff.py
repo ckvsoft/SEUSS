@@ -26,17 +26,18 @@
 #
 
 """
-GridTariff: the time-of-day grid Arbeitspreis (Netznutzungsentgelt
-Arbeitspreis) with the Austrian SNAP/WiNAP discount windows.
+GridTariff: the time-of-day grid work price (the per-kWh energy
+component of the Austrian network fee) with the SNAP/WiNAP discount
+windows.
 
   SNAP  -- 1 Apr .. 30 Sep, 10:00-16:00
   WiNAP -- 1 Oct .. 31 Mar, 22:00-04:00 (spans midnight)
 
-Both are a percentage discount (default 20 %) on the base grid
-Arbeitspreis for Netzebene 7 (opt-in via a smart meter with 15-min
-readout). Only the grid Arbeitspreis is discounted -- energy price,
-taxes, base/metering fees are untouched. Storage (Mittel-/
-Langfristspeicher) is excluded from SNAP/WiNAP in the regulation;
+Both are a percentage discount (default 20 %) on the base grid work
+price for NE7 (the Austrian low-voltage level), opt-in via a smart
+meter with 15-min readout. Only the grid work price is discounted --
+energy price, taxes, base/metering fees are untouched. Storage
+(medium-/long-term) is excluded from SNAP/WiNAP in the regulation;
 this implementation assumes a normal household connection (no
 storage special-casing).
 
@@ -82,7 +83,7 @@ class GridTariff:
     @classmethod
     def work_price_ct(cls, dt_local, config=None):
         """
-        Effective grid Arbeitspreis (ct/kWh) for the given local
+        Effective grid work price (ct/kWh) for the given local
         datetime: the configured base value, zone-discounted inside
         SNAP/WiNAP. 0.0 when the base price is not configured.
         """
@@ -113,7 +114,7 @@ class GridTariff:
     def substitute_grid_fee(fee_str, starttime_utc, config=None):
         """
         Replace every {grid_fee} token in a market fee expression with
-        the zone-aware grid Arbeitspreis (ct/kWh) for the item's start
+        the zone-aware grid work price (ct/kWh) for the item's start
         time. Unknown / no token -> the string is returned unchanged.
         """
         if not isinstance(fee_str, str) or "{grid_fee}" not in fee_str:

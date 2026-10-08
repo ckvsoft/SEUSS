@@ -155,18 +155,19 @@ class Config(Singleton):
         "feedin_max_w": 5000.0,
         "feedin_min_soc_percent": 25.0,
         # ------------------------------------------------------------------
-        # Grid tariff (Austrian Netzentgelt from ~2027)
+        # Grid tariff (Austria, from ~2027)
         # ------------------------------------------------------------------
-        # Master switch: the demand (Leistungspreis) limiter and the
-        # time-of-day grid fee (SNAP/WiNAP) are OPT-IN. Everything below
-        # is configurable because the regulation is still a draft and the
-        # grid operators keep moving the thresholds.
+        # Master switch: the demand-charge limiter (monthly 15-minute
+        # peak) and the time-of-day grid-fee windows (SNAP/WiNAP) are
+        # OPT-IN. Everything below stays configurable because the
+        # regulation is still a draft and the grid operators keep moving
+        # the thresholds.
         "grid_tariff_enabled": False,
         # Hard ceiling for grid import (W). SEUSS keeps the grid setpoint
         # at or below this in every mode (charge/HOLD). With peak-shaving
         # on, the battery discharges the excess of an uncontrollable house
-        # load. The monthly maximum 15-min average can therefore never
-        # exceed this -- that's the whole "nie drueber" guarantee.
+        # load. The monthly maximum 15-minute average can therefore never
+        # exceed this -- that is the "never exceed" guarantee.
         "grid_demand_peak_limit_w": 10000.0,
         # Soft target (W) the CHARGE path aims for: grid-charging is
         # throttled so charge + house stays at/below this. 0 disables the
@@ -181,16 +182,11 @@ class Config(Singleton):
         # SOC floor (%) for peak-shaving discharge. At or below this the
         # pack is protected and an over-limit load is allowed (logged).
         "grid_demand_peak_shaving_min_soc_percent": 30.0,
-        # Two-tier demand-charge definition (informational + API cost
-        # estimate). Threshold (W) where the higher rate kicks in, and
-        # the two yearly prices (EUR per kW). Draft values only.
-        "grid_demand_threshold_w": 10000.0,
-        "grid_demand_price_below_eur_kw_year": 33.82,
-        "grid_demand_price_above_eur_kw_year": 67.64,
-        # Grid Arbeitspreis (Netznutzungsentgelt Arbeitspreis, ct/kWh)
-        # base value, zone discount (%) and the two Austrian low-price
-        # windows: SNAP (Apr-Sep, 10-16h) and WiNAP (Oct-Mar, 22-04h).
-        # Used via the {grid_fee} token in a market's fee expression.
+        # Grid work price (ct/kWh): the per-kWh energy component of the
+        # network fee, plus the zone discount (%) and the two Austrian
+        # low-price windows SNAP (Apr-Sep, 10-16h) and WiNAP (Oct-Mar,
+        # 22-04h). Folded in via the {grid_fee} token in a market's fee
+        # expression.
         "grid_work_price_ct": 0.0,
         "grid_zone_discount_percent": 20.0,
         "grid_zone_snap_enabled": True,
@@ -455,16 +451,13 @@ class Config(Singleton):
             self.solar_adj_min_theoretical_wh = 1000.0
             self.solar_adj_min_sun_hours = 4.0
             self.solar_adj_max_daily_change = 0.20
-            # Grid tariff (Leistungspreis + SNAP/WiNAP). Defaults mirror
+            # Grid tariff (demand charge + SNAP/WiNAP). Defaults mirror
             # DEFAULT_CONFIG_TEMPLATE; load_config reads the real values.
             self.grid_tariff_enabled = False
             self.grid_demand_peak_limit_w = 10000.0
             self.grid_demand_peak_target_w = 5000.0
             self.grid_demand_peak_shaving = False
             self.grid_demand_peak_shaving_min_soc_percent = 30.0
-            self.grid_demand_threshold_w = 10000.0
-            self.grid_demand_price_below_eur_kw_year = 33.82
-            self.grid_demand_price_above_eur_kw_year = 67.64
             self.grid_work_price_ct = 0.0
             self.grid_zone_discount_percent = 20.0
             self.grid_zone_snap_enabled = True
@@ -660,9 +653,6 @@ class Config(Singleton):
             ("grid_demand_peak_limit_w", 10000.0),
             ("grid_demand_peak_target_w", 5000.0),
             ("grid_demand_peak_shaving_min_soc_percent", 30.0),
-            ("grid_demand_threshold_w", 10000.0),
-            ("grid_demand_price_below_eur_kw_year", 33.82),
-            ("grid_demand_price_above_eur_kw_year", 67.64),
             ("grid_work_price_ct", 0.0),
             ("grid_zone_discount_percent", 20.0),
         ):
@@ -675,17 +665,11 @@ class Config(Singleton):
         # (= no limit / feature inert).
         self.grid_demand_peak_limit_w = max(0.0, self.grid_demand_peak_limit_w)
         self.grid_demand_peak_target_w = max(0.0, self.grid_demand_peak_target_w)
-        self.grid_demand_threshold_w = max(0.0, self.grid_demand_threshold_w)
         # SOC floor and discount in [0, 100].
         self.grid_demand_peak_shaving_min_soc_percent = max(
             0.0, min(100.0, self.grid_demand_peak_shaving_min_soc_percent))
         self.grid_zone_discount_percent = max(
             0.0, min(100.0, self.grid_zone_discount_percent))
-        # Prices >= 0.
-        self.grid_demand_price_below_eur_kw_year = max(
-            0.0, self.grid_demand_price_below_eur_kw_year)
-        self.grid_demand_price_above_eur_kw_year = max(
-            0.0, self.grid_demand_price_above_eur_kw_year)
         self.grid_work_price_ct = max(0.0, self.grid_work_price_ct)
 
         self.markets = config_data.get("markets", [])
@@ -792,6 +776,23 @@ class Config(Singleton):
         return [panel for panel in self.pv_panels if panel["enabled"]]
 
     def update_config_with_template(self):
+        # Migration: remove the informational demand-price keys (they
+        # only documented the DRAFT tariff rates and added editor
+        # clutter). They were introduced by an early build of the grid
+        # tariff feature; instances that picked them up in between get
+        # them dropped cleanly.
+        for stale in ("grid_demand_threshold_w",
+                      "grid_demand_price_below_eur_kw_year",
+                      "grid_demand_price_above_eur_kw_year"):
+            if stale in self.config_data:
+                try:
+                    from core.log import CustomLogger
+                    CustomLogger().log.info(
+                        f"Config: removing obsolete grid-tariff key {stale}.")
+                except Exception:
+                    pass
+                del self.config_data[stale]
+
         # Migration: charging_strategy moved from top level into the
         # prices block (it belongs next to charging_price_limit /
         # charging_price_hard_cap, and the editor renders it there).

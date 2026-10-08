@@ -377,3 +377,61 @@ body.dark-mode .chart-text {
     font-size: 0.85em;
     color: #888;
 }
+
+/*
+ * Config editor layout: full-width, responsive multi-column grid of
+ * fieldsets instead of the old 57%-wide single left column with a
+ * mostly-empty right column. Editor-specific classes only, so the
+ * index page layout is untouched.
+ */
+.editor-form {
+    width: 99%;
+    max-width: none;
+    display: block;      /* drop the global form grid */
+}
+
+.editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin: 16px 0;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background-color: #fff;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.editor-toolbar label {
+    display: inline-block;
+    margin: 0;
+}
+
+.editor-toolbar select,
+.editor-toolbar input[type="submit"] {
+    width: auto;
+    margin: 0;
+}
+
+.editor-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.editor-grid fieldset {
+    margin: 0;
+}
+
+.editor-sections {
+    margin-top: 16px;
+}
+
+body.dark-mode .editor-toolbar {
+    background-color: #1a1a1a;
+    border-color: #444;
+}

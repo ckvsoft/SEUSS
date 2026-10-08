@@ -66,16 +66,16 @@ function addConfigEntry(paramName) {
                 // Hier kannst du die aktualisierte Konfiguration verwenden
                 console.log('Updated Configuration:', data.config);
                 config = data.config
-                showNotification('Eintrag erfolgreich hinzugefügt', 'green');
+                showNotification('Entry added successfully', 'green');
             } else {
-                // Hier kannst du Fehler behandeln
-                console.error('Fehler beim Hinzufügen des Eintrags:', data.message);
-                showNotification('Fehler beim Hinzufügen des Eintrags', 'red');
+                // Handle errors here
+                console.error('Error adding the entry:', data.message);
+                showNotification('Error adding the entry', 'red');
             }
         })
         .catch(error => {
-            console.error('Fehler beim Kommunizieren mit dem Server:', error);
-            showNotification('Es ist ein Fehler aufgetreten. Bitte versuche es erneut.', 'red');
+            console.error('Error communicating with the server:', error);
+            showNotification('Something went wrong. Please try again.', 'red');
         });
 }
 
@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var selectedSection = selectedSectionElement.value;
         console.log('Selected section:', selectedSection);
 
-        // Verstecke alle Abschnitte zuerst
+        // Hide all sections first
         var allSections = document.querySelectorAll('[id^="sectionFields_"]');
         allSections.forEach(function (section) {
             section.style.display = 'none';
@@ -116,7 +116,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var sendSectionButton = document.getElementById('sendSectionButton');
         sendSectionButton.style.display = allowedSections.includes(selectedSection) && selectedSection !== '' ? 'inline-block' : 'none';
 
-        // Zeige nur den ausgewählten Abschnitt
+        // Show only the selected section
         if (selectedSection !== '') {
             var selectedSectionData = config[selectedSection];
             var selectedSectionDiv = document.getElementById('sectionFields_' + selectedSection);
@@ -223,7 +223,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 selectedSectionDiv.appendChild(fieldset);
             }
 
-            // Zeige den ausgewählten Abschnitt
+            // Show the selected section
             selectedSectionDiv.style.display = 'block';
         }
     }
@@ -247,38 +247,37 @@ document.addEventListener('DOMContentLoaded', function () {
         var selectedSection = selectedSectionElement.value;
 
         if (allowedSections.includes(selectedSection)) {
-            // Hier können Sie den ausgewählten Abschnittsnamen verwenden
-            console.log('Ausgewählter Abschnitt:', selectedSection);
+            // Use the selected section name here
+            console.log('Selected section:', selectedSection);
 
             // Hier rufen Sie die Funktion addConfigEntry auf
-            var paramName = selectedSection;  // Verwenden Sie den ausgewählten Abschnitt als paramName
+            var paramName = selectedSection;  // use the selected section as paramName
             addConfigEntry(paramName);
         } else {
-            console.error('Ungültiger Abschnitt:', selectedSection);
+            console.error('Invalid section:', selectedSection);
         }
     });
 
-    document.getElementById('meinFormular').addEventListener('submit', function (event) {
+    document.getElementById('configForm').addEventListener('submit', function (event) {
         event.preventDefault();
 
         var formData = new FormData(event.target);
 
-        sendeFormular(formData).then(function () {
-            console.log('Formular wurde erfolgreich gesendet und Server ist wieder online.');
-            showNotification('Formular wurde erfolgreich gesendet und Server ist wieder online.', 'green');
-            // Neu laden, damit die Seite den GESPEICHERTEN Zustand zeigt:
-            // der Strategie-Toggle (cap <-> economic) blendet z. B. die
-            // cap-only-Regeln erst nach dem Reload zuverlaessig aus/ein
-            // (der Live-Toggle unten deckt das Umschalten im Dropdown ab,
-            // das Speichern selbst hat bisher nie neu geladen).
+        sendForm(formData).then(function () {
+            console.log('Configuration saved and server is back online.');
+            showNotification('Configuration saved and server is back online.', 'green');
+            // Reload so the page shows the SAVED state: the strategy
+            // toggle (cap <-> economic) only reliably hides/shows the
+            // cap-only rules after a reload. The live toggle below
+            // covers switching the dropdown, but saving never reloaded.
             setTimeout(function () { location.reload(); }, 1500);
         }).catch(function (error) {
-            console.error('Fehler beim Server-Vorgang:', error);
-            showNotification('Es ist ein Fehler aufgetreten. Bitte versuche es erneut.', 'red');
+            console.error('Error during the server operation:', error);
+            showNotification('Something went wrong. Please try again.', 'red');
         });
     });
 
-    function sendeFormular(formData) {
+    function sendForm(formData) {
         return new Promise(function (resolve, reject) {
             fetch('/save_config', {
                 method: 'POST',
@@ -286,7 +285,7 @@ document.addEventListener('DOMContentLoaded', function () {
             })
                 .then(function (response) {
                     if (!response.ok) {
-                        reject('Fehlerhafte Serverantwort');
+                        reject('Bad server response');
                     }
                     return response.json();
                 })
@@ -304,7 +303,7 @@ document.addEventListener('DOMContentLoaded', function () {
         fetch('/check_is_online')
             .then(function (response) {
                 if (!response.ok) {
-                    throw new Error('Fehlerhafte Serverantwort');
+                    throw new Error('Bad server response');
                 }
                 return response.text();
             })
@@ -312,7 +311,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 // Überprüfe den Status, ob der Server "OK" ist
                 if (status === 'OK') {
                     // Wenn der Status "OK" ist, zeige die grüne Benachrichtigung an
-                    showNotification('Formular wurde erfolgreich gesendet und Server ist wieder online.', 'green');
+                    showNotification('Configuration saved and server is back online.', 'green');
                     // Hier kannst du responseData verwenden
                     console.log('Serverantwort:', responseData);
                 } else {
@@ -323,7 +322,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             })
             .catch(function (error) {
-                console.error('Fehler beim Überprüfen des Serverstatus:', error);
+                console.error('Error checking the server status:', error);
             });
     }
 

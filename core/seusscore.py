@@ -465,7 +465,7 @@ class SEUSS:
             self.logger.log.debug(
                 f"manual overlay guard refresh failed: {e}")
 
-        # Grid demand limiter (Leistungspreis): push the current limit /
+        # Grid demand limiter (demand charge): push the current limit /
         # charge cap / shaving permission into the setpoint keeper.
         self._apply_demand_control(essunit)
 
@@ -630,7 +630,7 @@ class SEUSS:
             except Exception:
                 economic_projection = None
 
-        # Grid tariff (Leistungspreis) control state: config values plus
+        # Grid tariff (demand charge) control state: config values plus
         # the shaving flag the keeper is actually running with (the SOC
         # floor was folded in this cycle). The measured quarter average /
         # monthly peak are added by the keeper's demand tracker.
@@ -650,12 +650,6 @@ class SEUSS:
                 "charge_target_w": getattr(
                     self.config, "grid_demand_peak_target_w", 0.0),
                 "shaving": bool(shaving),
-                "threshold_w": getattr(
-                    self.config, "grid_demand_threshold_w", 0.0),
-                "price_below_eur_kw_year": getattr(
-                    self.config, "grid_demand_price_below_eur_kw_year", 0.0),
-                "price_above_eur_kw_year": getattr(
-                    self.config, "grid_demand_price_above_eur_kw_year", 0.0),
             }
             # Measured demand (running quarter average, monthly peak)
             # from the powerconsumption tracker.
@@ -848,7 +842,7 @@ class SEUSS:
 
     def _apply_demand_control(self, essunit):
         """
-        Push the grid demand limiter (Leistungspreis) into the setpoint
+        Push the grid demand limiter (demand charge) into the setpoint
         keeper each cycle. The hard ceiling and soft charge cap are pure
         config; the SHAVING permission folds the SOC floor in HERE because
         the keeper has no SOC reading. Observation mode writes nothing.
