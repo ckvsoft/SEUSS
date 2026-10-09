@@ -52,16 +52,58 @@
                     "grid_zone_snap_enabled",
                     "grid_zone_winap_enabled",
                 ]
-                grid_labels = {
+                # Friendly display labels. The config KEYS never change;
+                # these only replace the auto-generated "Capitalized Key
+                # Name" labels in the editor so they are understandable.
+                # Full descriptions live in the README / the (i) tooltips.
+                # Anything not listed falls back to the auto label.
+                display_labels = {
+                    "time_zone": "Time zone",
+                    "tariff_resolution": "Tariff resolution",
+                    "vat_percent": "VAT (%)",
+                    # Prices / blocks
+                    "use_second_day": "Use tomorrow's prices",
+                    "number_of_lowest_prices_for_charging": "Charge blocks per day",
+                    "number_of_highest_prices_for_discharging": "Discharge blocks per day",
+                    "number_of_lowest_prices_for_switching": "Switch blocks per day",
+                    "charging_block_minutes": "Charge block length (min)",
+                    "discharging_block_minutes": "Discharge block length (min)",
+                    "switching_block_minutes": "Switch block length (min)",
+                    "fill_gaps_with_short_clusters": "Fill gaps with short blocks",
+                    "charging_price_limit": "Always-charge below (ct/kWh)",
+                    "charging_price_hard_cap": "Never-charge above (ct/kWh)",
+                    "charging_strategy": "Charging strategy",
+                    "economic_price_ceiling": "Economic price ceiling (ct/kWh)",
+                    "round_trip_efficiency": "Round-trip efficiency",
+                    "soc_target_resume_gap_percent": "SOC-target resume gap (%)",
+                    # Control
+                    "setpoint_refresh_seconds": "Setpoint refresh (s)",
+                    "feedin_max_w": "Feed-in slider max (W)",
+                    "feedin_min_soc_percent": "Feed-in min SOC (%)",
+                    # Grid tariff
                     "grid_tariff_enabled": "Enabled",
-                    "grid_demand_peak_limit_w": "Peak Limit (W)",
-                    "grid_demand_peak_target_w": "Peak Target (W)",
-                    "grid_demand_peak_shaving": "Peak Shaving",
-                    "grid_demand_peak_shaving_min_soc_percent": "Shaving Min SOC (%)",
-                    "grid_work_price_ct": "Grid Work Price (ct/kWh)",
-                    "grid_zone_discount_percent": "Zone Discount (%)",
-                    "grid_zone_snap_enabled": "SNAP Window",
-                    "grid_zone_winap_enabled": "WiNAP Window",
+                    "grid_demand_peak_limit_w": "Total limit (W) - never exceed",
+                    "grid_demand_peak_target_w": "Charge cap (W) - while charging",
+                    "grid_demand_peak_shaving": "Peak shaving (battery covers peaks)",
+                    "grid_demand_peak_shaving_min_soc_percent": "Peak shaving min SOC (%)",
+                    "grid_work_price_ct": "Grid fee (ct/kWh)",
+                    "grid_zone_discount_percent": "Zone discount (%)",
+                    "grid_zone_snap_enabled": "SNAP window (summer 10-16)",
+                    "grid_zone_winap_enabled": "WiNAP window (winter 22-04)",
+                    # Skip / discharge flags
+                    "use_solar_forecast_to_abort": "Abort charging on solar forecast",
+                    "skip_charge_when_battery_covers_expensive_phase": "Skip when battery covers expensive phase",
+                    "skip_charge_when_cheaper_cluster_coming": "Skip when a cheaper block is coming",
+                    "cheaper_cluster_min_reserve_hours": "Cheaper-block reserve (h)",
+                    "skip_charge_for_upcoming_negative_prices": "Skip for upcoming negative prices",
+                    "smart_discharge_priority_to_expensive_hours": "Discharge priority to expensive hours",
+                    "delay_grid_charging_below_active_soc_limit": "Delay charging below Active SOC Limit",
+                    "discharge_fallthrough_on_charge_veto": "Discharge fall-through on charge veto",
+                    # Solar adjustment
+                    "solar_adj_ewma_alpha": "Solar adj. smoothing (alpha)",
+                    "solar_adj_min_theoretical_wh": "Solar adj. min yield (Wh)",
+                    "solar_adj_min_sun_hours": "Solar adj. min sun hours",
+                    "solar_adj_max_daily_change": "Solar adj. max daily change",
                 }
                 # Cap-strategy-only switches: dormant under the economic
                 # strategy (the marginal rule decides; the flags are
@@ -105,7 +147,7 @@
                             title = ''
                             additional = ''
                         end
-                        formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                        formatted_text = display_labels.get(key, " ".join(word.capitalize() for word in key.split("_"))) + additional
                         %>
                         <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                         % if isinstance(value, bool):
@@ -143,7 +185,7 @@
                                 title = ''
                                 additional = ''
                             end
-                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            formatted_text = display_labels.get(key, " ".join(word.capitalize() for word in key.split("_"))) + additional
                             %>
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                             % if isinstance(value, bool):
@@ -190,7 +232,7 @@
                                 title = ''
                                 additional = ''
                             end
-                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            formatted_text = display_labels.get(key, " ".join(word.capitalize() for word in key.split("_"))) + additional
                             %>
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                             % if isinstance(value, bool):
@@ -218,7 +260,7 @@
                                 title = ''
                                 additional = ''
                             end
-                            formatted_text = " ".join(word.capitalize() for word in key.split("_")) + additional
+                            formatted_text = display_labels.get(key, " ".join(word.capitalize() for word in key.split("_"))) + additional
                             %>
                             <label class="tooltip" for="{{ key }}" title="{{ title }}">{{ formatted_text }}</label>
                             % if isinstance(value, bool):
@@ -238,7 +280,7 @@
                         % if key in config:
                             <%
                             value = config[key]
-                            label = grid_labels.get(
+                            label = display_labels.get(
                                 key, " ".join(word.capitalize()
                                               for word in key.split("_")))
                             if tooltips and key in tooltips:
@@ -278,7 +320,7 @@
                                     title = ''
                                     additional= ''
                                 end
-                                formatted_text = " ".join(word.capitalize() for word in field_key.split("_")) + additional
+                                formatted_text = display_labels.get(field_key, " ".join(word.capitalize() for word in field_key.split("_"))) + additional
                                 %>
                                 <div class="cfg-row" data-cap-only="{{ '1' if cap_only else '0' }}" {{ !('style="display:none;"' if economic_mode and cap_only else '') }}>
                                 <label class="tooltip" for="prices:{{ field_key }}" title="{{ title }}">{{ formatted_text }}</label><br/>
