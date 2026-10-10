@@ -114,6 +114,15 @@ def get_keeper(mqtt_config, unit_id, max_discharge_power, logger=None):
         return keeper
 
 
+def peek_keeper(unit_id):
+    """Return the existing keeper for unit_id WITHOUT creating one
+    (or None). Read-only getters and the observation hands-off path use
+    this so they never spawn a keeper/thread -- in observation mode no
+    keeper must exist at all."""
+    with _REGISTRY_LOCK:
+        return _KEEPERS.get(str(unit_id))
+
+
 class SetpointKeeper:
 
     REFRESH_DEFAULT_S = 30

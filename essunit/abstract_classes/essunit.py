@@ -94,6 +94,9 @@ class ESSUnit:
                            shaving=False):
         pass
 
+    def set_hands_off(self):
+        pass
+
     def get_grid_meters(self):
         pass
 

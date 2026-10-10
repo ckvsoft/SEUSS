@@ -448,6 +448,18 @@ class SEUSS:
         self.control_discharging(essunit, condition_discharging_result)
         self.control_switching(condition_switching_result, essunit=essunit)
 
+        # Observation must never touch the hardware: silence an existing
+        # setpoint keeper EVERY cycle. Otherwise a keeper left over from
+        # an earlier control run (or one created by the manual-feed-in
+        # state read) sits in HOLD and keeps publishing a grid setpoint,
+        # so the Victron imports from the grid despite observation mode.
+        if essunit is not None and self._is_observation_mode(essunit):
+            try:
+                if hasattr(essunit, "set_hands_off"):
+                    essunit.set_hands_off()
+            except Exception as e:
+                self.logger.log.debug(f"set hands-off failed: {e}")
+
         # Manual grid overlay guard refresh: an active slider state
         # (feed-in OR the grid-neutral hold) must survive the floors --
         # re-checked here each cycle (the slider command itself is

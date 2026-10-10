@@ -34,7 +34,7 @@ from typing import Tuple
 from core.log import CustomLogger
 from core.mqttclient import MqttClient, MqttResult, Subscribers, PvInverterResults, GridMetersResults
 from essunit.abstract_classes.essunit import ESSUnit, ESSStatus
-from essunit.setpointkeeper import get_keeper
+from essunit.setpointkeeper import get_keeper, peek_keeper
 from core.config import Config
 
 
@@ -121,7 +121,7 @@ class Victron(ESSUnit):
             if self.hub4_available():
                 # No control authority: setpoint streaming off
                 # (decay -> neutral); the SD setting stays untouched.
-                self._keeper().set_hands_off()
+                self.set_hands_off()
             else:
                 self.set_charge('off')
                 self.set_discharge('on')
@@ -295,21 +295,38 @@ class Victron(ESSUnit):
         return False
 
     def get_manual_feedin(self):
-        """(active, watts) of the manual grid feed-in."""
+        """(active, watts) of the manual grid feed-in. Read-only: this
+        must NEVER create a keeper (an observation run would otherwise
+        spawn one that sits in HOLD and publishes a grid setpoint)."""
         if self.hub4_available():
-            try:
-                return self._keeper().get_manual_feedin()
-            except Exception:
-                return (False, 0.0)
+            keeper = peek_keeper(self.unit_id)
+            if keeper is not None:
+                try:
+                    return keeper.get_manual_feedin()
+                except Exception:
+                    pass
         return (False, 0.0)
 
     def update_manual_guard(self, allowed, reason=""):
-        """Cycle-side guard refresh for an active manual feed-in."""
+        """Cycle-side guard refresh for an active manual feed-in.
+        Read-only: only touches an already existing keeper."""
         if self.hub4_available():
-            try:
-                self._keeper().update_manual_guard(allowed, reason)
-            except Exception:
-                pass
+            keeper = peek_keeper(self.unit_id)
+            if keeper is not None:
+                try:
+                    keeper.update_manual_guard(allowed, reason)
+                except Exception:
+                    pass
+
+    def set_hands_off(self):
+        """
+        No control authority (observation / disabled): silence an
+        existing keeper. Uses peek -- it does NOT create a keeper, so a
+        pure observation run never spawns one/thread and never writes.
+        """
+        keeper = peek_keeper(self.unit_id)
+        if keeper is not None:
+            keeper.set_hands_off()
 
     def set_demand_control(self, hard_limit_w=0.0, charge_target_w=0.0,
                            shaving=False):
@@ -326,12 +343,15 @@ class Victron(ESSUnit):
         return False
 
     def get_demand_control(self):
-        """(hard_limit_w, charge_target_w, shaving) from the keeper."""
+        """(hard_limit_w, charge_target_w, shaving) from the keeper.
+        Read-only: never creates a keeper."""
         if self.hub4_available():
-            try:
-                return self._keeper().get_demand_control()
-            except Exception:
-                return (0.0, 0.0, False)
+            keeper = peek_keeper(self.unit_id)
+            if keeper is not None:
+                try:
+                    return keeper.get_demand_control()
+                except Exception:
+                    pass
         return (0.0, 0.0, False)
 
     def set_discharge(self, status):
