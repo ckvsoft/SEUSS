@@ -19,7 +19,7 @@ Every few minutes it reads the current and upcoming prices, decides *charge / di
 - **Spot price** — the exchange price for electricity, per 15-minute slot. Comes from your market feed (aWATTar / ENTSO-E / Tibber).
 - **Fee** — your supplier's markup on top of the spot price (`fee` per market, e.g. `3% + 1.5` = 3 % of the spot price + 1.5 ct fixed).
 - **Grid fee** — what your network operator charges. Two parts: the **work price** (ct per kWh, `grid_work_price_ct`) and, from 2027, a **demand charge** based on your highest 15-minute power (the `grid_demand_*` settings).
-- **SNAP / WiNAP** — cheaper grid-fee windows for Austrian households: **SNAP** in summer (Apr–Sep, 10–16 h), **WiNAP** in winter (Oct–Mar, 22–04 h). Both already exist.
+- **SNAP / WiNAP** — cheaper grid-fee windows for Austrian households: **SNAP** in summer (Apr–Sep, 10–16 h, since Apr 2026) and **WiNAP** in winter (Oct–Mar, 23–05 h). WiNAP is not in force yet — it starts with the winter half-year 2027/28 (1 Oct 2027).
 - **Cluster** — a run of consecutive 15-minute slots SEUSS treats as one charge/discharge block (`*_block_minutes`).
 - **SOC** — state of charge of the battery in %.
 - **RTE** — round-trip efficiency (charge + discharge losses), `round_trip_efficiency`.
@@ -143,7 +143,7 @@ When `tariff_resolution: quarterly` leaves small gaps between charge and dischar
 | `grid_work_price_ct`                         | Grid work price (ct/kWh), default `0` = off. When set, this grid fee is added to every price (discounted in SNAP/WiNAP), so it counts in the chart and in the charging decision. You can also place it explicitly with `{grid_fee}` in a market `fee`.              |
 | `grid_zone_discount_percent`                 | Discount (%) on the grid work price inside SNAP/WiNAP, default `20`.                                                                                                                                                                                                |
 | `grid_zone_snap_enabled`                     | Apply the SNAP window (Apr–Sep, 10–16 h). Default `true`.                                                                                                                                                                                                           |
-| `grid_zone_winap_enabled`                    | Apply the WiNAP window (Oct–Mar, 22–04 h). Default `true`.                                                                                                                                                                                                          |
+| `grid_zone_winap_enabled`                    | Apply the WiNAP window (Oct–Mar, 23–05 h). Default `true` — but WiNAP only takes effect with the winter half-year 2027/28 (1 Oct 2027); before that the window stays empty.                                                                                           |
 | `use_solar_forecast_to_abort`                | Skip charging when the adjusted solar forecast **plus** the current SOC together can cover consumption until tomorrow's sunrise. Default `false`. Tuned by the `solar_adj_*` settings.                                                                              |
 | `skip_charge_when_battery_sufficient`        | **Deprecated (hidden).** Replaced by `skip_charge_when_battery_covers_expensive_phase`.                                                                                                                                                                             |
 | `skip_charge_when_battery_covers_overnext`   | **Deprecated (hidden).** Redundant with the above.                                                                                                                                                                                                                  |
@@ -171,7 +171,7 @@ The price chart shows quarter-resolution colours on top of the hourly bars:
 - **Orange** — charging was vetoed but the battery actually discharged (fall-through).
 - **Red** — quarter is in an active discharging block.
 - **Grey** — quarter is in no block (charging + discharging don't cover 24 h).
-- **Blue / amber overlay** — the SNAP (amber) and WiNAP (blue) grid-fee windows, when `grid_tariff_enabled` is on.
+- **Blue / amber overlay** — the SNAP (amber) and WiNAP (blue) grid-fee windows, when `grid_tariff_enabled` is on. The WiNAP overlay stays empty until Oct 2027.
 
 Hover an hour for the four per-quarter prices. The chart follows light/dark mode via the `chart-text` CSS class.
 
@@ -179,7 +179,7 @@ Hover an hour for the four per-quarter prices. The chart follows light/dark mode
 
 ### `GET /api/prices`
 
-Price snapshot: current quarter price, cheap-block flag, hourly price curves for today/tomorrow with per-hour colour flags, the effective hard cap, and the SNAP/WiNAP zone flags (`zone_today` / `zone_tomorrow`). Built for external displays/controllers such as a thermostat.
+Price snapshot: current quarter price, cheap-block flag, hourly price curves for today/tomorrow with per-hour colour flags, the effective hard cap, and the SNAP/WiNAP zone flags (`zone_today` / `zone_tomorrow`; WiNAP stays empty until Oct 2027). Built for external displays/controllers such as a thermostat.
 
 ### `GET /api/battery`
 

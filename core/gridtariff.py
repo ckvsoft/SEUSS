@@ -31,7 +31,14 @@ component of the Austrian network fee) with the SNAP/WiNAP discount
 windows.
 
   SNAP  -- 1 Apr .. 30 Sep, 10:00-16:00
-  WiNAP -- 1 Oct .. 31 Mar, 22:00-04:00 (spans midnight)
+  WiNAP -- 1 Oct .. 31 Mar, 23:00-05:00 (spans midnight)
+
+WiNAP is NOT in force yet: per the final E-Control SNE-G-V it first
+takes effect with the winter half-year 2027/28 (1 Oct 2027). The
+winter months Jan-Mar 2027 still belong to the season that started in
+Oct 2026 and carry no WiNAP. zone_active() therefore gates WiNAP on
+the season's start year (WINAP_FIRST_SEASON_YEAR). SNAP has been in
+force since 1 Apr 2026 and needs no gate.
 
 Both are a percentage discount (default 20 %) on the base grid work
 price for NE7 (the Austrian low-voltage level), opt-in via a smart
@@ -57,7 +64,13 @@ class GridTariff:
     WINTER_MONTHS = (10, 11, 12, 1, 2, 3)
     SUMMER_MONTHS = (4, 5, 6, 7, 8, 9)
     SNAP_FROM, SNAP_TO = 10, 16     # 10:00 <= h < 16:00
-    WINAP_FROM = 22                  # 22:00 <= h < 04:00 (next day)
+    WINAP_FROM, WINAP_TO = 23, 5    # 23:00 <= h < 05:00 (next day)
+    # WiNAP first takes effect with the winter half-year 2027/28, i.e.
+    # 1 Oct 2027 (SNE-G-V as decided by E-Control in Oct 2026). A
+    # winter season is identified by the year it STARTS in: Oct-Dec of
+    # that year, Jan-Mar of the next one. So Jan-Mar 2027 (= season
+    # 2026/27) is still WiNAP-free.
+    WINAP_FIRST_SEASON_YEAR = 2027
 
     @staticmethod
     def zone_active(dt_local, snap_enabled=True, winap_enabled=True):
@@ -73,7 +86,13 @@ class GridTariff:
         except AttributeError:
             return False
         if winap_enabled and month in GridTariff.WINTER_MONTHS:
-            if hour >= GridTariff.WINAP_FROM or hour < 4:
+            # Season start year: Oct-Dec belong to this year, Jan-Mar
+            # to the previous one. WiNAP only from the 2027/28 season.
+            season_year = (dt_local.year if month >= 10
+                           else dt_local.year - 1)
+            if (season_year >= GridTariff.WINAP_FIRST_SEASON_YEAR
+                    and (hour >= GridTariff.WINAP_FROM
+                         or hour < GridTariff.WINAP_TO)):
                 return True
         if snap_enabled and month in GridTariff.SUMMER_MONTHS:
             if GridTariff.SNAP_FROM <= hour < GridTariff.SNAP_TO:

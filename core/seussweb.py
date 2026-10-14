@@ -2835,7 +2835,7 @@ class SEUSSWeb:
         if getattr(self.config, "grid_tariff_enabled", False):
             zone_row = 0
             for name, color, label in (
-                ("winap", "#7d9dff", "WiNAP (Oct-Mar, 22-04)"),
+                ("winap", "#7d9dff", "WiNAP (Oct-Mar, 23-05, from 2027)"),
                 ("snap", "#ffc76e", "SNAP (Apr-Sep, 10-16)"),
             ):
                 enabled = bool(getattr(

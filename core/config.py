@@ -190,7 +190,8 @@ class Config(Singleton):
         # Grid work price (ct/kWh): the per-kWh energy component of the
         # network fee, plus the zone discount (%) and the two Austrian
         # low-price windows SNAP (Apr-Sep, 10-16h) and WiNAP (Oct-Mar,
-        # 22-04h). When set (and the tariff is enabled) it is added to
+        # 23-05h; only from the 2027/28 winter season). When set (and
+        # the tariff is enabled) it is added to
         # every price automatically; a market may instead place it via
         # the {grid_fee} token in its fee expression (no double count).
         "grid_work_price_ct": 0.0,

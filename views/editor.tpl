@@ -89,7 +89,7 @@
                     "grid_work_price_ct": "Grid fee (ct/kWh)",
                     "grid_zone_discount_percent": "Zone discount (%)",
                     "grid_zone_snap_enabled": "SNAP window (summer 10-16)",
-                    "grid_zone_winap_enabled": "WiNAP window (winter 22-04)",
+                    "grid_zone_winap_enabled": "WiNAP window (winter 23-05, from 2027)",
                     # Skip / discharge flags
                     "use_solar_forecast_to_abort": "Abort charging on solar forecast",
                     "skip_charge_when_battery_covers_expensive_phase": "Skip when battery covers expensive phase",
