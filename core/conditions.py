@@ -689,6 +689,21 @@ class Conditions:
     # in _abort_charging_soc_target_reached().
     _soc_target_latched = False
 
+    # Charge-window bridge latch (class-level, ONE verdict per charge
+    # window): "can the pack bridge the foreseeable consumption until
+    # the pack can be refilled (cheaper) again -- the next charge
+    # opportunity -- WITHOUT charging?". Decided in
+    # _charge_window_bridge_feasible() at the first evaluation of a
+    # window and held for the whole window, so the verdict cannot flap
+    # between 5-minute ticks.
+    #
+    # It is the precondition of the economic veto ("we do not have to
+    # charge" is only true while the pack actually holds out) and the
+    # guard of the discharge fall-through (never spend the energy the
+    # later hours need).
+    _bridge_latch_key = None
+    _bridge_latch_verdict = True
+
     @classmethod
     def _note_economic_flags_subsumed(cls):
         """Log ONCE per process that the SOC-based skip flags are
@@ -1284,7 +1299,20 @@ class Conditions:
         True when charging the current quarter is not worth it: the
         quarter price divided by the round-trip efficiency exceeds the
         marginal displaced price of the upcoming expensive phase.
+
+        PRECONDITION (bridge check, 2026-10-16): the price comparison
+        only means something while the pack holds out WITHOUT charging.
+        When the pack cannot bridge the foreseeable consumption until
+        the next charge window, "we do not have to charge" is simply
+        false -- no veto is issued, the window charges.
         """
+        if not self._charge_window_bridge_feasible():
+            self.logger.log.debug(
+                "Economic veto skipped: the pack cannot bridge the "
+                "foreseeable consumption until the next charge window "
+                "(bridge check)."
+            )
+            return False
         marginal = self.economic_info.get("marginal_price")
         cur = self.items.get_current_price(convert=False)
         if cur is None or marginal is None:
@@ -1372,7 +1400,10 @@ class Conditions:
         branches: the pack starts at the current SOC, drains at the
         hourly average through non-charge (and vetoed charge)
         quarters and refills by charge power * RTE per bought
-        quarter. Each charge quarter faces the live tests in order:
+        quarter. Each chain first faces the BRIDGE CHECK (mirror of
+        the live precondition): a chain the pack cannot bridge until
+        the next window charges outright. Otherwise each charge
+        quarter faces the live tests in order:
         SOC-target latch (trip/resume), survival deficit vs the
         phase after the chain (merit cut over the chain's own
         remaining quarters), else the merit cut over the cheaper
@@ -1472,7 +1503,10 @@ class Conditions:
 
             # Chains of contiguous charge quarters, each with the
             # far-phase consumption until the next chain (or the
-            # data end) -- same chain/phase model as the walk.
+            # data end) -- same chain/phase model as the walk. own_wh is
+            # the chain's OWN consumption (its quarters), needed by the
+            # bridge check below ("without charging, what does the pack
+            # have to serve?").
             chains = []
             i = start
             while i < n:
@@ -1489,15 +1523,26 @@ class Conditions:
                     far_wh += hourly_avg_w * (
                         e2 - s2).total_seconds() / 3600.0
                     k += 1
-                chains.append((i, j, far_wh))
+                own_wh = 0.0
+                for k in range(i, j):
+                    s2, e2 = _qdt(items[k])
+                    own_wh += hourly_avg_w * (
+                        e2 - s2).total_seconds() / 3600.0
+                chains.append((i, j, far_wh, own_wh))
                 i = j
 
             def _chain_of(idx):
-                for a, b, fw in chains:
+                for a, b, fw, ow in chains:
                     if a <= idx < b:
-                        return a, b, fw
+                        return a, b, fw, ow
                 return None
 
+            # Bridge verdict per chain (mirror of the live precondition,
+            # decided on the simulated pack at the chain's first
+            # quarter): a chain the pack cannot bridge until the NEXT
+            # window charges -- the price comparison would claim a
+            # sufficiency that does not exist.
+            bridge_verdict = {}
             pack = current_soc_wh
             latched = bool(type(self)._soc_target_latched)
             projection = {}
@@ -1525,43 +1570,62 @@ class Conditions:
                     latched = False
                 if pack >= trip_abs:
                     latched = True
+                bridge_ok = True
                 if not latched:
                     cut = None
                     chain = _chain_of(i)
                     if chain is not None:
-                        a, b, far_wh = chain
-                        deficit_wh = far_wh - max(0.0, pack - min_wh)
-                        if deficit_wh > 0.0:
-                            # Survival: this chain must refill for
-                            # the phase after it -- merit cut over
-                            # its own remaining quarters (the
-                            # running quarter included, like the
-                            # live serving offers).
-                            offers = []
-                            for k in range(i, b):
-                                offer = _offer(k)
-                                if offer is not None:
-                                    offers.append(offer)
-                            cut = self._merit_cut(
-                                offers, deficit_wh, None)
-                        else:
-                            # Buffer: cheaper future quarters fill
-                            # the gap to the scheduler target.
-                            gap_wh = max(0.0, target_abs - pack)
-                            if gap_wh > 0.0:
+                        a, b, far_wh, own_wh = chain
+                        bridge_ok = bridge_verdict.get(a)
+                        if bridge_ok is None:
+                            # Without charging, THIS chain's own
+                            # quarters plus the far phase have to come
+                            # out of the pack. Same reserve as the live
+                            # check (10 % of the pack).
+                            bridge_ok = max(0.0, pack - min_wh) >= (
+                                own_wh + far_wh + 0.10 * pack)
+                            bridge_verdict[a] = bridge_ok
+                        if bridge_ok:
+                            deficit_wh = far_wh - max(0.0, pack - min_wh)
+                            if deficit_wh > 0.0:
+                                # Survival: this chain must refill for
+                                # the phase after it -- merit cut over
+                                # its own remaining quarters (the
+                                # running quarter included, like the
+                                # live serving offers).
                                 offers = []
-                                for k in range(i + 1, n):
-                                    if not self._item_charge_covered(
-                                            items[k]):
-                                        continue
+                                for k in range(i, b):
                                     offer = _offer(k)
                                     if offer is not None:
                                         offers.append(offer)
                                 cut = self._merit_cut(
-                                    offers, gap_wh, None)
-                    if (cut is not None and price <= cut
-                            and price <= ceiling):
+                                    offers, deficit_wh, None)
+                            else:
+                                # Buffer: cheaper future quarters fill
+                                # the gap to the scheduler target.
+                                gap_wh = max(0.0, target_abs - pack)
+                                if gap_wh > 0.0:
+                                    offers = []
+                                    for k in range(i + 1, n):
+                                        if not self._item_charge_covered(
+                                                items[k]):
+                                            continue
+                                        offer = _offer(k)
+                                        if offer is not None:
+                                            offers.append(offer)
+                                    cut = self._merit_cut(
+                                        offers, gap_wh, None)
+                    if bridge_ok:
+                        if (cut is not None and price <= cut
+                                and price <= ceiling):
+                            buy = True
+                    elif price <= ceiling:
+                        # Bridge check failed: the pack cannot hold out
+                        # until the next window, so the chain charges
+                        # regardless of the (now meaningless) price
+                        # comparison. The outlier ceiling still applies.
                         buy = True
+                    if buy:
                         pack = min(full_wh, pack + power_w * dur_h * rte)
                 if not buy:
                     # Vetoed charge window: with the discharge
@@ -3319,22 +3383,37 @@ class Conditions:
                     condition_result.condition = key
                     if operation_mode == "charging":
                         # A charge shot in an active charge window was
-                        # vetoed this cycle (economic marginal rule,
-                        # SOC target, outlier leash, ...). With
-                        # discharge_fallthrough_on_charge_veto on, the
-                        # discharging-abort lambda lets the battery
-                        # fall through to the regular discharge rules
-                        # instead of idling the window away.
+                        # vetoed this cycle (SOC target, outlier leash,
+                        # ...). With discharge_fallthrough_on_charge_veto
+                        # on, the discharging-abort lambda lets the
+                        # battery fall through to the regular discharge
+                        # rules instead of idling the window away -- but
+                        # ONLY while the pack still bridges the horizon
+                        # (bridge check): otherwise the fall-through
+                        # would spend exactly the energy the later hours
+                        # need. Suppressed = hold (the grid serves the
+                        # loads): a cheap charge window must never turn
+                        # into a discharge hour.
                         self.charging_window_vetoed = True
                         if getattr(
                                 self.config,
                                 "discharge_fallthrough_on_charge_veto",
                                 False):
-                            self.logger.log.info(
-                                "Charge window vetoed (%s) -- discharge "
-                                "fall-through active, surplus rules "
-                                "decide.", key
-                            )
+                            if self._charge_window_bridge_feasible():
+                                self.logger.log.info(
+                                    "Charge window vetoed (%s) -- discharge "
+                                    "fall-through active, surplus rules "
+                                    "decide.", key
+                                )
+                            else:
+                                self.charging_window_vetoed = False
+                                self.logger.log.info(
+                                    "Charge window vetoed (%s) -- fall-through "
+                                    "suppressed (bridge check): the pack "
+                                    "cannot hold out until the next charge "
+                                    "window, keeping the energy; the grid "
+                                    "serves the loads.", key
+                                )
                     break
             except Exception as e:
                 self.logger.log.error(
@@ -3361,6 +3440,232 @@ class Conditions:
                     next_start is None or blk_start < next_start):
                 next_start = blk_start
         return next_start
+
+    def _charge_chains(self):
+        """
+        Merged charge windows: contiguous charge blocks collapse into one
+        chain [(start_utc, end_utc), ...], time-sorted. The chain (not
+        the single block) is the unit the bridge check decides per
+        window -- a run of adjacent blocks is one charging opportunity,
+        one verdict.
+        """
+        from datetime import timezone
+
+        windows = []
+        for blk in self._charge_blocks:
+            blk_start = (blk.get_start_datetime()
+                         if hasattr(blk, "get_start_datetime") else None)
+            blk_end = (blk.get_end_datetime()
+                       if hasattr(blk, "get_end_datetime") else None)
+            if blk_start is None or blk_end is None:
+                continue
+            if blk_start.tzinfo is None:
+                blk_start = blk_start.replace(tzinfo=timezone.utc)
+            if blk_end.tzinfo is None:
+                blk_end = blk_end.replace(tzinfo=timezone.utc)
+            if blk_end <= blk_start:
+                continue
+            windows.append([blk_start, blk_end])
+        windows.sort(key=lambda win: win[0])
+
+        merged = []
+        for win_start, win_end in windows:
+            if merged and win_start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], win_end)
+            else:
+                merged.append([win_start, win_end])
+        return [(win_start, win_end) for win_start, win_end in merged]
+
+    def _charge_bridge_demand(self):
+        """
+        Foreseeable consumption from NOW until the pack can be refilled
+        CHEAPER: the start of the charge window that holds the cheapest
+        remaining charge quarter -- that is the opportunity the economic
+        rule defers to ("the same kWh is cheaper there"), so that is the
+        horizon the pack has to bridge WITHOUT charging.
+
+        When no cheaper charge quarter lies ahead, this is not a
+        deferral (the veto claims sufficiency) and the horizon is the
+        next charge window after the running one -- the point where the
+        pack can be refilled again.
+
+        Returns (demand_wh, horizon_end, window_key) or (None, None,
+        None) when the horizon cannot be judged -- no consumption
+        history, no known charge window, no future horizon: the bridge
+        check then stays silent and the economic rule behaves as before.
+        """
+        from datetime import datetime, timezone
+
+        avg_list = self.statsmanager.get_data(
+            "powerconsumption", "hourly_watt_average")
+        avg_per_hour = round(self._watt_average(avg_list), 2)
+        if avg_per_hour <= 0.0:
+            return None, None, None
+
+        now_utc = datetime.now(timezone.utc)
+        chains = self._charge_chains()
+        if not chains:
+            return None, None, None
+
+        current = None
+        for idx, (win_start, win_end) in enumerate(chains):
+            if win_start <= now_utc < win_end:
+                current = idx
+                break
+        window_key = (chains[current][0].isoformat()
+                      if current is not None else None)
+
+        # Cheapest remaining charge quarter -- the refill the economic
+        # rule compares against. Only relevant while it is actually
+        # cheaper than the current quarter, otherwise this is no
+        # deferral.
+        cheapest_start = None
+        cheapest_price = None
+        try:
+            cur_price = self.items.get_current_price(convert=False)
+        except Exception:
+            cur_price = None
+        for it in self.items.get_current_list():
+            if not self._item_charge_covered(it):
+                continue
+            q_start = it.get_start_datetime()
+            if q_start is None:
+                continue
+            if q_start.tzinfo is None:
+                q_start = q_start.replace(tzinfo=timezone.utc)
+            if q_start <= now_utc:
+                continue
+            try:
+                price = float(it.get_price(convert=False))
+            except (TypeError, ValueError):
+                continue
+            if cheapest_price is None or price < cheapest_price:
+                cheapest_price = price
+                cheapest_start = q_start
+
+        horizon_end = None
+        if (cheapest_start is not None and cur_price is not None
+                and cheapest_price < float(cur_price)):
+            # Deferral target: the refill starts with the window holding
+            # the cheapest remaining quarter. Inside the running window
+            # it starts at that quarter (clamped to now).
+            for win_start, win_end in chains:
+                if win_start <= cheapest_start < win_end:
+                    horizon_end = (win_start if win_start > now_utc
+                                   else cheapest_start)
+                    break
+            else:
+                horizon_end = cheapest_start
+
+        if horizon_end is None or horizon_end <= now_utc:
+            # No cheaper refill ahead: horizon = the next charge window
+            # after the running one (mirror of _calculate_required_
+            # capacity's fallback when there is none).
+            if current is not None and current + 1 < len(chains):
+                horizon_end = chains[current + 1][0]
+            else:
+                for win_start, _win_end in chains:
+                    if win_start > now_utc:
+                        horizon_end = win_start
+                        break
+        if horizon_end is None or horizon_end <= now_utc:
+            # No further charge window inside the known horizon: fall
+            # back to the last known block end (mirror of
+            # _calculate_required_capacity) so the check still sees a
+            # finite horizon instead of going silent -- and silently
+            # dropping the precondition.
+            for blk in (list(self._charge_blocks)
+                        + list(self._discharge_blocks)):
+                blk_end = (blk.get_end_datetime()
+                           if hasattr(blk, "get_end_datetime") else None)
+                if blk_end is None:
+                    continue
+                if blk_end.tzinfo is None:
+                    blk_end = blk_end.replace(tzinfo=timezone.utc)
+                if horizon_end is None or blk_end > horizon_end:
+                    horizon_end = blk_end
+        if horizon_end is None or horizon_end <= now_utc:
+            return None, None, None
+
+        hours = (horizon_end - now_utc).total_seconds() / 3600.0
+        return hours * avg_per_hour, horizon_end, window_key
+
+    def _charge_window_bridge_feasible(self):
+        """
+        LATCHED per charge window: can the pack bridge the foreseeable
+        consumption until the next charge window WITHOUT charging?
+
+        This is the precondition the economic price comparison always
+        needed: "we do NOT have to charge" is only true while the pack
+        actually holds out. The old supply term credited the running
+        chain's own remaining refill -- energy that only exists if the
+        very charge it was used to veto is granted -- and left the
+        running window's hours out of the demand, so a starved pack
+        looked covered: the veto fired, the window was grid-served, and
+        the (fall-through) discharge spent the energy the later hours
+        needed (observed 2026-10-16: 4.33 kWh usable reported as
+        "supply 13394 Wh vs phase 6889 Wh" -> veto at 01:00, pack empty
+        for the 37 ct morning peak).
+
+        True  -> the price veto may stand for this window (and the
+                 fall-through discharge is harmless: the pack covers the
+                 whole horizon anyway).
+        False -> no economic veto: the window charges, and the
+                 fall-through stays off (the later hours need it).
+
+        Reserve: the surplus rule's 10 % of the current SOC. Returns
+        True ("stay out of the way") whenever the state cannot be read
+        or judged -- a failed read must never change control behaviour.
+        """
+        cls = type(self)
+        try:
+            if not self.essunit:
+                return True
+            demand_wh, horizon_end, window_key = self._charge_bridge_demand()
+            if demand_wh is None:
+                return True
+
+            if window_key is not None and cls._bridge_latch_key == window_key:
+                return cls._bridge_latch_verdict
+
+            current_soc_wh = float(self.essunit.get_battery_current_wh() or 0)
+            min_wh = float(self.essunit.get_battery_min_wh() or 0)
+            usable_wh = max(0.0, current_soc_wh - min_wh)
+            reserve_wh = 0.10 * current_soc_wh
+            verdict = usable_wh >= demand_wh + reserve_wh
+
+            if window_key is not None:
+                cls._bridge_latch_key = window_key
+                cls._bridge_latch_verdict = verdict
+
+            try:
+                from core.timeutilities import TimeUtilities
+                local_end = TimeUtilities.convert_utc_to_local(
+                    horizon_end, False)
+                end_txt = (local_end.strftime("%H:%M")
+                           if local_end is not None else "?")
+            except Exception:
+                end_txt = horizon_end.isoformat()
+            if verdict:
+                message = "pack holds out, price veto allowed."
+            else:
+                message = ("pack does NOT hold out: charging, no economic "
+                           "veto (and no fall-through discharge in this "
+                           "window).")
+            if window_key is not None:
+                self.logger.log.info(
+                    f"Charge-window bridge check: usable "
+                    f"{usable_wh / 1000:.2f} kWh vs demand "
+                    f"{demand_wh / 1000:.2f} kWh + reserve "
+                    f"{reserve_wh / 1000:.2f} kWh until the refill "
+                    f"opportunity ({end_txt}) -> {message}")
+            return verdict
+        except Exception as e:
+            self.logger.log.warning(
+                f"Charge-window bridge check failed: {e}. "
+                "Keeping the economic rule unchanged."
+            )
+            return True
 
     def _calculate_required_capacity(self, future_high_blocks):
         """
