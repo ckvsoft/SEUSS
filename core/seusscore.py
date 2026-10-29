@@ -692,6 +692,11 @@ class SEUSS:
             "current_price": self.items.get_current_price(True),
             "economic": economic,
             "economic_projection": economic_projection,
+            "consumption_reference": (
+                conditions_instance.get_consumption_reference()
+                if conditions_instance is not None and
+                hasattr(conditions_instance, "get_consumption_reference")
+                else None),
             "manual_feedin": manual_feedin,
             "grid_demand": grid_demand,
             "timestamp": TimeUtilities.get_now().isoformat(),

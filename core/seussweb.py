@@ -996,6 +996,23 @@ class SEUSSWeb:
                 history_days[-1]["pv_est_wh"] = round(float(_est_today_live), 2)
         except Exception:
             pass
+        # Reference day the charge bridge check / discharge reserve use
+        # (worst of the recent days), so the page shows what the control
+        # actually budgets with.
+        consumption_reference = None
+        try:
+            from core.conditions import Conditions
+            ref_profile, ref_day, ref_total = (
+                Conditions.reference_consumption_day(hourly_by_day))
+            if ref_profile is not None:
+                consumption_reference = {
+                    "day": ref_day,
+                    "wh": round(ref_total, 1),
+                    "hourly": [round(float(v or 0), 1) for v in ref_profile],
+                }
+        except Exception as e:
+            self.logger.log.debug(f"consumption reference unavailable: {e}")
+
         intraday_svg = self._render_intraday_svg(hourly_today, hourly_yesterday)
         history_svg = self._render_history_svg(history_days)
         # Solar forecast vs. actual chart -- one line for the morning
@@ -1100,6 +1117,7 @@ class SEUSSWeb:
             "soc_target_skip_total": int(soc_target_skip_total),
             "negative_price_skip_total": int(negative_price_skip_total),
             "intraday_svg": intraday_svg,
+            "consumption_reference": consumption_reference,
             "history_svg": history_svg,
             "solar_history_svg": solar_history_svg,
             "today_solar_svg": today_solar_svg,

@@ -3613,6 +3613,37 @@ class Conditions:
 
     REFERENCE_DAYS = 7  # look-back window for the reference day
 
+    @staticmethod
+    def reference_consumption_day(by_day, days=REFERENCE_DAYS, today=None):
+        """
+        Recent day with the highest consumption in hourly_wh_by_day:
+        (profile, day_iso, total_wh), or (None, None, 0.0). One truth for
+        the demand reference (control, chart, stats page).
+        """
+        if not isinstance(by_day, dict):
+            return None, None, 0.0
+        from datetime import date as _date, timedelta as _td
+        if today is None:
+            today = _date.today()
+        oldest = (today - _td(days=days)).isoformat()
+        candidates = []
+        for day_iso, values in by_day.items():
+            if not isinstance(values, (list, tuple)) or len(values) != 24:
+                continue
+            if str(day_iso) < oldest:
+                continue
+            try:
+                profile = [float(v or 0.0) for v in values]
+            except (TypeError, ValueError):
+                continue
+            total = sum(profile)
+            if total > 0.0:
+                candidates.append((total, str(day_iso), profile))
+        if not candidates:
+            return None, None, 0.0
+        total, day_iso, profile = max(candidates, key=lambda c: c[0])
+        return profile, day_iso, total
+
     def _reference_consumption_profile(self):
         """
         Hourly shape (Wh per local hour) of the worst of the last
@@ -3620,38 +3651,35 @@ class Conditions:
         there is no recent hourly history (callers use the flat average).
         """
         try:
-            by_day = self.statsmanager.get_data(
-                "powerconsumption", "hourly_wh_by_day")
-            if not isinstance(by_day, dict):
-                return None, None
-            from datetime import date, timedelta
-            oldest = (date.today()
-                      - timedelta(days=self.REFERENCE_DAYS)).isoformat()
-            candidates = []
-            for day_iso, values in by_day.items():
-                if not isinstance(values, (list, tuple)) or len(values) != 24:
-                    continue
-                if str(day_iso) < oldest:
-                    continue  # stale history: not a "recent" day
-                try:
-                    profile = [float(v or 0.0) for v in values]
-                except (TypeError, ValueError):
-                    continue
-                total = sum(profile)
-                if total <= 0.0:
-                    continue
-                candidates.append((total, str(day_iso), profile))
-            if not candidates:
-                return None, None
-            total, day_iso, profile = max(candidates, key=lambda c: c[0])
-            self.logger.log.debug(
-                f"Consumption reference day {day_iso}: {total:.0f} Wh "
-                f"(worst of the last {self.REFERENCE_DAYS} days)")
-            return profile, day_iso
+            profile, day_iso, total = self.reference_consumption_day(
+                self.statsmanager.get_data(
+                    "powerconsumption", "hourly_wh_by_day"))
         except Exception as e:
             self.logger.log.debug(
                 f"Consumption reference profile unavailable: {e}")
             return None, None
+        if profile is None:
+            return None, None
+        self.logger.log.debug(
+            f"Consumption reference day {day_iso}: {total:.0f} Wh "
+            f"(worst of the last {self.REFERENCE_DAYS} days)")
+        return profile, day_iso
+
+    def get_consumption_reference(self):
+        """{"day": iso, "wh": total, "hourly": [24]} or None (API/stats)."""
+        try:
+            profile, day_iso, total = self.reference_consumption_day(
+                self.statsmanager.get_data(
+                    "powerconsumption", "hourly_wh_by_day"))
+        except Exception:
+            return None
+        if profile is None:
+            return None
+        return {
+            "day": day_iso,
+            "wh": round(total, 1),
+            "hourly": [round(v, 1) for v in profile],
+        }
 
     @staticmethod
     def _profile_wh_between(profile, start_dt, end_dt):

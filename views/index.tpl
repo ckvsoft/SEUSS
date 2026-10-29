@@ -60,6 +60,7 @@
                         <div id="batteryDischargeD">Battery discharged today: -</div>
                         <div id="costs">Current Hour Costs: -</div>
                         <div id="total_costs_today">Total Costs Today: -</div>
+                        <div id="consumptionRef">Demand reference: -</div>
                     </div>
                 </div>
             </div>
@@ -219,6 +220,13 @@
                         updateValue("pv", "PV", data.pv, "W");
                     }
                     updateValue("consumptionD", "Consumption today", data.consumptionD, "Wh");
+                    {
+                        const el = document.getElementById("consumptionRef");
+                        if (el && data.consumptionRef) {
+                            el.textContent =
+                                `Demand reference: ${data.consumptionRef}`;
+                        }
+                    }
                     updateValue("gridD", "Grid today", data.gridD, "Wh");
                     updateValue("gridExportD", "Grid export today", data.gridExportD, "Wh");
                     updateValue("gridH", "Grid this hour", data.gridH, "Wh");

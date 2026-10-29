@@ -528,6 +528,15 @@
     %# reference-detail and don't need to draw the eye.
 
     <h3 class="stats-section-heading">Intraday: Hourly Consumption</h3>
+    % if stats.get('consumption_reference'):
+    <div class="stats-note">
+        Demand reference used by the charge/discharge check:
+        <b>{{ stats['consumption_reference']['day'] }}</b>
+        with {{ "{:.0f}".format(stats['consumption_reference']['wh']) }} Wh
+        (highest of the last 7 days) &mdash; its hourly shape is budgeted,
+        not the long-term average.
+    </div>
+    % end
     <div style="padding: 0 1em 1em 1em; overflow-x: auto;">
         {{ !stats['intraday_svg'] }}
     </div>

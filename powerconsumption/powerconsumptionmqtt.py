@@ -193,9 +193,22 @@ class PowerConsumptionMQTT(PowerConsumptionBase):
                         count += 1
                         value = (value + self.get_hourly_average()) / count
 
+                    consumption_ref = "-"
+                    try:
+                        from core.conditions import Conditions
+                        _p, _d, _t = Conditions.reference_consumption_day(
+                            self.statsmanager.get_data(
+                                "powerconsumption", "hourly_wh_by_day"))
+                        if _p is not None:
+                            consumption_ref = (f"{_d}, "
+                                               f"{_t / 1000:.1f} kWh")
+                    except Exception:
+                        pass
+
                     if self.ws_server:
                         self.ws_server.emit_ws({
                             'averageWh': value,
+                            'consumptionRef': consumption_ref,
                             'averageWhD': self.get_daily_average(),
                             'power': self.current_power,
                             'grid_power': self.current_grid_power,
