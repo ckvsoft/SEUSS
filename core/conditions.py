@@ -99,6 +99,7 @@ class Conditions:
         self.abort_conditions_by_operation_mode = {
             mode + "_abort": {} for mode in self.available_operation_modes
         }
+        self._consumption_ref_day = None  # log only
 
         # Pre-compute the active blocks once. evaluate_conditions reuses
         # them across all three modes.
@@ -689,18 +690,7 @@ class Conditions:
     # in _abort_charging_soc_target_reached().
     _soc_target_latched = False
 
-    # Charge-window bridge latch (class-level, ONE verdict per charge
-    # window): "can the pack bridge the foreseeable consumption until
-    # the pack can be refilled (cheaper) again -- the next charge
-    # opportunity -- WITHOUT charging?". Decided in
-    # _charge_window_bridge_feasible() at the first evaluation of a
-    # window and held for the whole window, so the verdict cannot flap
-    # between 5-minute ticks.
-    #
-    # It is the precondition of the economic veto ("we do not have to
-    # charge" is only true while the pack actually holds out) and the
-    # guard of the discharge fall-through (never spend the energy the
-    # later hours need).
+    # Bridge-check latch: one verdict per charge window.
     _bridge_latch_key = None
     _bridge_latch_verdict = True
 
@@ -1300,11 +1290,8 @@ class Conditions:
         quarter price divided by the round-trip efficiency exceeds the
         marginal displaced price of the upcoming expensive phase.
 
-        PRECONDITION (bridge check, 2026-10-16): the price comparison
-        only means something while the pack holds out WITHOUT charging.
-        When the pack cannot bridge the foreseeable consumption until
-        the next charge window, "we do not have to charge" is simply
-        false -- no veto is issued, the window charges.
+        Precondition: no veto while the pack cannot cover the demand
+        until the cheaper refill (bridge check).
         """
         if not self._charge_window_bridge_feasible():
             self.logger.log.debug(
@@ -1437,6 +1424,13 @@ class Conditions:
                 "powerconsumption", "hourly_watt_average"))
             if hourly_avg_w <= 0.0 or self.essunit is None:
                 return None
+            profile, _ref_day = self._reference_consumption_profile()
+
+            def _wh_between(start_dt, end_dt):
+                if profile is not None:
+                    return self._profile_wh_between(profile, start_dt, end_dt)
+                return hourly_avg_w * (
+                    end_dt - start_dt).total_seconds() / 3600.0
             current_soc_wh = float(
                 self.essunit.get_battery_current_wh() or 0)
             min_wh = float(self.essunit.get_battery_min_wh() or 0)
@@ -1520,14 +1514,12 @@ class Conditions:
                 k = j
                 while k < n and not self._item_charge_covered(items[k]):
                     s2, e2 = _qdt(items[k])
-                    far_wh += hourly_avg_w * (
-                        e2 - s2).total_seconds() / 3600.0
+                    far_wh += _wh_between(s2, e2)
                     k += 1
                 own_wh = 0.0
                 for k in range(i, j):
                     s2, e2 = _qdt(items[k])
-                    own_wh += hourly_avg_w * (
-                        e2 - s2).total_seconds() / 3600.0
+                    own_wh += _wh_between(s2, e2)
                 chains.append((i, j, far_wh, own_wh))
                 i = j
 
@@ -1537,12 +1529,7 @@ class Conditions:
                         return a, b, fw, ow
                 return None
 
-            # Bridge verdict per chain (mirror of the live precondition,
-            # decided on the simulated pack at the chain's first
-            # quarter): a chain the pack cannot bridge until the NEXT
-            # window charges -- the price comparison would claim a
-            # sufficiency that does not exist.
-            bridge_verdict = {}
+            bridge_verdict = {}  # chain start -> live bridge verdict
             pack = current_soc_wh
             latched = bool(type(self)._soc_target_latched)
             projection = {}
@@ -1553,7 +1540,7 @@ class Conditions:
                 if dur_h <= 0.0:
                     continue
                 if not self._item_charge_covered(it):
-                    pack = max(min_wh, pack - hourly_avg_w * dur_h)
+                    pack = max(min_wh, pack - _wh_between(qs, qe))
                     continue
                 price = _price(it)
                 if price is None:
@@ -1633,7 +1620,7 @@ class Conditions:
                     # on_charge_veto, surplus rules decide), an
                     # allowed discharge -> FREE self-consumption:
                     # the battery serves the loads, the pack drains.
-                    pack = max(min_wh, pack - hourly_avg_w * dur_h)
+                    pack = max(min_wh, pack - _wh_between(qs, qe))
                 day_map[key] = buy
             return projection if projection else None
         except Exception:
@@ -3382,18 +3369,9 @@ class Conditions:
                     condition_result.execute = False
                     condition_result.condition = key
                     if operation_mode == "charging":
-                        # A charge shot in an active charge window was
-                        # vetoed this cycle (SOC target, outlier leash,
-                        # ...). With discharge_fallthrough_on_charge_veto
-                        # on, the discharging-abort lambda lets the
-                        # battery fall through to the regular discharge
-                        # rules instead of idling the window away -- but
-                        # ONLY while the pack still bridges the horizon
-                        # (bridge check): otherwise the fall-through
-                        # would spend exactly the energy the later hours
-                        # need. Suppressed = hold (the grid serves the
-                        # loads): a cheap charge window must never turn
-                        # into a discharge hour.
+                        # Vetoed charge shot. Fall-through discharge
+                        # only while the bridge check holds; otherwise
+                        # hold (grid serves the loads).
                         self.charging_window_vetoed = True
                         if getattr(
                                 self.config,
@@ -3442,13 +3420,7 @@ class Conditions:
         return next_start
 
     def _charge_chains(self):
-        """
-        Merged charge windows: contiguous charge blocks collapse into one
-        chain [(start_utc, end_utc), ...], time-sorted. The chain (not
-        the single block) is the unit the bridge check decides per
-        window -- a run of adjacent blocks is one charging opportunity,
-        one verdict.
-        """
+        """Merged, time-sorted charge windows [(start, end), ...]."""
         from datetime import timezone
 
         windows = []
@@ -3477,23 +3449,7 @@ class Conditions:
         return [(win_start, win_end) for win_start, win_end in merged]
 
     def _charge_bridge_demand(self):
-        """
-        Foreseeable consumption from NOW until the pack can be refilled
-        CHEAPER: the start of the charge window that holds the cheapest
-        remaining charge quarter -- that is the opportunity the economic
-        rule defers to ("the same kWh is cheaper there"), so that is the
-        horizon the pack has to bridge WITHOUT charging.
-
-        When no cheaper charge quarter lies ahead, this is not a
-        deferral (the veto claims sufficiency) and the horizon is the
-        next charge window after the running one -- the point where the
-        pack can be refilled again.
-
-        Returns (demand_wh, horizon_end, window_key) or (None, None,
-        None) when the horizon cannot be judged -- no consumption
-        history, no known charge window, no future horizon: the bridge
-        check then stays silent and the economic rule behaves as before.
-        """
+        """Demand up to the cheaper refill: (demand_wh, horizon_end, key)."""
         from datetime import datetime, timezone
 
         avg_list = self.statsmanager.get_data(
@@ -3588,34 +3544,19 @@ class Conditions:
             return None, None, None
 
         hours = (horizon_end - now_utc).total_seconds() / 3600.0
-        return hours * avg_per_hour, horizon_end, window_key
+        demand_wh = hours * avg_per_hour
+        profile, ref_day = self._reference_consumption_profile()
+        self._consumption_ref_day = ref_day
+        if profile is not None:
+            demand_wh = self._profile_wh_between(
+                profile, now_utc, horizon_end)
+        return demand_wh, horizon_end, window_key
 
     def _charge_window_bridge_feasible(self):
         """
-        LATCHED per charge window: can the pack bridge the foreseeable
-        consumption until the next charge window WITHOUT charging?
-
-        This is the precondition the economic price comparison always
-        needed: "we do NOT have to charge" is only true while the pack
-        actually holds out. The old supply term credited the running
-        chain's own remaining refill -- energy that only exists if the
-        very charge it was used to veto is granted -- and left the
-        running window's hours out of the demand, so a starved pack
-        looked covered: the veto fired, the window was grid-served, and
-        the (fall-through) discharge spent the energy the later hours
-        needed (observed 2026-10-16: 4.33 kWh usable reported as
-        "supply 13394 Wh vs phase 6889 Wh" -> veto at 01:00, pack empty
-        for the 37 ct morning peak).
-
-        True  -> the price veto may stand for this window (and the
-                 fall-through discharge is harmless: the pack covers the
-                 whole horizon anyway).
-        False -> no economic veto: the window charges, and the
-                 fall-through stays off (the later hours need it).
-
-        Reserve: the surplus rule's 10 % of the current SOC. Returns
-        True ("stay out of the way") whenever the state cannot be read
-        or judged -- a failed read must never change control behaviour.
+        Latched per window: does the pack cover the demand until the
+        cheaper refill (<- the veto's "we do not have to charge" claim)?
+        True -> veto allowed; False -> charge, and no fall-through.
         """
         cls = type(self)
         try:
@@ -3652,13 +3593,16 @@ class Conditions:
                 message = ("pack does NOT hold out: charging, no economic "
                            "veto (and no fall-through discharge in this "
                            "window).")
+            ref_day = getattr(self, "_consumption_ref_day", None)
+            source = (f" (worst day {ref_day})" if ref_day
+                      else " (flat long-term average)")
             if window_key is not None:
                 self.logger.log.info(
                     f"Charge-window bridge check: usable "
                     f"{usable_wh / 1000:.2f} kWh vs demand "
                     f"{demand_wh / 1000:.2f} kWh + reserve "
                     f"{reserve_wh / 1000:.2f} kWh until the refill "
-                    f"opportunity ({end_txt}) -> {message}")
+                    f"opportunity ({end_txt}){source} -> {message}")
             return verdict
         except Exception as e:
             self.logger.log.warning(
@@ -3667,15 +3611,85 @@ class Conditions:
             )
             return True
 
+    REFERENCE_DAYS = 7  # look-back window for the reference day
+
+    def _reference_consumption_profile(self):
+        """
+        Hourly shape (Wh per local hour) of the worst of the last
+        REFERENCE_DAYS days: (profile, day_iso), or (None, None) when
+        there is no recent hourly history (callers use the flat average).
+        """
+        try:
+            by_day = self.statsmanager.get_data(
+                "powerconsumption", "hourly_wh_by_day")
+            if not isinstance(by_day, dict):
+                return None, None
+            from datetime import date, timedelta
+            oldest = (date.today()
+                      - timedelta(days=self.REFERENCE_DAYS)).isoformat()
+            candidates = []
+            for day_iso, values in by_day.items():
+                if not isinstance(values, (list, tuple)) or len(values) != 24:
+                    continue
+                if str(day_iso) < oldest:
+                    continue  # stale history: not a "recent" day
+                try:
+                    profile = [float(v or 0.0) for v in values]
+                except (TypeError, ValueError):
+                    continue
+                total = sum(profile)
+                if total <= 0.0:
+                    continue
+                candidates.append((total, str(day_iso), profile))
+            if not candidates:
+                return None, None
+            total, day_iso, profile = max(candidates, key=lambda c: c[0])
+            self.logger.log.debug(
+                f"Consumption reference day {day_iso}: {total:.0f} Wh "
+                f"(worst of the last {self.REFERENCE_DAYS} days)")
+            return profile, day_iso
+        except Exception as e:
+            self.logger.log.debug(
+                f"Consumption reference profile unavailable: {e}")
+            return None, None
+
+    @staticmethod
+    def _profile_wh_between(profile, start_dt, end_dt):
+        """Wh of a 24-hour profile over [start, end), partial hours pro rata."""
+        from datetime import timedelta
+        from core.timeutilities import TimeUtilities
+
+        if not profile:
+            return 0.0
+        local_start = TimeUtilities.convert_utc_to_local(start_dt, False)
+        local_end = TimeUtilities.convert_utc_to_local(end_dt, False)
+        if local_start is None or local_end is None:
+            return 0.0
+        if local_end <= local_start:
+            return 0.0
+        total = 0.0
+        cursor = local_start
+        while cursor < local_end:
+            next_hour = cursor.replace(
+                minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            slice_end = min(next_hour, local_end)
+            fraction = (slice_end - cursor).total_seconds() / 3600.0
+            total += profile[cursor.hour] * fraction
+            cursor = slice_end
+        return total
+
     def _calculate_required_capacity(self, future_high_blocks):
         """
-        Required reserve = expected average consumption rate * the
-        wall-clock span we still need to bridge before the next charge
-        block -- counted ONCE. The old per-block remainder sum was a
-        triangular overcount (17 sequential blocks summed ~150 h of
-        "time until block end" instead of ~17 h), inflating the reserve
-        to ~131 kWh -- 12x the pack -- which pinned the discharge
-        surplus to zero and blocked every discharge.
+        Required reserve = expected consumption over the wall-clock span
+        we still need to bridge before the next charge block -- counted
+        ONCE. The old per-block remainder sum was a triangular overcount
+        (17 sequential blocks summed ~150 h of "time until block end"
+        instead of ~17 h), inflating the reserve to ~131 kWh -- 12x the
+        pack -- which pinned the discharge surplus to zero and blocked
+        every discharge.
+
+        Uses the worst recent day's hourly profile; flat average as the
+        fallback when there is no recent history.
         """
         avg_list = self.statsmanager.get_data(
             "powerconsumption", "hourly_watt_average"
@@ -3713,8 +3727,15 @@ class Conditions:
 
         total_minutes = max(
             0.0, (span_end - now_utc).total_seconds() / 60.0)
-        required = (total_minutes / 60.0) * avg_consumption_per_hour * 1.10
-        self.logger.log.debug(f"Required capacity: {required:.2f} Wh")
+        profile, ref_day = self._reference_consumption_profile()
+        if profile is not None:
+            required = self._profile_wh_between(
+                profile, now_utc, span_end) * 1.10
+        else:
+            required = (total_minutes / 60.0) * avg_consumption_per_hour * 1.10
+        self.logger.log.debug(
+            f"Required capacity: {required:.2f} Wh "
+            f"(reference day {ref_day or 'flat average'})")
         return required
 
     def _calculate_available_surplus(self, future_high_blocks):
