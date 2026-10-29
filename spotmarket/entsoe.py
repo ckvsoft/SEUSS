@@ -216,29 +216,49 @@ class Entsoe(MarketData):
         # pre-Oct-2025 single-series responses). Second pass takes
         # anything else, but only for days the first pass didn't
         # already cover (the seen_periods set handles that).
+        #
+        # 2026-10-29: the second pass is GONE. The secondary 15-minute
+        # coupling auction (position=2) carries DIFFERENT prices, and
+        # using it for a day whose primary series is not published yet
+        # put that day's whole plan on the wrong series: block
+        # selection, chart and the bridge check all followed it. Worse,
+        # a "filled" list stops the hourly refetch (itemlist.
+        # perform_update refreshes only below 97 quarters), so the wrong
+        # prices stuck until midnight -- after that the real auction
+        # replaced them and the plan flipped (observed 2026-10-28:
+        # tomorrow off by up to 3.7 ct/kWh against the exchange, a SEUSS
+        # restart fetched the correct ones; log every hour: "ENTSO-E
+        # primary auction missing for some day(s)").
+        #
+        # A day without a primary series therefore stays EMPTY: the list
+        # keeps coming back short, the hourly refetch keeps running, and
+        # the day is filled as soon as the auction is published (~12:40).
+        # No prices for tomorrow is harmless; wrong prices for tomorrow
+        # are not.
         all_time_series = list(root.iter('TimeSeries'))
         primary_ts = [
             ts for ts in all_time_series
             if self._classification_position(ts) in (None, "1")
         ]
-        fallback_ts = [
+        secondary_ts = [
             ts for ts in all_time_series
             if self._classification_position(ts) not in (None, "1")
         ]
+        if secondary_ts:
+            positions = sorted({
+                str(self._classification_position(ts))
+                for ts in secondary_ts
+            })
+            self.logger.log.info(
+                "ENTSO-E secondary auction TimeSeries present "
+                f"(classification position {', '.join(positions)}) -- "
+                "ignored. Only the primary day-ahead auction is used; "
+                "days without it stay empty and are refetched.")
+            self.logger.log.info(
+                f"ENTSO-E: {len(primary_ts)} primary / "
+                f"{len(secondary_ts)} secondary TimeSeries in response")
 
         for time_series in primary_ts:
-            for period in time_series.iter('Period'):
-                last_known_price = self._process_period(
-                    period, items, seen_periods, last_known_price
-                )
-
-        for time_series in fallback_ts:
-            pos = self._classification_position(time_series)
-            self.logger.log.info(
-                f"ENTSO-E primary auction missing for some day(s); "
-                f"considering fallback TimeSeries with classification "
-                f"position {pos}"
-            )
             for period in time_series.iter('Period'):
                 last_known_price = self._process_period(
                     period, items, seen_periods, last_known_price
