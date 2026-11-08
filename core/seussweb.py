@@ -2002,6 +2002,7 @@ class SEUSSWeb:
             "awattar": "aWATTar",
             "entsoe": "ENTSO-e",
             "tibber": "Tibber",
+            "zonetariff": "ZoneTariff (fixed zones)",
             "openmeteo": "Open-Meteo",
             "solcast": "Solcast",
         }
@@ -2042,7 +2043,12 @@ class SEUSSWeb:
     # per-IP lists per README and must not be coerced to int/float by
     # the numeric conversion below (a bare "8" used to become int 8 and
     # then crashed every caller of .strip()).
-    STRING_FIELDS = {"ips", "lowest_prices_per_ip", "block_minutes_per_ip"}
+    STRING_FIELDS = {"ips", "lowest_prices_per_ip", "block_minutes_per_ip",
+                     # Time-of-use zone specs: "06:00-22:00=31.0" would
+                     # never parse as a number, but keep them explicitly
+                     # string-typed so a future spec change can't turn
+                     # them into floats.
+                     "zones_summer", "zones_winter"}
 
     def save_config_route(self):
         # Laden der aktuellen Konfiguration

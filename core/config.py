@@ -332,6 +332,19 @@ class Config(Singleton):
                 "fee": "",
                 "primary": False,
                 "enabled": False
+            },
+            {
+                # Local, network-free provider for a fixed time-of-use
+                # tariff (HT/NT, night tariff, ...). Prices are NET
+                # ct/kWh; the usual fee/vat/grid-fee chain applies.
+                # Example values -- edit before enabling.
+                "name": "Zonetariff",
+                "zones_summer": "00:00-06:00=22.0; 06:00-22:00=31.0; 22:00-24:00=24.0",
+                "zones_winter": "00:00-06:00=25.0; 06:00-22:00=34.0; 22:00-24:00=27.0",
+                "summer_months": "4-9",
+                "fee": "",
+                "primary": False,
+                "enabled": False
             }
         ],
         "smart_switches": [

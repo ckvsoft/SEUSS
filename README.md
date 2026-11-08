@@ -40,6 +40,7 @@ Every few minutes it reads the current and upcoming prices, decides *charge / di
 - ***aWATTar***
 - ***Entso-E***
 - ***Tibber***
+- ***ZoneTariff*** (fixed time-of-use zones, no API — see below)
 
 The ESS unit is controlled over MQTT, so SEUSS does not have to run directly on VenusOS. Direct D-BUS control is in the works.
 
@@ -270,6 +271,30 @@ Check `timestamp` for staleness — the value only updates while the SEUSS loop 
 | `fee`        | Supplier markup (see aWATTar `fee`).                                                                                                                                                                                                            |
 | `primary`    | Marks this market as the primary one (when enabled).                                                                                                                                                                                            |
 | `enabled`    | This entry must be `enabled` to be used.                                                                                                                                                                                                        |
+
+### ZoneTariff
+
+A **local** provider for a fixed time-of-use tariff (HT/NT, "Optima", night tariff …). No API, no network, no token — the prices come from the config. Because the tariff is known in advance, SEUSS always gets today **and** tomorrow (plus the day after tomorrow when `use_second_day` is on), so the chart's tomorrow tab and the economic horizon work without waiting for an auction.
+
+```
+"zones_summer": "00:00-06:00=22.0; 06:00-22:00=31.0; 22:00-24:00=24.0"
+"zones_winter": "00:00-06:00=25.0; 06:00-22:00=34.0; 22:00-24:00=27.0"
+"summer_months": "4-9"
+```
+
+| Setting         | Meaning                                                                                                                                                                                                                                       |
+|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `zones_summer`  | Zones for the summer months: `from-to=price` entries separated by `;`, `,` or a newline. Local wall-clock time (`6` = `06:00`, `24:00` closes the day). A window may cross midnight (`22:00-06:00=24.0`). Leave empty to use the winter zones all year. |
+| `zones_winter`  | Zones for every month that is not listed in `summer_months`. Same syntax. Leave empty to use the summer zones all year.                                                                                                                        |
+| `summer_months` | Months that use `zones_summer`: list (`4,5,6,7,8,9`) or range (`4-9`, default). Every other month is winter — the default split is the SNAP/WiNAP half-year (Apr–Sep / Oct–Mar).                                                                |
+
+Notes:
+
+- **Prices are NET ct/kWh**, exactly like the other markets. The normal chain still applies: the market `fee` expression, `vat_percent`, and the grid fee (`grid_tariff_enabled` or an explicit `{grid_fee}` token). If your zone prices already include the grid fee, leave `grid_tariff_enabled` off — otherwise it is added twice.
+- Zone boundaries snap to the 15-minute grid. Several windows per day are fine, order matters only on overlap (the **first** window wins and a warning is logged).
+- Hours no window covers are filled with the **highest** price in that season (plus a warning) — a config gap must never look like free electricity to the charging logic. Malformed specs (or both zone strings empty) produce no prices at all, so the normal failback market is used.
+- With `tariff_resolution: hourly` the four quarters of an hour are averaged. Zone boundaries that do not sit on a full hour (e.g. `06:30`) are therefore flattened — use `tariff_resolution: quarterly` when your tariff really changes at quarter hours. SEUSS logs a warning if it detects such a boundary.
+- `primary`, `enabled` and `fee` work exactly as for the other markets. As a non-primary `enabled` market it also makes a good offline failback: it never depends on DNS or an API.
 
 ## Solar Forecast Providers
 
